@@ -7,13 +7,14 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 import uuid
-import redis.asyncio as redis
+import psycopg2
+from psycopg2.extras import Json
 
 load_dotenv()
 
-app = FastAPI(title="東寵戰情牆 API", description="採用 Vercel KV 的輕量級後端")
+app = FastAPI(title="東寵戰情牆 API", description="採用 Vercel Postgres (Neon) 的輕量級後端")
 
-# CORS 設定：允許前端 (localhost:5173 等) 進行跨域請求
+# CORS 設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,9 +23,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Vercel KV (Redis) 連線設定 ===
-KV_URL = os.getenv("KV_URL", "redis://localhost:6379")
-redis_client = redis.from_url(KV_URL, decode_responses=True)
+POSTGRES_URL = os.getenv("POSTGRES_URL")
+
+def get_db_connection():
+    if not POSTGRES_URL:
+        # Fallback 避免本地報錯，雖然沒設定會無法連線
+        raise Exception("POSTGRES_URL is not set")
+    # Vercel Postgres 需要 SSL
+    conn = psycopg2.connect(POSTGRES_URL, sslmode='require')
+    return conn
+
+# 初始化資料表 (如果不存在的話)
+def init_db():
+    if not POSTGRES_URL: return
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # 儲存全域資料的表 (例如門市主管清單)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS store (
+                        id VARCHAR(50) PRIMARY KEY,
+                        data JSONB
+                    );
+                """)
+                # 儲存巡店紀錄的表
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS visit_records (
+                        id VARCHAR(50) PRIMARY KEY,
+                        region VARCHAR(50),
+                        created_at TIMESTAMP,
+                        data JSONB
+                    );
+                """)
+            conn.commit()
+    except Exception as e:
+        print("DB Init Error:", e)
+
+init_db()
 
 # === Pydantic Schema 定義 ===
 class Manager(BaseModel):
@@ -68,8 +103,7 @@ class DashboardSummary(BaseModel):
 # === API Endpoints ===
 
 @app.get("/api/summary", response_model=DashboardSummary)
-async def get_summary(date: str = ""):
-    # 暫時回傳假資料，後續可實作真正的計算
+def get_summary(date: str = ""):
     return DashboardSummary(
         totalVisits=15,
         completedManagersCount=8,
@@ -82,41 +116,56 @@ async def get_summary(date: str = ""):
     )
 
 @app.get("/api/activities", response_model=List[VisitRecord])
-async def get_activities(date: str = "", region: str = "all"):
-    # 從 Redis 讀取所有巡店紀錄
-    data = await redis_client.lrange("visit_records", 0, -1)
-    records = [json.loads(r) for r in data]
-    
-    # Python 記憶體過濾
-    if region != "all":
-        records = [r for r in records if r.get("region") == region]
-        
-    return records
+def get_activities(date: str = "", region: str = "all"):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            if region != "all":
+                cur.execute("SELECT data FROM visit_records WHERE region = %s ORDER BY created_at DESC LIMIT 100", (region,))
+            else:
+                cur.execute("SELECT data FROM visit_records ORDER BY created_at DESC LIMIT 100")
+            rows = cur.fetchall()
+            return [row[0] for row in rows]
 
 @app.get("/api/managers", response_model=List[Manager])
-async def get_managers():
-    data = await redis_client.get("managers")
-    if not data:
-        return []
-    return json.loads(data)
+def get_managers():
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM store WHERE id = 'managers'")
+            row = cur.fetchone()
+            if row:
+                return row[0]
+            return []
 
 @app.post("/api/managers/import")
-async def import_managers(managers: List[Manager] = Body(...)):
+def import_managers(managers: List[Manager] = Body(...)):
     if not managers:
         raise HTTPException(status_code=400, detail="No data provided")
         
     payload = [m.model_dump() for m in managers]
     
-    # 寫入 Vercel KV
-    await redis_client.set("managers", json.dumps(payload))
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO store (id, data) VALUES ('managers', %s)
+                ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+            """, (Json(payload),))
+        conn.commit()
+        
     return {"success": True, "count": len(payload)}
 
 @app.post("/api/visit-records")
-async def create_visit_record(payload: dict = Body(...)):
+def create_visit_record(payload: dict = Body(...)):
     record_id = str(uuid.uuid4())
     payload["recordId"] = record_id
     payload["createdAt"] = datetime.utcnow().isoformat()
+    region = payload.get("region", "")
     
-    # 將巡店紀錄存入 Redis List 頂端 (最新在前)
-    await redis_client.lpush("visit_records", json.dumps(payload))
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO visit_records (id, region, created_at, data)
+                VALUES (%s, %s, %s, %s)
+            """, (record_id, region, datetime.utcnow(), Json(payload)))
+        conn.commit()
+        
     return {"success": True, "data": {"recordId": record_id}}
