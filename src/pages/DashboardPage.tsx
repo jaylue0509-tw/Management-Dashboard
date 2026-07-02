@@ -7,6 +7,22 @@ import { OrganizationMap } from '../components/OrganizationMap';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
 import { getDashboardSummary, getActivityWall, getManagers } from '../api/api';
 
+const DashboardSkeleton = () => (
+  <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
+    {/* Summary Cards Skeleton */}
+    <div className="flex gap-4">
+      {[1, 2, 3, 4].map(i => (
+        <div key={i} className="skeleton-box" style={{ flex: 1, height: '120px', borderRadius: 'var(--radius-lg)' }}></div>
+      ))}
+    </div>
+    {/* Layout Skeleton */}
+    <div className="flex gap-6" style={{ alignItems: 'flex-start' }}>
+      <div className="skeleton-box" style={{ width: '350px', height: '600px', borderRadius: 'var(--radius-lg)' }}></div>
+      <div className="skeleton-box" style={{ flex: 1, height: '600px', borderRadius: 'var(--radius-lg)' }}></div>
+    </div>
+  </div>
+);
+
 export const DashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'map'>('dashboard');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -78,7 +94,7 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {loading ? (
-        <div className="text-center text-gray-500" style={{ padding: '3rem 0' }}>系統資料載入中...</div>
+        <DashboardSkeleton />
       ) : (
         <>
           {activeTab === 'dashboard' ? (

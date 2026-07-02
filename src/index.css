@@ -163,3 +163,16 @@ body {
 .text-gray-700 { color: var(--color-secondary-700); }
 .text-gray-900 { color: var(--color-secondary-900); }
 .text-primary { color: var(--color-primary-500); }
+
+/* Skeleton Loader Animations */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .5; }
+}
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.skeleton-box {
+  background-color: var(--color-secondary-200);
+  border-radius: var(--radius-md);
+}
