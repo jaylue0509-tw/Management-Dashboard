@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import type { Manager } from '../types';
 import { MapPin, Building, Users } from 'lucide-react';
 import { importManagers } from '../api/api';
+import Papa from 'papaparse';
 
 interface Props {
   managers: Manager[];
@@ -24,42 +25,60 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const text = event.target?.result as string;
-      const lines = text.split('\n').filter(line => line.trim().length > 0);
-      if (lines.length < 2) return alert('CSV 檔案內容為空！');
-      
-      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-      const required = ['department', 'directorName', 'region', 'areaManagerName', 'storeName'];
-      const missing = required.filter(r => !headers.includes(r));
-      
-      if (missing.length > 0) {
-        return alert(`CSV 標題列錯誤！缺少以下欄位：${missing.join(', ')}`);
-      }
-      
-      const newManagers: Manager[] = [];
-      for (let i = 1; i < lines.length; i++) {
-        // Handle basic CSV splitting (ignoring commas inside quotes for simplicity)
-        const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
-        const m: any = {};
-        headers.forEach((h, idx) => { m[h] = cols[idx] || ''; });
-        newManagers.push(m as Manager);
-      }
-      
-      try {
-        const success = await importManagers(newManagers);
-        if (success) {
-          alert(`成功匯入 ${newManagers.length} 筆門市資料！畫面即將重新整理。`);
-          window.location.reload();
-        } else {
-          alert('匯入失敗，後端 API 未回應成功。');
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const data = results.data as any[];
+        if (data.length === 0) return alert('CSV 檔案內容為空！');
+        
+        const headerMap: Record<string, keyof Manager> = {
+          '處別': 'department',
+          '處長': 'directorName',
+          '區域': 'region',
+          '區主管': 'areaManagerName',
+          '副區主管': 'deputyManagerName',
+          '門市': 'storeName',
+          '美容區組長/總監': 'beautyLeader'
+        };
+
+        const newManagers: Manager[] = [];
+        for (const row of data) {
+          const m: Partial<Manager> = { todayVisitCount: 0, assignedStoreCount: 0, hasAbnormal: false, visitStatus: '尚未回填' };
+          
+          for (const [chKey, enKey] of Object.entries(headerMap)) {
+            // Find key in row that includes the Chinese word (handles weird hidden characters)
+            const actualKey = Object.keys(row).find(k => k.includes(chKey));
+            const rawVal = actualKey ? row[actualKey] || '' : '';
+            // Remove newlines and extra spaces inside fields
+            m[enKey] = String(rawVal).replace(/\s+/g, ' ').trim() as never;
+          }
+          
+          if (m.storeName) {
+            newManagers.push(m as Manager);
+          }
         }
-      } catch (err) {
-        alert('匯入發生錯誤：' + err);
+        
+        if (newManagers.length === 0) {
+          return alert('找不到任何門市資料！請確認您的 CSV 第一列標題是否為：\n處別, 處長, 區域, 區主管, 副區主管, 門市, 美容區組長/總監');
+        }
+        
+        try {
+          const success = await importManagers(newManagers);
+          if (success) {
+            alert(`成功匯入 ${newManagers.length} 筆門市資料！畫面即將重新整理。`);
+            window.location.reload();
+          } else {
+            alert('匯入失敗，後端 API 未回應成功。');
+          }
+        } catch (err) {
+          alert('匯入發生錯誤：' + err);
+        }
+      },
+      error: (err) => {
+        alert('解析 CSV 發生錯誤：' + err.message);
       }
-    };
-    reader.readAsText(file);
+    });
   };
 
   return (
