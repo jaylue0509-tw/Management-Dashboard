@@ -49,47 +49,7 @@ const MOCK_ACTIVITIES: VisitRecord[] = [
   }
 ];
 
-const MOCK_MANAGERS: Manager[] = [
-  {
-    department: '營業一處',
-    directorName: 'C0066 簡楷潔',
-    region: '北桃區',
-    areaManagerName: 'F0116 陳岳翔',
-    deputyManagerName: '',
-    storeName: '士林文林店',
-    beautyLeader: '',
-    todayVisitCount: 2,
-    assignedStoreCount: 8,
-    hasAbnormal: false,
-    visitStatus: '巡店中'
-  },
-  {
-    department: '營業一處',
-    directorName: 'C0066 簡楷潔',
-    region: '北桃區',
-    areaManagerName: 'F0116 陳岳翔',
-    deputyManagerName: '',
-    storeName: '北投中和店',
-    beautyLeader: '',
-    todayVisitCount: 0,
-    assignedStoreCount: 8,
-    hasAbnormal: false,
-    visitStatus: '尚未回填'
-  },
-  {
-    department: '營業一處',
-    directorName: 'C0066 簡楷潔',
-    region: '新北區',
-    areaManagerName: 'F0010 曾志偉',
-    deputyManagerName: '',
-    storeName: '新莊中正店',
-    beautyLeader: '無',
-    todayVisitCount: 1,
-    assignedStoreCount: 6,
-    hasAbnormal: true,
-    visitStatus: '已完成'
-  }
-];
+// (MOCK_MANAGERS removed for production)
 
 // ==========================================
 // RESTful 呼叫核心 Helper
@@ -134,9 +94,16 @@ export const getActivityWall = async (date: string, region: string): Promise<Vis
 export const getManagers = async (): Promise<Manager[]> => {
   const data = await fetchJSON(`/managers`);
   if (data && data.length > 0) return data;
+  return [];
+};
 
-  // Fallback
-  return new Promise((resolve) => setTimeout(() => resolve(MOCK_MANAGERS), 500));
+export const importManagers = async (managers: Manager[]): Promise<boolean> => {
+  const data = await fetchJSON(`/managers/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(managers)
+  });
+  return !!(data && data.success);
 };
 
 export const createVisitRecord = async (payload: any): Promise<{ recordId: string }> => {

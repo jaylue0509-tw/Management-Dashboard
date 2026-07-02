@@ -112,6 +112,21 @@ async def get_managers():
         return []
     return managers
 
+@app.post("/api/managers/import")
+async def import_managers(managers: List[Manager] = Body(...)):
+    if not managers:
+        raise HTTPException(status_code=400, detail="No data provided")
+        
+    # 清空現有資料
+    await db.managers.delete_many({})
+    
+    # 轉換為 dictionary list 並確保沒有 _id 衝突
+    payload = [m.model_dump() for m in managers]
+    
+    # 大量寫入 MongoDB
+    await db.managers.insert_many(payload)
+    return {"success": True, "count": len(payload)}
+
 @app.post("/api/visit-records")
 async def create_visit_record(payload: dict = Body(...)):
     record_id = str(uuid.uuid4())
