@@ -1,23 +1,17 @@
 import os
+import json
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Body
-
-load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 import uuid
-import pymongo
+import redis.asyncio as redis
 
-app = FastAPI(title="東寵戰情牆 API", description="採用 MongoDB + FastAPI 的強大後端")
+load_dotenv()
 
-@app.on_event("startup")
-async def startup_db_client():
-    # 建立索引以確保大量資料時的查詢與排序效能
-    await db.visit_records.create_index([("createdAt", pymongo.DESCENDING)])
-    await db.visit_records.create_index([("region", pymongo.ASCENDING), ("createdAt", pymongo.DESCENDING)])
+app = FastAPI(title="東寵戰情牆 API", description="採用 Vercel KV 的輕量級後端")
 
 # CORS 設定：允許前端 (localhost:5173 等) 進行跨域請求
 app.add_middleware(
@@ -28,13 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === MongoDB 連線設定 ===
-# 可透過環境變數設定 MONGO_URI。若未設定，預設連線至本機的 MongoDB
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = "dongchong_dashboard"
-
-client = AsyncIOMotorClient(MONGO_URI)
-db = client[DB_NAME]
+# === Vercel KV (Redis) 連線設定 ===
+KV_URL = os.getenv("KV_URL", "redis://localhost:6379")
+redis_client = redis.from_url(KV_URL, decode_responses=True)
 
 # === Pydantic Schema 定義 ===
 class Manager(BaseModel):
@@ -79,7 +69,7 @@ class DashboardSummary(BaseModel):
 
 @app.get("/api/summary", response_model=DashboardSummary)
 async def get_summary(date: str = ""):
-    # 暫時回傳假資料，後續可實作對 db.visit_records 的 MongoDB Aggregate 彙總
+    # 暫時回傳假資料，後續可實作真正的計算
     return DashboardSummary(
         totalVisits=15,
         completedManagersCount=8,
@@ -93,46 +83,40 @@ async def get_summary(date: str = ""):
 
 @app.get("/api/activities", response_model=List[VisitRecord])
 async def get_activities(date: str = "", region: str = "all"):
-    # 建立查詢條件，將過濾交給 MongoDB 而不是 Python，搭配索引大幅提升效能
-    query = {}
-    if region != "all":
-        query["region"] = region
-        
-    # 從 MongoDB 讀取，排除 _id 欄位以免 JSON 轉換出錯
-    cursor = db.visit_records.find(query, {"_id": 0}).sort("createdAt", pymongo.DESCENDING)
-    records = await cursor.to_list(length=100)
+    # 從 Redis 讀取所有巡店紀錄
+    data = await redis_client.lrange("visit_records", 0, -1)
+    records = [json.loads(r) for r in data]
     
+    # Python 記憶體過濾
+    if region != "all":
+        records = [r for r in records if r.get("region") == region]
+        
     return records
 
 @app.get("/api/managers", response_model=List[Manager])
 async def get_managers():
-    cursor = db.managers.find({}, {"_id": 0})
-    managers = await cursor.to_list(length=100)
-    if not managers:
+    data = await redis_client.get("managers")
+    if not data:
         return []
-    return managers
+    return json.loads(data)
 
 @app.post("/api/managers/import")
 async def import_managers(managers: List[Manager] = Body(...)):
     if not managers:
         raise HTTPException(status_code=400, detail="No data provided")
         
-    # 清空現有資料
-    await db.managers.delete_many({})
-    
-    # 轉換為 dictionary list 並確保沒有 _id 衝突
     payload = [m.model_dump() for m in managers]
     
-    # 大量寫入 MongoDB
-    await db.managers.insert_many(payload)
+    # 寫入 Vercel KV
+    await redis_client.set("managers", json.dumps(payload))
     return {"success": True, "count": len(payload)}
 
 @app.post("/api/visit-records")
 async def create_visit_record(payload: dict = Body(...)):
     record_id = str(uuid.uuid4())
     payload["recordId"] = record_id
-    payload["createdAt"] = datetime.utcnow()
+    payload["createdAt"] = datetime.utcnow().isoformat()
     
-    # 將前端送來的 Payload 直接寫入 MongoDB Document
-    await db.visit_records.insert_one(payload)
+    # 將巡店紀錄存入 Redis List 頂端 (最新在前)
+    await redis_client.lpush("visit_records", json.dumps(payload))
     return {"success": True, "data": {"recordId": record_id}}
