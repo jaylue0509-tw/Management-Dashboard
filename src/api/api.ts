@@ -78,17 +78,8 @@ export const getDashboardSummary = async (date: string): Promise<DashboardSummar
 
 export const getActivityWall = async (date: string, region: string): Promise<VisitRecord[]> => {
   const data = await fetchJSON(`/activities?date=${date}&region=${region}`);
-  // 如果成功打通 API，但 MongoDB 剛建置沒有資料，會收到空陣列。
-  // 為了方便看畫面排版，這裡暫時將空陣列也 fallback 回 mock data。
-  if (data && data.length > 0) return data;
-
-  // Fallback
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      if (region === 'all') resolve(MOCK_ACTIVITIES);
-      else resolve(MOCK_ACTIVITIES.filter(a => a.region === region));
-    }, 500);
-  });
+  if (data) return data;
+  return [];
 };
 
 export const getManagers = async (): Promise<Manager[]> => {

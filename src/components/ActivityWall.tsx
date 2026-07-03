@@ -26,21 +26,25 @@ export const ActivityWall: React.FC<Props> = ({ activities }) => {
               <div className="flex items-center gap-1">
                 <MapPin size={14} className="text-primary" /> {activity.storeName} ({activity.region})
               </div>
-              <div className="flex items-center gap-1">
-                預計停留 {activity.expectedStayMinutes} 分鐘
-              </div>
-            </div>
-
-            <div className="flex gap-2" style={{ marginBottom: 'var(--space-4)' }}>
-              {activity.tags.map(tag => (
-                <span key={tag} className="badge badge-info">{tag}</span>
-              ))}
-              {activity.abnormalFlag && (
-                <span className="badge badge-error flex items-center gap-1">
-                  <AlertCircle size={12} /> 異常發現
-                </span>
+              {activity.expectedStayMinutes > 0 && (
+                <div className="flex items-center gap-1">
+                  預計停留 {activity.expectedStayMinutes} 分鐘
+                </div>
               )}
             </div>
+
+            {(activity.tags?.length > 0 || activity.abnormalFlag) && (
+              <div className="flex gap-2" style={{ marginBottom: 'var(--space-4)' }}>
+                {activity.tags?.map(tag => (
+                  <span key={tag} className="badge badge-info">{tag}</span>
+                ))}
+                {activity.abnormalFlag && (
+                  <span className="badge badge-error flex items-center gap-1">
+                    <AlertCircle size={12} /> 異常發現
+                  </span>
+                )}
+              </div>
+            )}
 
             {(activity.immediateImprovement || activity.highlightDescription) && (
               <div style={{ backgroundColor: 'var(--bg-app)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)' }}>

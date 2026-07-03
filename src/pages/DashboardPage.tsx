@@ -23,6 +23,14 @@ const DashboardSkeleton = () => (
   </div>
 );
 
+const groupBy = <T, K extends keyof any>(list: T[], getKey: (item: T) => K) =>
+  list.reduce((previous, currentItem) => {
+    const group = getKey(currentItem);
+    if (!previous[group]) previous[group] = [];
+    previous[group].push(currentItem);
+    return previous;
+  }, {} as Record<K, T[]>);
+
 export const DashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'map'>('dashboard');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -52,6 +60,34 @@ export const DashboardPage: React.FC = () => {
     };
     fetchData();
   }, []);
+
+  const uniqueManagers = useMemo(() => {
+    const grouped = groupBy(managers, m => m.areaManagerName);
+    return Object.entries(grouped).map(([name, stores]) => {
+      // 找出該主管今日填寫的動態
+      const managerActivities = activities.filter(a => a.areaManagerName === name);
+      // 找出該主管今日填寫了哪些「獨立的門市」
+      const visitedStores = Array.from(new Set(managerActivities.map(a => a.storeName)));
+      
+      const todayVisitCount = visitedStores.length;
+      const assignedStoreCount = stores.length;
+      const region = stores[0]?.region || '';
+      
+      let visitStatus = '尚未回填';
+      if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) visitStatus = '巡店中';
+      if (todayVisitCount > 0 && todayVisitCount >= assignedStoreCount) visitStatus = '已完成';
+
+      return {
+        ...stores[0],
+        areaManagerName: name,
+        region,
+        assignedStoreCount,
+        todayVisitCount,
+        visitStatus,
+        visitedStores
+      };
+    });
+  }, [managers, activities]);
 
   return (
     <div style={{ padding: 'var(--space-6)', maxWidth: '1440px', margin: '0 auto' }}>
@@ -103,7 +139,7 @@ export const DashboardPage: React.FC = () => {
               
               <div className="flex gap-6" style={{ alignItems: 'flex-start' }}>
                 <ManagerList 
-                  managers={managers} 
+                  managers={uniqueManagers} 
                   selectedManager={selectedManager} 
                   onSelect={setSelectedManager} 
                 />
