@@ -37,6 +37,7 @@ export const DashboardPage: React.FC = () => {
   const [activities, setActivities] = useState<VisitRecord[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -89,9 +90,23 @@ export const DashboardPage: React.FC = () => {
     });
   }, [managers, activities]);
 
+  const filteredManagers = useMemo(() => {
+    if (selectedDepartment === 'all') return uniqueManagers;
+    return uniqueManagers.filter(m => m.department === selectedDepartment);
+  }, [uniqueManagers, selectedDepartment]);
+
+  const filteredActivities = useMemo(() => {
+    if (selectedDepartment === 'all') return activities;
+    const validManagerNames = new Set(filteredManagers.map(m => m.areaManagerName));
+    return activities.filter(a => validManagerNames.has(a.areaManagerName));
+  }, [activities, filteredManagers, selectedDepartment]);
+
   return (
     <div style={{ padding: 'var(--space-6)', maxWidth: '1440px', margin: '0 auto' }}>
-      <HeaderBar />
+      <HeaderBar 
+        selectedDepartment={selectedDepartment}
+        onDepartmentChange={setSelectedDepartment}
+      />
       
       {/* 頁籤切換 */}
       <div className="flex gap-4" style={{ marginBottom: 'var(--space-6)', borderBottom: '1px solid var(--border-color)' }}>
@@ -139,13 +154,13 @@ export const DashboardPage: React.FC = () => {
               
               <div className="flex gap-6" style={{ alignItems: 'flex-start' }}>
                 <ManagerList 
-                  managers={uniqueManagers} 
+                  managers={filteredManagers} 
                   selectedManager={selectedManager} 
                   onSelect={setSelectedManager} 
                 />
                 
                 <main style={{ flex: 1 }}>
-                  <ActivityWall activities={activities} />
+                  <ActivityWall activities={filteredActivities} />
                 </main>
               </div>
             </>

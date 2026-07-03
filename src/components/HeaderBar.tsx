@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Clock } from 'lucide-react';
 
-export const HeaderBar: React.FC = () => {
+interface Props {
+  selectedDepartment: string;
+  onDepartmentChange: (dept: string) => void;
+}
+
+export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentChange }) => {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -17,9 +22,14 @@ export const HeaderBar: React.FC = () => {
           <Clock size={16} />
           {time.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
         </div>
-        <select className="card" style={{ padding: 'var(--space-2) var(--space-4)', border: '1px solid var(--border-color)', outline: 'none' }}>
+        <select 
+          className="card" 
+          style={{ padding: 'var(--space-2) var(--space-4)', border: '1px solid var(--border-color)', outline: 'none' }}
+          value={selectedDepartment}
+          onChange={(e) => onDepartmentChange(e.target.value)}
+        >
           <option value="all">全區檢視</option>
-          <option value="北一區">北一區</option>
+          <option value="北區">北區</option>
           <option value="中區">中區</option>
           <option value="南區">南區</option>
         </select>

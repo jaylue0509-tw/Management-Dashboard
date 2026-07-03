@@ -36,6 +36,9 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
                 <strong className="text-gray-900">{manager.areaManagerName}</strong>
                 <span className={`badge ${statusBadgeClass}`}>{manager.visitStatus}</span>
               </div>
+              <div className="text-sm text-gray-500" style={{ marginBottom: '4px' }}>
+                區經理: {manager.directorName}
+              </div>
               <div className="text-sm text-gray-500 flex justify-between">
                 <span>{manager.region} ({manager.assignedStoreCount}店)</span>
                 <span>今日: {manager.todayVisitCount} 筆</span>
