@@ -93,9 +93,9 @@ export const DashboardPage: React.FC = () => {
   const filteredManagers = useMemo(() => {
     if (selectedDepartment === 'all') return uniqueManagers;
     
-    // 將「北區」轉為「北」，以涵蓋「北一區」、「北二區」等
-    const keyword = selectedDepartment.replace('區', ''); 
-    return uniqueManagers.filter(m => m.department.includes(keyword) || m.region.includes(keyword));
+    // 將「營業一處」轉為「一處」作為關鍵字比對
+    const keyword = selectedDepartment.replace('營業', ''); 
+    return uniqueManagers.filter(m => m.department.includes(keyword) || m.department === selectedDepartment);
   }, [uniqueManagers, selectedDepartment]);
 
   const filteredActivities = useMemo(() => {

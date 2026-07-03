@@ -29,9 +29,8 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
           onChange={(e) => onDepartmentChange(e.target.value)}
         >
           <option value="all">全區檢視</option>
-          <option value="北區">北區</option>
-          <option value="中區">中區</option>
-          <option value="南區">南區</option>
+          <option value="營業一處">營業一處</option>
+          <option value="營業二處">營業二處</option>
         </select>
         <button className="btn btn-primary">
           ＋ 填寫巡店紀錄
