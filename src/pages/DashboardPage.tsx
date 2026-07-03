@@ -92,7 +92,10 @@ export const DashboardPage: React.FC = () => {
 
   const filteredManagers = useMemo(() => {
     if (selectedDepartment === 'all') return uniqueManagers;
-    return uniqueManagers.filter(m => m.department === selectedDepartment);
+    
+    // 將「北區」轉為「北」，以涵蓋「北一區」、「北二區」等
+    const keyword = selectedDepartment.replace('區', ''); 
+    return uniqueManagers.filter(m => m.department.includes(keyword) || m.region.includes(keyword));
   }, [uniqueManagers, selectedDepartment]);
 
   const filteredActivities = useMemo(() => {
