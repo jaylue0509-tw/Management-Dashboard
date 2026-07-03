@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { HeaderBar } from '../components/HeaderBar';
 import { SummaryCards } from '../components/SummaryCards';
 import { ActivityWall } from '../components/ActivityWall';
@@ -73,7 +73,7 @@ export const DashboardPage: React.FC = () => {
       const assignedStoreCount = stores.length;
       const region = stores[0]?.region || '';
       
-      let visitStatus = '尚未回填';
+      let visitStatus: '尚未回填' | '巡店中' | '已完成' = '尚未回填';
       if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) visitStatus = '巡店中';
       if (todayVisitCount > 0 && todayVisitCount >= assignedStoreCount) visitStatus = '已完成';
 

@@ -19,35 +19,7 @@ const MOCK_SUMMARY: DashboardSummary = {
   highlightCount: 3
 };
 
-const MOCK_ACTIVITIES: VisitRecord[] = [
-  {
-    recordId: 'uuid-1',
-    areaManagerName: '王小明',
-    jobTitle: '區主管',
-    actionType: '指導',
-    storeName: '台北站前店',
-    region: '北一區',
-    timeAgoMinutes: 10,
-    expectedStayMinutes: 60,
-    tags: ['排面陳列', '檔期輔銷物'],
-    immediateImprovement: '協助門市將排面商品依先進先出原則重新整理，並填補大位區排面空洞。',
-    highlightDescription: '指導新進同仁正確張貼本期海報於店外指定位置。',
-    abnormalFlag: false
-  },
-  {
-    recordId: 'uuid-2',
-    areaManagerName: '林美玲',
-    jobTitle: '區經理',
-    actionType: '發現異常',
-    storeName: '台中逢甲店',
-    region: '中區',
-    timeAgoMinutes: 45,
-    expectedStayMinutes: 45,
-    tags: ['店務檢視', '顧客服務'],
-    immediateImprovement: '已請店長立即將走道堆放紙箱移除。',
-    abnormalFlag: true
-  }
-];
+// (MOCK_ACTIVITIES removed)
 
 // (MOCK_MANAGERS removed for production)
 
