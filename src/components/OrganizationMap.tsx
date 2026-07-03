@@ -43,6 +43,9 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
         };
 
         const newManagers: Manager[] = [];
+        let lastDept = '';
+        let lastDirector = '';
+
         for (const row of data) {
           const m: Partial<Manager> = { todayVisitCount: 0, assignedStoreCount: 0, hasAbnormal: false, visitStatus: '尚未回填' };
           
@@ -53,6 +56,10 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
             // Remove newlines and extra spaces inside fields
             m[enKey] = String(rawVal).replace(/\s+/g, ' ').trim() as never;
           }
+          
+          // 如果處別或處長空白，則繼承上一筆資料（解決 Excel 合併儲存格產生的空白問題）
+          if (m.department) lastDept = m.department; else m.department = lastDept;
+          if (m.directorName) lastDirector = m.directorName; else m.directorName = lastDirector;
           
           if (m.storeName) {
             newManagers.push(m as Manager);
@@ -82,7 +89,13 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
   };
 
   return (
-    <div className="card" style={{ padding: 'var(--space-6)', minHeight: '600px' }}>
+    <div className="card" style={{ 
+      padding: 'var(--space-6)', 
+      minHeight: '600px',
+      background: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)',
+      border: 'none',
+      boxShadow: 'var(--shadow-md)'
+    }}>
       <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-6)' }}>
         <h2 className="text-xl font-bold flex items-center gap-2">
           <Building className="text-primary" size={24} />
@@ -119,11 +132,19 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
           const regions = groupBy(deptManagers, m => m.region);
 
           return (
-            <div key={deptKey} style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+            <div key={deptKey} style={{ 
+              border: '1px solid rgba(255, 255, 255, 0.4)', 
+              borderRadius: 'var(--radius-lg)', 
+              overflow: 'hidden',
+              background: 'rgba(255, 255, 255, 0.3)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.05)'
+            }}>
               {/* Department Header */}
-              <div className="flex justify-between items-center" style={{ backgroundColor: 'var(--color-secondary-50)', padding: '12px 16px', borderBottom: '1px solid var(--border-color)' }}>
-                <div className="font-bold text-lg text-gray-900">{dept}</div>
-                <div className="text-sm text-gray-700">處長：{director}</div>
+              <div className="flex justify-between items-center" style={{ backgroundColor: 'rgba(255, 255, 255, 0.4)', padding: '12px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.4)' }}>
+                <div className="font-bold text-lg text-gray-900">{dept || '未分類處別'}</div>
+                <div className="text-sm text-gray-800 font-medium">處長：{director || '未設定'}</div>
               </div>
               
               {/* Regions */}
@@ -138,16 +159,16 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                         <span style={{ fontSize: '1.1rem' }}>{region}</span>
                       </div>
                       
-                      <div className="flex flex-row flex-wrap items-start gap-4" style={{ paddingLeft: '8px' }}>
+                      <div className="flex flex-row flex-wrap items-stretch gap-4" style={{ paddingLeft: '8px' }}>
                         {Object.entries(areaManagers).map(([areaManager, stores]) => (
                           <div key={areaManager} style={{ 
-                            backgroundColor: 'white', 
-                            border: '1px solid var(--color-secondary-100)', 
-                            boxShadow: 'var(--shadow-sm)', 
+                            background: 'rgba(255, 255, 255, 0.65)', 
+                            border: '1px solid rgba(255, 255, 255, 0.8)', 
+                            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.05)', 
                             borderRadius: 'var(--radius-md)', 
                             padding: '16px',
-                            width: '280px',
-                            flexShrink: 0
+                            flex: '1 1 250px',
+                            maxWidth: '100%'
                           }}>
                             <div className="font-bold text-gray-900 flex items-center gap-2" style={{ borderBottom: '1px solid var(--color-secondary-100)', paddingBottom: '8px', marginBottom: '12px' }}>
                               <Users size={18} className="text-primary" />
