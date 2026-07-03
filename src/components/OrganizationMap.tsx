@@ -148,18 +148,18 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
               </div>
               
               {/* Regions */}
-              <div className="flex flex-row flex-wrap items-start gap-8" style={{ padding: '16px' }}>
+              <div className="flex flex-row gap-8" style={{ padding: '16px', overflowX: 'auto', flexWrap: 'nowrap' }}>
                 {Object.entries(regions).map(([region, regManagers]) => {
                   const areaManagers = groupBy(regManagers, m => m.areaManagerName);
                   
                   return (
-                    <div key={region} className="flex flex-col gap-4" style={{ minWidth: '300px', flex: '0 1 auto' }}>
-                      <div className="font-semibold text-primary flex items-center gap-2" style={{ borderBottom: '2px solid var(--color-primary-100)', paddingBottom: '8px' }}>
+                    <div key={region} className="flex flex-col gap-4" style={{ minWidth: '320px', width: '320px', flexShrink: 0 }}>
+                      <div className="font-semibold text-primary flex items-center justify-center gap-2" style={{ borderBottom: '2px solid var(--color-primary-100)', paddingBottom: '8px' }}>
                         <MapPin size={18} />
                         <span style={{ fontSize: '1.1rem' }}>{region}</span>
                       </div>
                       
-                      <div className="flex flex-row flex-wrap items-stretch gap-4" style={{ paddingLeft: '8px' }}>
+                      <div className="flex flex-row flex-wrap items-stretch gap-4" style={{ paddingLeft: '0' }}>
                         {Object.entries(areaManagers).map(([areaManager, stores]) => (
                           <div key={areaManager} style={{ 
                             background: 'rgba(255, 255, 255, 0.65)', 
@@ -167,16 +167,17 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                             boxShadow: '0 4px 16px rgba(0, 0, 0, 0.05)', 
                             borderRadius: 'var(--radius-md)', 
                             padding: '16px',
-                            flex: '1 1 250px',
-                            maxWidth: '100%'
+                            flex: '1 1 100%',
+                            maxWidth: '100%',
+                            textAlign: 'center'
                           }}>
-                            <div className="font-bold text-gray-900 flex items-center gap-2" style={{ borderBottom: '1px solid var(--color-secondary-100)', paddingBottom: '8px', marginBottom: '12px' }}>
+                            <div className="font-bold text-gray-900 flex items-center justify-center gap-2" style={{ borderBottom: '1px solid var(--color-secondary-100)', paddingBottom: '8px', marginBottom: '12px' }}>
                               <Users size={18} className="text-primary" />
                               {areaManager}
                             </div>
                             <ul className="flex flex-col gap-3">
                               {stores.map(store => (
-                                <li key={store.storeName} className="flex justify-between items-center text-sm text-gray-700">
+                                <li key={store.storeName} className="flex justify-center items-center gap-2 text-sm text-gray-700">
                                   <span>{store.storeName}</span>
                                   {store.beautyLeader && store.beautyLeader !== '無' && (
                                     <span style={{ 
