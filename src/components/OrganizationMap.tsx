@@ -175,17 +175,22 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                               <Users size={18} className="text-primary" />
                               {areaManager}
                             </div>
-                            <ul className="flex flex-col gap-3">
+                            <ul style={{ 
+                              display: 'grid', 
+                              gridTemplateColumns: 'repeat(2, 1fr)', 
+                              gap: '12px 8px'
+                            }}>
                               {stores.map(store => (
-                                <li key={store.storeName} className="flex justify-center items-center gap-2 text-sm text-gray-700">
-                                  <span>{store.storeName}</span>
+                                <li key={store.storeName} className="flex flex-col items-center justify-center gap-1 text-sm text-gray-700 text-center" style={{ padding: '4px' }}>
+                                  <span className="font-medium">{store.storeName}</span>
                                   {store.beautyLeader && store.beautyLeader !== '無' && (
                                     <span style={{ 
                                       fontSize: '0.7rem', 
                                       backgroundColor: 'var(--color-error-100)', 
                                       color: 'var(--color-error)', 
                                       padding: '2px 6px', 
-                                      borderRadius: '4px' 
+                                      borderRadius: '4px',
+                                      whiteSpace: 'nowrap'
                                     }}>
                                       {store.beautyLeader}
                                     </span>
