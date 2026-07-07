@@ -5,7 +5,7 @@ import { ActivityWall } from '../components/ActivityWall';
 import { ManagerList } from '../components/ManagerList';
 import { OrganizationMap } from '../components/OrganizationMap';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
-import { getDashboardSummary, getActivityWall, getManagers } from '../api/api';
+import { getActivityWall, getManagers } from '../api/api';
 import { RefreshCw } from 'lucide-react';
 
 const DashboardSkeleton = () => (
