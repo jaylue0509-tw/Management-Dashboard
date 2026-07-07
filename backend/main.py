@@ -104,15 +104,38 @@ class DashboardSummary(BaseModel):
 
 @app.get("/api/summary", response_model=DashboardSummary)
 def get_summary(date: str = ""):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            if date:
+                cur.execute("SELECT data FROM visit_records WHERE created_at::date = %s::date", (date,))
+            else:
+                # 預設抓取今日
+                cur.execute("SELECT data FROM visit_records WHERE created_at::date = CURRENT_DATE")
+            
+            rows = cur.fetchall()
+            
+            total_visits = len(rows)
+            abnormal_count = 0
+            expected_stay = 0
+            highlight_count = 0
+            
+            for r in rows:
+                data = r[0]
+                if data.get("abnormalFlag"):
+                    abnormal_count += 1
+                expected_stay += int(data.get("expectedStayMinutes", 0))
+                if data.get("highlightDescription"):
+                    highlight_count += 1
+
     return DashboardSummary(
-        totalVisits=15,
-        completedManagersCount=8,
-        pendingManagersCount=4,
-        visitedStoresCount=12,
-        abnormalIssuesCount=2,
-        improvementIssuesCount=5,
-        totalExpectedStayMinutes=720,
-        highlightCount=3
+        totalVisits=total_visits,
+        completedManagersCount=0,
+        pendingManagersCount=0,
+        visitedStoresCount=0,
+        abnormalIssuesCount=abnormal_count,
+        improvementIssuesCount=0,
+        totalExpectedStayMinutes=expected_stay,
+        highlightCount=highlight_count
     )
 
 @app.get("/api/activities", response_model=List[VisitRecord])
