@@ -76,7 +76,7 @@ def init_db():
     except Exception as e:
         print("DB Init Error:", e)
 
-init_db()
+# init_db() # 效能優化：已手動建表完成，關閉此功能以提升 Serverless Cold Start 啟動速度
 
 # === Pydantic Schema 定義 ===
 class Manager(BaseModel):
