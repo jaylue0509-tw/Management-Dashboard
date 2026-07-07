@@ -181,14 +181,14 @@ export const DashboardPage: React.FC = () => {
             <>
               <SummaryCards summary={dynamicSummary} />
               
-              <div className="flex flex-col md:flex-row gap-6" style={{ alignItems: 'flex-start' }}>
+              <div className="flex flex-col md:flex-row" style={{ gap: 'var(--space-6)', alignItems: 'flex-start' }}>
                 <ManagerList 
                   managers={filteredManagers} 
                   selectedManager={selectedManager} 
                   onSelect={setSelectedManager} 
                 />
                 
-                <main className="w-full" style={{ flex: 1 }}>
+                <main className="w-full md:w-auto" style={{ flex: 1 }}>
                   <ActivityWall activities={filteredActivities} />
                 </main>
               </div>
