@@ -73,6 +73,7 @@ export const DashboardPage: React.FC = () => {
       const todayVisitCount = visitedStores.length;
       const assignedStoreCount = stores.length;
       const region = stores[0]?.region || '';
+      const expectedStayMinutes = managerActivities.reduce((acc, curr) => acc + (curr.expectedStayMinutes || 0), 0);
       
       let visitStatus: '尚未回填' | '巡店中' | '已完成' = '尚未回填';
       if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) visitStatus = '巡店中';
@@ -85,7 +86,8 @@ export const DashboardPage: React.FC = () => {
         assignedStoreCount,
         todayVisitCount,
         visitStatus,
-        visitedStores
+        visitedStores,
+        expectedStayMinutes
       };
     });
   }, [managers, activities]);
