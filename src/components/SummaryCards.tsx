@@ -15,6 +15,10 @@ export const SummaryCards: React.FC<Props> = ({ summary }) => {
         <div className="text-4xl font-bold text-primary" style={{ marginTop: 'var(--space-2)' }}>{summary.totalVisits}</div>
       </div>
       <div className="card">
+        <div className="text-sm text-gray-500 font-medium">總預計停留時間 (分鐘)</div>
+        <div className="text-4xl font-bold" style={{ color: 'var(--color-primary-600)', marginTop: 'var(--space-2)' }}>{summary.totalExpectedStayMinutes}</div>
+      </div>
+      <div className="card">
         <div className="text-sm text-gray-500 font-medium">發現異常事項</div>
         <div className="text-4xl font-bold" style={{ color: 'var(--color-error)', marginTop: 'var(--space-2)' }}>{summary.abnormalIssuesCount}</div>
       </div>

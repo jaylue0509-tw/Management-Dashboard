@@ -13,6 +13,8 @@ export interface Manager {
   assignedStoreCount?: number;
   hasAbnormal?: boolean;
   visitStatus?: '尚未回填' | '巡店中' | '已完成';
+  visitedStores?: string[];
+  expectedStayMinutes?: number;
 }
 
 export interface VisitRecord {
