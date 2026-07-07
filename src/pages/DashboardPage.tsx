@@ -6,6 +6,7 @@ import { ManagerList } from '../components/ManagerList';
 import { OrganizationMap } from '../components/OrganizationMap';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
 import { getDashboardSummary, getActivityWall, getManagers } from '../api/api';
+import { RefreshCw } from 'lucide-react';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -38,26 +39,37 @@ export const DashboardPage: React.FC = () => {
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchData = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
+    else setIsRefreshing(true);
+    
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const [actData, mgrData] = await Promise.all([
+        getActivityWall(today, 'all'),
+        getManagers()
+      ]);
+      setActivities(actData);
+      setManagers(mgrData);
+    } catch (err) {
+      console.error("Failed to load dashboard data", err);
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const today = new Date().toISOString().split('T')[0];
-        const [, actData, mgrData] = await Promise.all([
-          getDashboardSummary(today), // Keep the fetch call to not break the API promise array but ignore the result
-          getActivityWall(today, 'all'),
-          getManagers()
-        ]);
-        setActivities(actData);
-        setManagers(mgrData);
-      } catch (err) {
-        console.error("Failed to load dashboard data", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
+    fetchData(); // 初始載入
+
+    // 設定 60 秒自動背景輪詢
+    const intervalId = setInterval(() => {
+      fetchData(true);
+    }, 60000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   const uniqueManagers = useMemo(() => {
@@ -112,10 +124,12 @@ export const DashboardPage: React.FC = () => {
     
     let abnormalCount = 0;
     let highlightCount = 0;
+    let expectedStay = 0;
     
     targetActivities.forEach(a => {
       if (a.abnormalFlag) abnormalCount++;
       if (a.highlightDescription) highlightCount++;
+      expectedStay += (a.expectedStayMinutes || 0);
     });
 
     return {
@@ -125,7 +139,7 @@ export const DashboardPage: React.FC = () => {
       visitedStoresCount: 0,
       abnormalIssuesCount: abnormalCount,
       improvementIssuesCount: 0,
-      totalExpectedStayMinutes: 0,
+      totalExpectedStayMinutes: expectedStay,
       highlightCount: highlightCount
     } as DashboardSummary;
   }, [filteredActivities, selectedManager]);
@@ -137,39 +151,64 @@ export const DashboardPage: React.FC = () => {
         onDepartmentChange={setSelectedDepartment}
       />
       
-      {/* 頁籤切換 */}
-      <div className="flex gap-4" style={{ marginBottom: 'var(--space-6)', borderBottom: '1px solid var(--border-color)' }}>
+      {/* 頁籤切換與功能列 */}
+      <div className="flex justify-between items-end" style={{ marginBottom: 'var(--space-6)', borderBottom: '1px solid var(--border-color)' }}>
+        <div className="flex gap-4">
+          <button 
+            onClick={() => setActiveTab('dashboard')}
+            style={{
+              padding: '12px 16px',
+              fontSize: '1.125rem',
+              fontWeight: 500,
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === 'dashboard' ? '3px solid var(--color-primary-500)' : '3px solid transparent',
+              color: activeTab === 'dashboard' ? 'var(--color-primary-500)' : 'var(--color-secondary-500)',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            即時動態牆
+          </button>
+          <button 
+            onClick={() => setActiveTab('map')}
+            style={{
+              padding: '12px 16px',
+              fontSize: '1.125rem',
+              fontWeight: 500,
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === 'map' ? '3px solid var(--color-primary-500)' : '3px solid transparent',
+              color: activeTab === 'map' ? 'var(--color-primary-500)' : 'var(--color-secondary-500)',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            區主管門店配置圖
+          </button>
+        </div>
+        
+        {/* 手動重整按鈕 */}
         <button 
-          onClick={() => setActiveTab('dashboard')}
+          onClick={() => fetchData(true)}
+          disabled={isRefreshing}
+          className="flex items-center gap-2"
           style={{
-            padding: '12px 16px',
-            fontSize: '1.125rem',
+            padding: '8px 16px',
+            marginBottom: '8px',
+            backgroundColor: 'var(--color-primary-50)',
+            color: 'var(--color-primary-600)',
+            border: '1px solid var(--color-primary-100)',
+            borderRadius: 'var(--radius-md)',
+            fontSize: '0.875rem',
             fontWeight: 500,
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'dashboard' ? '3px solid var(--color-primary-500)' : '3px solid transparent',
-            color: activeTab === 'dashboard' ? 'var(--color-primary-500)' : 'var(--color-secondary-500)',
-            cursor: 'pointer',
+            cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            opacity: isRefreshing ? 0.7 : 1,
             transition: 'all 0.2s ease'
           }}
         >
-          即時動態牆
-        </button>
-        <button 
-          onClick={() => setActiveTab('map')}
-          style={{
-            padding: '12px 16px',
-            fontSize: '1.125rem',
-            fontWeight: 500,
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'map' ? '3px solid var(--color-primary-500)' : '3px solid transparent',
-            color: activeTab === 'map' ? 'var(--color-primary-500)' : 'var(--color-secondary-500)',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease'
-          }}
-        >
-          區主管門店配置圖
+          <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+          {isRefreshing ? '更新中...' : '立即更新'}
         </button>
       </div>
 
