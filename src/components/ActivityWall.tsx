@@ -27,8 +27,8 @@ export const ActivityWall: React.FC<Props> = ({ activities }) => {
                 <MapPin size={14} className="text-primary" /> {activity.storeName} ({activity.region})
               </div>
               {activity.expectedStayMinutes > 0 && (
-                <div className="flex items-center gap-1">
-                  預計停留 {activity.expectedStayMinutes} 分鐘
+                <div className="badge badge-success flex items-center gap-1" style={{ fontSize: '0.85rem' }}>
+                  <Clock size={12} /> 預計停留 {activity.expectedStayMinutes} 分鐘
                 </div>
               )}
             </div>
