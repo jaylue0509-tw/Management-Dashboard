@@ -15,14 +15,15 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
         {selectedManager && (
           <button 
             onClick={() => onSelect(null)}
-            className="text-sm font-medium block md:hidden"
+            className="text-sm font-medium"
             style={{ 
               color: 'var(--color-primary-600)', 
               background: 'var(--color-primary-50)',
               padding: '4px 8px',
               borderRadius: 'var(--radius-sm)',
               border: 'none',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              marginBottom: '4px'
             }}
           >
             ← 返回列表
@@ -30,7 +31,7 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
         )}
       </div>
       <div className="flex flex-col gap-3" style={{ overflowY: 'auto', flex: 1 }}>
-        {managers.map((manager, idx) => {
+        {(selectedManager ? managers.filter(m => m.areaManagerName === selectedManager.areaManagerName) : managers).map((manager, idx) => {
           const isSelected = selectedManager?.areaManagerName === manager.areaManagerName;
           
           let statusBadgeClass = 'badge-gray';
@@ -40,7 +41,7 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
           return (
             <div 
               key={idx} 
-              className={`card ${selectedManager && !isSelected ? 'hidden md:block' : 'block'}`}
+              className="card"
               style={{ 
                 padding: 'var(--space-3)', 
                 cursor: 'pointer',
