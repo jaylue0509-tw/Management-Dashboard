@@ -33,7 +33,6 @@ const groupBy = <T, K extends keyof any>(list: T[], getKey: (item: T) => K) =>
 
 export const DashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'map'>('dashboard');
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [activities, setActivities] = useState<VisitRecord[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
@@ -45,12 +44,11 @@ export const DashboardPage: React.FC = () => {
       setLoading(true);
       try {
         const today = new Date().toISOString().split('T')[0];
-        const [sumData, actData, mgrData] = await Promise.all([
-          getDashboardSummary(today),
+        const [, actData, mgrData] = await Promise.all([
+          getDashboardSummary(today), // Keep the fetch call to not break the API promise array but ignore the result
           getActivityWall(today, 'all'),
           getManagers()
         ]);
-        setSummary(sumData);
         setActivities(actData);
         setManagers(mgrData);
       } catch (err) {
