@@ -169,3 +169,38 @@ def create_visit_record(payload: dict = Body(...)):
         conn.commit()
         
     return {"success": True, "data": {"recordId": record_id}}
+
+@app.post("/api/webhook/google-forms")
+def webhook_google_forms(payload: dict = Body(...)):
+    record_id = str(uuid.uuid4())
+    
+    # 建立符合 VisitRecord 的資料結構
+    visit_record = {
+        "recordId": record_id,
+        "areaManagerName": payload.get("areaManagerName", "未知主管"),
+        "jobTitle": "區主管",
+        "actionType": "實地巡店",
+        "storeName": payload.get("storeName", "未知門市"),
+        "region": payload.get("region", "未知區域"),
+        "timeAgoMinutes": 0,
+        "expectedStayMinutes": payload.get("expectedStayMinutes", 0),
+        "tags": ["巡店回報"],
+        "immediateImprovement": payload.get("defects", "") + "\n" + payload.get("summary", ""),
+        "highlightDescription": payload.get("highlights", ""),
+        "abnormalFlag": bool(payload.get("defects")),
+        "createdAt": datetime.utcnow().isoformat()
+    }
+    
+    # 如果有填寫異常，加上 tags
+    if visit_record["abnormalFlag"]:
+        visit_record["tags"].append("發現異常")
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO visit_records (id, region, created_at, data)
+                VALUES (%s, %s, %s, %s)
+            """, (record_id, visit_record["region"], datetime.utcnow(), Json(visit_record)))
+        conn.commit()
+        
+    return {"success": True, "data": {"recordId": record_id}}
