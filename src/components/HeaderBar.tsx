@@ -32,9 +32,6 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
           <option value="營業一處">營業一處</option>
           <option value="營業二處">營業二處</option>
         </select>
-        <button className="btn btn-primary">
-          ＋ 填寫巡店紀錄
-        </button>
       </div>
     </header>
   );
