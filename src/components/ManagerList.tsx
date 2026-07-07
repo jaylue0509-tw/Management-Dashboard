@@ -4,15 +4,33 @@ import type { Manager } from '../types';
 interface Props {
   managers: Manager[];
   selectedManager: Manager | null;
-  onSelect: (manager: Manager) => void;
+  onSelect: (manager: Manager | null) => void;
 }
 
 export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect }) => {
   return (
     <aside className="card" style={{ width: '320px', display: 'flex', flexDirection: 'column' }}>
-      <h2 className="text-lg font-bold text-gray-900" style={{ marginBottom: 'var(--space-4)' }}>區主管進度</h2>
+      <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-4)' }}>
+        <h2 className="text-lg font-bold text-gray-900">區主管進度</h2>
+        {selectedManager && (
+          <button 
+            onClick={() => onSelect(null)}
+            className="text-sm font-medium"
+            style={{ 
+              color: 'var(--color-primary-600)', 
+              background: 'var(--color-primary-50)',
+              padding: '4px 8px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            ← 返回列表
+          </button>
+        )}
+      </div>
       <div className="flex flex-col gap-3" style={{ overflowY: 'auto', flex: 1 }}>
-        {managers.map((manager, idx) => {
+        {(selectedManager ? managers.filter(m => m.areaManagerName === selectedManager.areaManagerName) : managers).map((manager, idx) => {
           const isSelected = selectedManager?.areaManagerName === manager.areaManagerName;
           
           let statusBadgeClass = 'badge-gray';
@@ -30,7 +48,13 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
                 boxShadow: isSelected ? 'var(--shadow-md)' : 'none',
                 backgroundColor: isSelected ? 'var(--color-primary-50)' : 'var(--bg-surface)'
               }}
-              onClick={() => onSelect(manager)}
+              onClick={() => {
+                if (isSelected) {
+                  onSelect(null);
+                } else {
+                  onSelect(manager);
+                }
+              }}
             >
               <div className="flex justify-between items-start" style={{ marginBottom: 'var(--space-2)' }}>
                 <strong className="text-gray-900">{manager.areaManagerName}</strong>
