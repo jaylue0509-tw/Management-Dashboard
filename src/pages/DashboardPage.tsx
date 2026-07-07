@@ -106,6 +106,32 @@ export const DashboardPage: React.FC = () => {
     return activities.filter(a => validManagerNames.has(a.areaManagerName));
   }, [activities, filteredManagers, selectedDepartment]);
 
+  const dynamicSummary = useMemo(() => {
+    let targetActivities = filteredActivities;
+    if (selectedManager) {
+      targetActivities = filteredActivities.filter(a => a.areaManagerName === selectedManager.areaManagerName);
+    }
+    
+    let abnormalCount = 0;
+    let highlightCount = 0;
+    
+    targetActivities.forEach(a => {
+      if (a.abnormalFlag) abnormalCount++;
+      if (a.highlightDescription) highlightCount++;
+    });
+
+    return {
+      totalVisits: targetActivities.length,
+      completedManagersCount: 0,
+      pendingManagersCount: 0,
+      visitedStoresCount: 0,
+      abnormalIssuesCount: abnormalCount,
+      improvementIssuesCount: 0,
+      totalExpectedStayMinutes: 0,
+      highlightCount: highlightCount
+    } as DashboardSummary;
+  }, [filteredActivities, selectedManager]);
+
   return (
     <div style={{ padding: 'var(--space-6)', maxWidth: '1440px', margin: '0 auto' }}>
       <HeaderBar 
@@ -155,7 +181,7 @@ export const DashboardPage: React.FC = () => {
         <>
           {activeTab === 'dashboard' ? (
             <>
-              <SummaryCards summary={summary} />
+              <SummaryCards summary={dynamicSummary} />
               
               <div className="flex gap-6" style={{ alignItems: 'flex-start' }}>
                 <ManagerList 
