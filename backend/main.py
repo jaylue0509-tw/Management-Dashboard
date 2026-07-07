@@ -75,6 +75,10 @@ class Manager(BaseModel):
     hasAbnormal: bool = False
     visitStatus: str = "尚未回填"
 
+class PhotoPair(BaseModel):
+    beforeUrl: str
+    afterUrl: str
+
 class VisitRecord(BaseModel):
     recordId: str
     areaManagerName: str
@@ -88,6 +92,7 @@ class VisitRecord(BaseModel):
     immediateImprovement: str = ""
     highlightDescription: Optional[str] = ""
     abnormalFlag: bool = False
+    photoPairs: List[PhotoPair] = []
     createdAt: datetime = Field(default_factory=datetime.utcnow)
 
 class DashboardSummary(BaseModel):
@@ -231,6 +236,7 @@ def webhook_google_forms(payload: dict = Body(...)):
         "immediateImprovement": payload.get("defects", "") + "\n" + payload.get("summary", ""),
         "highlightDescription": payload.get("highlights", ""),
         "abnormalFlag": bool(payload.get("defects")),
+        "photoPairs": payload.get("photoPairs", []),
         "createdAt": datetime.utcnow().isoformat()
     }
     

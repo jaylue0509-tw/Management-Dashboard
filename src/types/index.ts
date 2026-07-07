@@ -23,6 +23,10 @@ export interface VisitRecord {
   storeName: string;
   region: string;
   timeAgoMinutes: number;
+  photoPairs?: {
+    beforeUrl: string;
+    afterUrl: string;
+  }[];
   expectedStayMinutes: number;
   tags: string[];
   immediateImprovement: string;
