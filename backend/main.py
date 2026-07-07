@@ -142,10 +142,30 @@ def get_summary(date: str = ""):
 def get_activities(date: str = "", region: str = "all"):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            if region != "all":
-                cur.execute("SELECT data FROM visit_records WHERE region = %s ORDER BY created_at DESC LIMIT 100", (region,))
+            # 建立基本的查詢語句
+            query = "SELECT data FROM visit_records"
+            params = []
+            conditions = []
+            
+            # 加入日期過濾
+            if date:
+                conditions.append("created_at::date = %s::date")
+                params.append(date)
             else:
-                cur.execute("SELECT data FROM visit_records ORDER BY created_at DESC LIMIT 100")
+                # 預設過濾今日
+                conditions.append("created_at::date = CURRENT_DATE")
+            
+            # 加入區域過濾
+            if region != "all":
+                conditions.append("region = %s")
+                params.append(region)
+                
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+                
+            query += " ORDER BY created_at DESC LIMIT 100"
+            
+            cur.execute(query, tuple(params))
             rows = cur.fetchall()
             return [row[0] for row in rows]
 

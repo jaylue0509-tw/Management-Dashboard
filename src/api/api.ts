@@ -9,14 +9,14 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD 
 // Mock Data (假資料，作為無資料庫或網路錯誤時的 Fallback)
 // ==========================================
 const MOCK_SUMMARY: DashboardSummary = {
-  totalVisits: 15,
-  completedManagersCount: 8,
-  pendingManagersCount: 4,
-  visitedStoresCount: 12,
-  abnormalIssuesCount: 2,
-  improvementIssuesCount: 5,
-  totalExpectedStayMinutes: 720,
-  highlightCount: 3
+  totalVisits: 0,
+  completedManagersCount: 0,
+  pendingManagersCount: 0,
+  visitedStoresCount: 0,
+  abnormalIssuesCount: 0,
+  improvementIssuesCount: 0,
+  totalExpectedStayMinutes: 0,
+  highlightCount: 0
 };
 
 // (MOCK_ACTIVITIES removed)
