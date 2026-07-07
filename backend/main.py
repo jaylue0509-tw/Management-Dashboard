@@ -23,15 +23,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from psycopg2 import pool
+from contextlib import contextmanager
+
 POSTGRES_URL = os.getenv("POSTGRES_URL")
 
+# 初始化連線池 (Connection Pool)
+# 最小連線數 1，最大連線數 5，避免耗盡 Vercel Postgres 的同時連線上限
+db_pool = None
+if POSTGRES_URL:
+    try:
+        db_pool = pool.SimpleConnectionPool(1, 5, POSTGRES_URL, sslmode='require')
+    except Exception as e:
+        print("連線池初始化失敗:", e)
+
+@contextmanager
 def get_db_connection():
-    if not POSTGRES_URL:
-        # Fallback 避免本地報錯，雖然沒設定會無法連線
-        raise Exception("POSTGRES_URL is not set")
-    # Vercel Postgres 需要 SSL
-    conn = psycopg2.connect(POSTGRES_URL, sslmode='require')
-    return conn
+    if not POSTGRES_URL or not db_pool:
+        raise Exception("POSTGRES_URL is not set or pool not initialized")
+    
+    # 從連線池中獲取一條可用連線
+    conn = db_pool.getconn()
+    try:
+        yield conn
+    finally:
+        # 使用完畢後，務必將連線放回池中供下一次請求使用
+        db_pool.putconn(conn)
 
 # 初始化資料表 (如果不存在的話)
 def init_db():
@@ -112,10 +129,10 @@ def get_summary(date: str = ""):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             if date:
-                cur.execute("SELECT data FROM visit_records WHERE created_at::date = %s::date", (date,))
+                cur.execute("SELECT data FROM visit_records WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = %s::date", (date,))
             else:
-                # 預設抓取今日
-                cur.execute("SELECT data FROM visit_records WHERE created_at::date = CURRENT_DATE")
+                # 預設抓取今日 (台灣時間)
+                cur.execute("SELECT data FROM visit_records WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date")
             
             rows = cur.fetchall()
             
@@ -154,11 +171,11 @@ def get_activities(date: str = "", region: str = "all"):
             
             # 加入日期過濾
             if date:
-                conditions.append("created_at::date = %s::date")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = %s::date")
                 params.append(date)
             else:
-                # 預設過濾今日
-                conditions.append("created_at::date = CURRENT_DATE")
+                # 預設過濾今日 (台灣時間)
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date")
             
             # 加入區域過濾
             if region != "all":
