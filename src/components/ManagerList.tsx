@@ -9,7 +9,7 @@ interface Props {
 
 export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect }) => {
   return (
-    <aside className="card" style={{ width: '320px', display: 'flex', flexDirection: 'column' }}>
+    <aside className="card w-full md:w-80 flex-shrink-0" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-4)' }}>
         <h2 className="text-lg font-bold text-gray-900">區主管進度</h2>
         {selectedManager && (

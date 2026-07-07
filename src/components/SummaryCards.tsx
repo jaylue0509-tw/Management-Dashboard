@@ -9,7 +9,7 @@ export const SummaryCards: React.FC<Props> = ({ summary }) => {
   if (!summary) return null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
       <div className="card">
         <div className="text-sm text-gray-500 font-medium">今日巡店總筆數</div>
         <div className="text-4xl font-bold text-primary" style={{ marginTop: 'var(--space-2)' }}>{summary.totalVisits}</div>
