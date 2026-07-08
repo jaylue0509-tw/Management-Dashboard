@@ -5,9 +5,10 @@ interface Props {
   managers: Manager[];
   selectedManager: Manager | null;
   onSelect: (manager: Manager | null) => void;
+  timeRangeLabel?: string;
 }
 
-export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect }) => {
+export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect, timeRangeLabel = '今日' }) => {
   return (
     <aside className="card mobile-w-full" style={{ width: '320px', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
       <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-4)' }}>
@@ -66,11 +67,11 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
               </div>
               <div className="text-sm text-gray-500 flex justify-between">
                 <span>{manager.region} ({manager.assignedStoreCount}店)</span>
-                <span>今日: {manager.todayVisitCount} 筆 {(manager.expectedStayMinutes || 0) > 0 && `(${manager.expectedStayMinutes}分)`}</span>
+                <span>{timeRangeLabel}: {manager.todayVisitCount} 筆 {(manager.expectedStayMinutes || 0) > 0 && `(${manager.expectedStayMinutes}分)`}</span>
               </div>
               {(manager.visitedStores && manager.visitedStores.length > 0) && (
                 <div className="text-xs text-gray-700 mt-2" style={{ marginTop: '8px', padding: '6px', backgroundColor: 'var(--color-secondary-50)', borderRadius: 'var(--radius-sm)' }}>
-                  <strong>本日巡店：</strong>{manager.visitedStores.join(', ')}
+                  <strong>{timeRangeLabel}巡店：</strong>{manager.visitedStores.join(', ')}
                 </div>
               )}
             </div>

@@ -4,9 +4,11 @@ import { Clock } from 'lucide-react';
 interface Props {
   selectedDepartment: string;
   onDepartmentChange: (dept: string) => void;
+  timeRange: string;
+  onTimeRangeChange: (range: string) => void;
 }
 
-export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentChange }) => {
+export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentChange, timeRange, onTimeRangeChange }) => {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -22,16 +24,30 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
           <Clock size={16} />
           {time.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}
         </div>
-        <select 
-          className="card" 
-          style={{ padding: 'var(--space-2) var(--space-4)', border: '1px solid var(--border-color)', outline: 'none' }}
-          value={selectedDepartment}
-          onChange={(e) => onDepartmentChange(e.target.value)}
-        >
-          <option value="all">全區檢視</option>
-          <option value="營業一處">營業一處</option>
-          <option value="營業二處">營業二處</option>
-        </select>
+        
+        <div className="flex gap-3">
+          <select 
+            className="card" 
+            style={{ padding: 'var(--space-2) var(--space-4)', border: '1px solid var(--border-color)', outline: 'none' }}
+            value={timeRange}
+            onChange={(e) => onTimeRangeChange(e.target.value)}
+          >
+            <option value="day">今日動態</option>
+            <option value="week">本週動態</option>
+            <option value="month">本月動態</option>
+          </select>
+          
+          <select 
+            className="card" 
+            style={{ padding: 'var(--space-2) var(--space-4)', border: '1px solid var(--border-color)', outline: 'none' }}
+            value={selectedDepartment}
+            onChange={(e) => onDepartmentChange(e.target.value)}
+          >
+            <option value="all">全區檢視</option>
+            <option value="營業一處">營業一處</option>
+            <option value="營業二處">營業二處</option>
+          </select>
+        </div>
       </div>
     </header>
   );

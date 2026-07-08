@@ -161,7 +161,7 @@ def get_summary(date: str = ""):
     )
 
 @app.get("/api/activities", response_model=List[VisitRecord])
-def get_activities(date: str = "", region: str = "all"):
+def get_activities(time_range: str = "day", region: str = "all"):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             # 建立基本的查詢語句
@@ -169,12 +169,13 @@ def get_activities(date: str = "", region: str = "all"):
             params = []
             conditions = []
             
-            # 加入日期過濾
-            if date:
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = %s::date")
-                params.append(date)
+            # 加入時間區間過濾
+            if time_range == "week":
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+            elif time_range == "month":
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
             else:
-                # 預設過濾今日 (台灣時間)
+                # 預設過濾今日 (day)
                 conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date")
             
             # 加入區域過濾

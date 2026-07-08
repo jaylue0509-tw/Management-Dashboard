@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { HeaderBar } from '../components/HeaderBar';
 import { SummaryCards } from '../components/SummaryCards';
+import { ExecutiveSummary } from '../components/ExecutiveSummary';
 import { ActivityWall } from '../components/ActivityWall';
 import { ManagerList } from '../components/ManagerList';
 import { OrganizationMap } from '../components/OrganizationMap';
@@ -38,6 +39,7 @@ export const DashboardPage: React.FC = () => {
   const [managers, setManagers] = useState<Manager[]>([]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
+  const [timeRange, setTimeRange] = useState<string>('day');
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -46,9 +48,8 @@ export const DashboardPage: React.FC = () => {
     else setIsRefreshing(true);
     
     try {
-      const today = new Date().toISOString().split('T')[0];
       const [actData, mgrData] = await Promise.all([
-        getActivityWall(today, 'all'),
+        getActivityWall(timeRange, 'all'),
         getManagers()
       ]);
       setActivities(actData);
@@ -70,7 +71,7 @@ export const DashboardPage: React.FC = () => {
     }, 60000);
 
     return () => clearInterval(intervalId);
-  }, []);
+  }, [timeRange]);
 
   const uniqueManagers = useMemo(() => {
     const grouped = groupBy(managers, m => m.areaManagerName);
@@ -149,6 +150,8 @@ export const DashboardPage: React.FC = () => {
       <HeaderBar 
         selectedDepartment={selectedDepartment}
         onDepartmentChange={setSelectedDepartment}
+        timeRange={timeRange}
+        onTimeRangeChange={setTimeRange}
       />
       
       {/* 頁籤切換與功能列 */}
@@ -219,12 +222,14 @@ export const DashboardPage: React.FC = () => {
           {activeTab === 'dashboard' ? (
             <>
               <SummaryCards summary={dynamicSummary} />
+              <ExecutiveSummary activities={filteredActivities} summary={dynamicSummary} timeRange={timeRange} />
               
               <div className="flex mobile-col gap-6" style={{ alignItems: 'flex-start' }}>
                 <ManagerList 
                   managers={filteredManagers} 
                   selectedManager={selectedManager} 
                   onSelect={setSelectedManager} 
+                  timeRangeLabel={timeRange === 'day' ? '今日' : timeRange === 'week' ? '本週' : '本月'}
                 />
                 
                 <main style={{ flex: 1, width: '100%' }}>

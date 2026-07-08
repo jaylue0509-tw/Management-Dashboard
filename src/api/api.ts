@@ -48,8 +48,8 @@ export const getDashboardSummary = async (date: string): Promise<DashboardSummar
   return new Promise((resolve) => setTimeout(() => resolve(MOCK_SUMMARY), 500));
 };
 
-export const getActivityWall = async (date: string, region: string): Promise<VisitRecord[]> => {
-  const data = await fetchJSON(`/activities?date=${date}&region=${region}`);
+export const getActivityWall = async (timeRange: string = 'day', region: string): Promise<VisitRecord[]> => {
+  const data = await fetchJSON(`/activities?time_range=${timeRange}&region=${region}`);
   if (data) return data;
   return [];
 };
