@@ -117,12 +117,14 @@ export const DashboardPage: React.FC = () => {
     return activities.filter(a => validManagerNames.has(a.areaManagerName));
   }, [activities, filteredManagers, selectedDepartment]);
 
-  const dynamicSummary = useMemo(() => {
-    let targetActivities = filteredActivities;
+  const targetActivities = useMemo(() => {
     if (selectedManager) {
-      targetActivities = filteredActivities.filter(a => a.areaManagerName === selectedManager.areaManagerName);
+      return filteredActivities.filter(a => a.areaManagerName === selectedManager.areaManagerName);
     }
-    
+    return filteredActivities;
+  }, [filteredActivities, selectedManager]);
+
+  const dynamicSummary = useMemo(() => {
     let abnormalCount = 0;
     let highlightCount = 0;
     let expectedStay = 0;
@@ -143,7 +145,7 @@ export const DashboardPage: React.FC = () => {
       totalExpectedStayMinutes: expectedStay,
       highlightCount: highlightCount
     } as DashboardSummary;
-  }, [filteredActivities, selectedManager]);
+  }, [targetActivities]);
 
   return (
     <div style={{ padding: 'var(--space-6)', maxWidth: '1440px', margin: '0 auto' }}>
@@ -222,7 +224,11 @@ export const DashboardPage: React.FC = () => {
           {activeTab === 'dashboard' ? (
             <>
               <SummaryCards summary={dynamicSummary} />
-              <ExecutiveSummary activities={filteredActivities} summary={dynamicSummary} timeRange={timeRange} />
+              
+              {/* 當尚未指定特定主管時，才顯示全區的高階主管摘要 */}
+              {!selectedManager && (
+                <ExecutiveSummary activities={filteredActivities} summary={dynamicSummary} timeRange={timeRange} />
+              )}
               
               <div className="flex mobile-col gap-6" style={{ alignItems: 'flex-start' }}>
                 <ManagerList 
@@ -233,7 +239,7 @@ export const DashboardPage: React.FC = () => {
                 />
                 
                 <main style={{ flex: 1, width: '100%' }}>
-                  <ActivityWall activities={filteredActivities} />
+                  <ActivityWall activities={targetActivities} />
                 </main>
               </div>
             </>
