@@ -271,3 +271,92 @@ def webhook_google_forms(payload: dict = Body(...)):
         conn.commit()
         
     return {"success": True, "data": {"recordId": record_id}}
+
+@app.get("/api/admin/clean-db-2026")
+def clean_db_2026():
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM store WHERE id = 'managers'")
+            row = cur.fetchone()
+            if not row:
+                return {"error": "No managers found"}
+            
+            managers = row[0]
+            before_count = len(managers)
+            
+            new_managers = []
+            removed_stores = []
+            
+            # Target 1: 中投區-劉哲維 (營業二處) 保留正確 12 間店
+            allowed_lzw_stores = {
+                "草屯明賢店", "埔里中山店", "大里仁化店", "台中沙鹿店", 
+                "台中澄清店", "台中青海店", "北屯后庄北店", "台中東海店", 
+                "台中中清店", "北屯軍功店", "台中北屯店", "豐原圓環東店"
+            }
+            
+            # Target 4: 高雄區-涂綺恬 (營業二處) 刪除: 左營自由, 楠梓後昌, 楠梓梓新
+            deleted_tqt_keywords = {"左營自由", "楠梓後昌", "楠梓梓新"}
+            
+            # Target 5: 高屏區-鍾宜玲 (營業二處) 刪除: 三民鼎山, 三民建工
+            deleted_cyl_keywords = {"三民鼎山", "三民建工"}
+            
+            for m in managers:
+                dept = m.get("department", "")
+                region = m.get("region", "")
+                mgr_name = m.get("areaManagerName", "")
+                store_name = m.get("storeName", "").strip()
+                
+                should_remove = False
+                reason = ""
+                
+                if dept == "營業二處":
+                    if region == "中投區" and mgr_name == "劉哲維":
+                        if store_name not in allowed_lzw_stores:
+                            should_remove = True
+                            reason = f"中投區-劉哲維: 移除店名 {store_name} (不在正確 12 間店清單內)"
+                            
+                    elif region == "彰嘉雲區" and mgr_name == "林晟豐":
+                        if "嘉義林森西" in store_name or store_name == "嘉義林森西店":
+                            should_remove = True
+                            reason = f"彰嘉雲區-林晟豐: 移除已閉店 {store_name}"
+                            
+                    elif region == "台南區" and mgr_name == "李景傑":
+                        if "永康中華" in store_name or store_name == "永康中華店":
+                            should_remove = True
+                            reason = f"台南區-李景傑 (營業二處): 移除舊店名 {store_name}"
+                            
+                    elif region == "高雄區" and mgr_name == "涂綺恬":
+                        if any(kw in store_name for kw in deleted_tqt_keywords):
+                            should_remove = True
+                            reason = f"高雄區-涂綺恬: 移除已閉店或舊店名 {store_name}"
+                            
+                    elif region == "高屏區" and mgr_name == "鍾宜玲":
+                        if any(kw in store_name for kw in deleted_cyl_keywords):
+                            should_remove = True
+                            reason = f"高屏區-鍾宜玲: 移除已閉店或舊店名 {store_name}"
+                
+                if should_remove:
+                    removed_stores.append({
+                        "department": dept,
+                        "region": region,
+                        "areaManagerName": mgr_name,
+                        "storeName": store_name,
+                        "reason": reason
+                    })
+                else:
+                    new_managers.append(m)
+            
+            # 寫入回資料庫
+            cur.execute("""
+                INSERT INTO store (id, data) VALUES ('managers', %s)
+                ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+            """, (Json(new_managers),))
+            conn.commit()
+            
+            return {
+                "success": True,
+                "before_count": before_count,
+                "after_count": len(new_managers),
+                "removed_count": len(removed_stores),
+                "removed_details": removed_stores
+            }
