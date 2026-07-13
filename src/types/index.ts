@@ -34,6 +34,7 @@ export interface VisitRecord {
   immediateImprovement: string;
   highlightDescription?: string;
   abnormalFlag: boolean;
+  createdAt?: string;
 }
 
 export interface DashboardSummary {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { VisitRecord } from '../types';
-import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X } from 'lucide-react';
+import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2 } from 'lucide-react';
 
 interface Props {
   activities: VisitRecord[];
@@ -18,8 +18,16 @@ export const ActivityWall: React.FC<Props> = ({ activities }) => {
               <div className="font-bold text-gray-900">
                 {activity.areaManagerName || "未知主管"} ({activity.jobTitle || "區主管"}) - {activity.actionType || "實地巡店"}
               </div>
-              <div className="text-sm text-gray-500 flex items-center gap-1">
-                <Clock size={14} /> {activity.timeAgoMinutes} 分鐘前
+              <div className="text-sm text-gray-500 flex flex-col items-end gap-1">
+                <div className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-md border border-gray-100">
+                  <Clock size={14} /> {activity.timeAgoMinutes} 分鐘前
+                </div>
+                {activity.createdAt && (
+                  <div className="flex items-center gap-1 text-xs text-gray-400">
+                    <Calendar size={12} />
+                    {new Date(activity.createdAt).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
               </div>
             </div>
             
@@ -48,11 +56,86 @@ export const ActivityWall: React.FC<Props> = ({ activities }) => {
             )}
 
             {(activity.immediateImprovement || activity.highlightDescription) && (
-              <div style={{ backgroundColor: 'var(--bg-app)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ backgroundColor: 'var(--bg-app)', padding: 'var(--space-4)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-secondary-200)' }}>
+                
                 {activity.immediateImprovement && (
-                  <div className="text-sm">
-                    <strong className="text-gray-900">改善事項：</strong>
-                    <span className="text-gray-700">{activity.immediateImprovement}</span>
+                  <div>
+                    <strong className="text-gray-900 text-sm flex items-center gap-1 mb-1">
+                      📝 改善事項紀錄
+                    </strong>
+                    <div className="overflow-hidden rounded-md border border-gray-200 mt-2">
+                      <table className="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th scope="col" className="px-4 py-2 text-left font-medium text-gray-500 whitespace-nowrap border-r border-gray-200">檢查項目</th>
+                            <th scope="col" className="px-4 py-2 text-left font-medium text-gray-500 w-full">紀錄結果</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200 bg-white">
+                          {activity.immediateImprovement
+                            .split('\n')
+                            .filter(line => line.trim() && !line.includes('紀錄缺失項目'))
+                            .map((line, idx) => {
+                              let title = line;
+                              let content = '';
+                              const separatorIdx = line.indexOf('：') !== -1 ? line.indexOf('：') : line.indexOf(':');
+                              const hasSeparator = separatorIdx !== -1;
+                              
+                              if (hasSeparator) {
+                                title = line.substring(0, separatorIdx).trim();
+                                content = line.substring(separatorIdx + 1).trim();
+                              }
+
+                              // 判斷是否為無缺失
+                              let isNone = false;
+                              if (hasSeparator) {
+                                isNone = content === '無' || content === '無缺失' || content === '';
+                              } else {
+                                isNone = title === '無' || title === '無缺失' || title === '正常' || title === '皆正常';
+                              }
+                              
+                              if (!hasSeparator) {
+                                return (
+                                  <tr key={idx} className={isNone ? 'bg-gray-50/50' : 'bg-red-50/40'}>
+                                    <td colSpan={2} className="px-4 py-2.5 text-gray-900 align-top">
+                                      <div className="flex items-start gap-1.5">
+                                        {isNone ? (
+                                          <CheckCircle2 size={16} className="text-gray-400 mt-0.5 flex-shrink-0" />
+                                        ) : (
+                                          <AlertCircle size={16} className="text-red-500 mt-0.5 flex-shrink-0" />
+                                        )}
+                                        <span className={isNone ? 'text-gray-500' : 'text-red-700 font-medium whitespace-pre-wrap'}>
+                                          {title}
+                                        </span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              return (
+                                <tr key={idx} className={isNone ? 'bg-gray-50/50' : 'bg-red-50/40'}>
+                                  <td className="px-4 py-2.5 font-medium text-gray-700 border-r border-gray-200 align-top whitespace-nowrap min-w-[120px]">
+                                    {title}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-gray-900 align-top">
+                                    <div className="flex items-start gap-1.5">
+                                      {isNone ? (
+                                        <CheckCircle2 size={16} className="text-gray-400 mt-0.5 flex-shrink-0" />
+                                      ) : (
+                                        <AlertCircle size={16} className="text-red-500 mt-0.5 flex-shrink-0" />
+                                      )}
+                                      <span className={isNone ? 'text-gray-500' : 'text-red-700 font-medium whitespace-pre-wrap break-words'}>
+                                        {content || '無'}
+                                      </span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
                 {activity.highlightDescription && (

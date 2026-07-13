@@ -3,7 +3,7 @@ import type { DashboardSummary, Manager, VisitRecord } from '../types';
 // ==========================================
 // API 網址設定：Vercel 生產環境自動使用同網域的 /api，本機開發使用 localhost:8000
 // ==========================================
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:8000/api');
+const API_BASE_URL = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
 
 // ==========================================
 // Mock Data (假資料，作為無資料庫或網路錯誤時的 Fallback)
@@ -50,7 +50,9 @@ export const getDashboardSummary = async (date: string): Promise<DashboardSummar
 
 export const getActivityWall = async (timeRange: string = 'day', region: string): Promise<VisitRecord[]> => {
   const data = await fetchJSON(`/activities?time_range=${timeRange}&region=${region}`);
-  if (data) return data;
+  if (data) {
+    return data;
+  }
   return [];
 };
 

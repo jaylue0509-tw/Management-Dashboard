@@ -219,6 +219,29 @@ def import_managers(managers: List[Manager] = Body(...)):
         
     return {"success": True, "count": len(payload)}
 
+@app.get("/api/admin/fix-mgr-names")
+def fix_mgr_names():
+    updated = 0
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM store WHERE id = 'managers'")
+            row = cur.fetchone()
+            managers = row[0] if row else []
+            store_mgr_map = {str(m.get('storeName', '')).strip().replace('店', ''): m.get('areaManagerName', '') for m in managers}
+            
+            cur.execute("SELECT id, data FROM visit_records")
+            records = cur.fetchall()
+            
+            for rid, data in records:
+                store_name = str(data.get('storeName', '')).strip().replace('店', '')
+                if store_name in store_mgr_map:
+                    # 強制覆蓋為資料庫正確的主管名稱
+                    data['areaManagerName'] = store_mgr_map[store_name]
+                    cur.execute("UPDATE visit_records SET data = %s WHERE id = %s", (Json(data), rid))
+                    updated += 1
+        conn.commit()
+    return {"success": True, "updated": updated}
+
 @app.post("/api/visit-records")
 def create_visit_record(payload: dict = Body(...)):
     record_id = str(uuid.uuid4())
@@ -240,21 +263,47 @@ def create_visit_record(payload: dict = Body(...)):
 def webhook_google_forms(payload: dict = Body(...)):
     record_id = str(uuid.uuid4())
     
+    # 取出前端傳來的資料
+    store_name = payload.get("storeName") or "未知門市"
+    store_name = str(store_name).strip()
+    
+    # 強制從 DB 反查區主管名字，不信任 Google Forms 傳入的（因為常有錯位問題）
+    mgr_name = ""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM store WHERE id = 'managers'")
+            row = cur.fetchone()
+            if row:
+                managers = row[0]
+                for m in managers:
+                    m_store = str(m.get("storeName") or "").strip().replace("店", "")
+                    s_store = store_name.replace("店", "")
+                    if m_store == s_store:
+                        mgr_name = m.get("areaManagerName", "")
+                        break
+    if not mgr_name:
+        mgr_name = "未知主管"
+    
+    try:
+        stay_mins = int(payload.get("expectedStayMinutes") or 0)
+    except (ValueError, TypeError):
+        stay_mins = 0
+
     # 建立符合 VisitRecord 的資料結構
     visit_record = {
         "recordId": record_id,
-        "areaManagerName": payload.get("areaManagerName", "未知主管"),
+        "areaManagerName": mgr_name,
         "jobTitle": "區主管",
         "actionType": "實地巡店",
-        "storeName": payload.get("storeName", "未知門市"),
-        "region": payload.get("region", "未知區域"),
+        "storeName": store_name,
+        "region": payload.get("region") or "未知區域",
         "timeAgoMinutes": 0,
-        "expectedStayMinutes": payload.get("expectedStayMinutes", 0),
+        "expectedStayMinutes": stay_mins,
         "tags": ["巡店回報"],
-        "immediateImprovement": payload.get("defects", "") + "\n" + payload.get("summary", ""),
-        "highlightDescription": payload.get("highlights", ""),
+        "immediateImprovement": str(payload.get("defects") or "") + "\n" + str(payload.get("summary") or ""),
+        "highlightDescription": str(payload.get("highlights") or ""),
         "abnormalFlag": bool(payload.get("defects")),
-        "photoPairs": payload.get("photoPairs", []),
+        "photoPairs": payload.get("photoPairs") or [],
         "createdAt": datetime.utcnow().isoformat()
     }
     
