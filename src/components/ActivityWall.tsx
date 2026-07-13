@@ -16,7 +16,7 @@ export const ActivityWall: React.FC<Props> = ({ activities }) => {
           <div key={activity.recordId} className="card" style={{ borderLeft: `4px solid ${activity.abnormalFlag ? 'var(--color-error)' : 'var(--color-primary-500)'}` }}>
             <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-3)' }}>
               <div className="font-bold text-gray-900">
-                {activity.areaManagerName} ({activity.jobTitle}) - {activity.actionType}
+                {activity.areaManagerName || "未知主管"} ({activity.jobTitle || "區主管"}) - {activity.actionType || "實地巡店"}
               </div>
               <div className="text-sm text-gray-500 flex items-center gap-1">
                 <Clock size={14} /> {activity.timeAgoMinutes} 分鐘前
@@ -25,7 +25,7 @@ export const ActivityWall: React.FC<Props> = ({ activities }) => {
             
             <div className="flex items-center gap-4 text-sm text-gray-700" style={{ marginBottom: 'var(--space-4)' }}>
               <div className="flex items-center gap-1">
-                <MapPin size={14} className="text-primary" /> {activity.storeName} ({activity.region})
+                <MapPin size={14} className="text-primary" /> {activity.storeName || "未知門市"}{activity.region ? ` (${activity.region})` : ""}
               </div>
               {activity.expectedStayMinutes > 0 && (
                 <div className="badge badge-success flex items-center gap-1" style={{ fontSize: '0.85rem' }}>
