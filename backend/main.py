@@ -315,10 +315,10 @@ def clean_db_2026():
                             should_remove = True
                             reason = f"中投區-劉哲維: 移除店名 {store_name} (不在正確 12 間店清單內)"
                             
-                    elif region == "彰嘉雲區" and "林晟豐" in mgr_name:
+                    elif (region == "彰雲嘉區" or region == "彰嘉雲區") and "林晟豐" in mgr_name:
                         if "嘉義林森西" in store_name or store_name == "嘉義林森西店":
                             should_remove = True
-                            reason = f"彰嘉雲區-林晟豐: 移除已閉店 {store_name}"
+                            reason = f"彰雲嘉區-林晟豐: 移除已閉店 {store_name}"
                             
                     elif region == "台南區" and "李景傑" in mgr_name:
                         if "永康中華" in store_name or store_name == "永康中華店":
