@@ -310,27 +310,27 @@ def clean_db_2026():
                 reason = ""
                 
                 if dept == "營業二處":
-                    if region == "中投區" and mgr_name == "劉哲維":
+                    if region == "中投區" and "劉哲維" in mgr_name:
                         if store_name not in allowed_lzw_stores:
                             should_remove = True
                             reason = f"中投區-劉哲維: 移除店名 {store_name} (不在正確 12 間店清單內)"
                             
-                    elif region == "彰嘉雲區" and mgr_name == "林晟豐":
+                    elif region == "彰嘉雲區" and "林晟豐" in mgr_name:
                         if "嘉義林森西" in store_name or store_name == "嘉義林森西店":
                             should_remove = True
                             reason = f"彰嘉雲區-林晟豐: 移除已閉店 {store_name}"
                             
-                    elif region == "台南區" and mgr_name == "李景傑":
+                    elif region == "台南區" and "李景傑" in mgr_name:
                         if "永康中華" in store_name or store_name == "永康中華店":
                             should_remove = True
                             reason = f"台南區-李景傑 (營業二處): 移除舊店名 {store_name}"
                             
-                    elif region == "高雄區" and mgr_name == "涂綺恬":
+                    elif region == "高雄區" and "涂綺恬" in mgr_name:
                         if any(kw in store_name for kw in deleted_tqt_keywords):
                             should_remove = True
                             reason = f"高雄區-涂綺恬: 移除已閉店或舊店名 {store_name}"
                             
-                    elif region == "高屏區" and mgr_name == "鍾宜玲":
+                    elif region == "高屏區" and "鍾宜玲" in mgr_name:
                         if any(kw in store_name for kw in deleted_cyl_keywords):
                             should_remove = True
                             reason = f"高屏區-鍾宜玲: 移除已閉店或舊店名 {store_name}"
