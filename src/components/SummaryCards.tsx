@@ -11,7 +11,7 @@ export const SummaryCards: React.FC<Props> = ({ summary }) => {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
       <div className="card">
-        <div className="text-sm text-gray-500 font-medium">今日巡店總筆數</div>
+        <div className="text-sm text-gray-500 font-medium">今日回報紀錄總計 (表單次數)</div>
         <div className="text-4xl font-bold text-primary" style={{ marginTop: 'var(--space-2)' }}>{summary.totalVisits}</div>
       </div>
       <div className="card">
