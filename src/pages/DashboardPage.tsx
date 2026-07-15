@@ -84,7 +84,14 @@ export const DashboardPage: React.FC = () => {
       const todayVisitCount = visitedStores.length;
       const assignedStoreCount = stores.length;
       const region = stores[0]?.region || '';
-      const expectedStayMinutes = managerActivities.reduce((acc, curr) => acc + (curr.expectedStayMinutes || 0), 0);
+      const expectedStayByStore = new Map<string, number>();
+      managerActivities.forEach(a => {
+        const existing = expectedStayByStore.get(a.storeName) || 0;
+        if ((a.expectedStayMinutes || 0) > existing) {
+          expectedStayByStore.set(a.storeName, a.expectedStayMinutes || 0);
+        }
+      });
+      const expectedStayMinutes = Array.from(expectedStayByStore.values()).reduce((acc, curr) => acc + curr, 0);
       
       let visitStatus: '尚未回填' | '巡店中' | '已完成' = '尚未回填';
       if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) visitStatus = '巡店中';
@@ -127,13 +134,20 @@ export const DashboardPage: React.FC = () => {
   const dynamicSummary = useMemo(() => {
     let abnormalCount = 0;
     let highlightCount = 0;
-    let expectedStay = 0;
+    const expectedStayByStore = new Map<string, number>();
     
     targetActivities.forEach(a => {
       if (a.abnormalFlag) abnormalCount++;
       if (a.highlightDescription) highlightCount++;
-      expectedStay += (a.expectedStayMinutes || 0);
+      
+      const storeKey = `${a.areaManagerName}-${a.storeName}`;
+      const existing = expectedStayByStore.get(storeKey) || 0;
+      if ((a.expectedStayMinutes || 0) > existing) {
+        expectedStayByStore.set(storeKey, a.expectedStayMinutes || 0);
+      }
     });
+
+    const expectedStay = Array.from(expectedStayByStore.values()).reduce((acc, curr) => acc + curr, 0);
 
     return {
       totalVisits: targetActivities.length,
