@@ -71,12 +71,15 @@ def init_db():
                         created_at TIMESTAMP,
                         data JSONB
                     );
-                """)
+                # 加入索引優化查詢效能 (確保使用者體驗)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_created_at ON visit_records (created_at DESC);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_region ON visit_records (region);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_data_gin ON visit_records USING GIN (data);")
             conn.commit()
     except Exception as e:
         print("DB Init Error:", e)
 
-# init_db() # 效能優化：已手動建表完成，關閉此功能以提升 Serverless Cold Start 啟動速度
+init_db() # 效能優化：暫時開啟以建立索引
 
 # === Pydantic Schema 定義 ===
 class Manager(BaseModel):
@@ -112,53 +115,11 @@ class VisitRecord(BaseModel):
     photoPairs: List[PhotoPair] = []
     createdAt: datetime = Field(default_factory=datetime.utcnow)
 
-class DashboardSummary(BaseModel):
-    totalVisits: int
-    completedManagersCount: int
-    pendingManagersCount: int
-    visitedStoresCount: int
-    abnormalIssuesCount: int
-    improvementIssuesCount: int
-    totalExpectedStayMinutes: int
-    highlightCount: int
+
 
 # === API Endpoints ===
 
-@app.get("/api/summary", response_model=DashboardSummary)
-def get_summary(date: str = ""):
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            if date:
-                cur.execute("SELECT data FROM visit_records WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = %s::date", (date,))
-            else:
-                # 預設抓取今日 (台灣時間)
-                cur.execute("SELECT data FROM visit_records WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date")
-            
-            rows = cur.fetchall()
-            
-            total_visits = len(rows)
-            abnormal_count = 0
-            expected_stay = 0
-            highlight_count = 0
-            
-            for r in rows:
-                data = r[0]
-                if data.get("abnormalFlag"):
-                    abnormal_count += 1
-                expected_stay += int(data.get("expectedStayMinutes", 0))
-                if data.get("highlightDescription"):
-                    highlight_count += 1
 
-    return DashboardSummary(
-        totalVisits=total_visits,
-        completedManagersCount=0,
-        pendingManagersCount=0,
-        visitedStoresCount=0,
-        abnormalIssuesCount=abnormal_count,
-        improvementIssuesCount=0,
-        totalExpectedStayMinutes=expected_stay,
-        highlightCount=highlight_count
-    )
 
 @app.get("/api/activities", response_model=List[VisitRecord])
 def get_activities(time_range: str = "day", region: str = "all"):
