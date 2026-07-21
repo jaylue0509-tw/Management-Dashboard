@@ -70,7 +70,7 @@ def init_db():
                         region VARCHAR(50),
                         created_at TIMESTAMP,
                         data JSONB
-                    );
+                """)
                 # 加入索引優化查詢效能 (確保使用者體驗)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_created_at ON visit_records (created_at DESC);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_region ON visit_records (region);")
@@ -79,7 +79,7 @@ def init_db():
     except Exception as e:
         print("DB Init Error:", e)
 
-init_db() # 效能優化：暫時開啟以建立索引
+# init_db() # 效能優化：已手動建表完成，關閉此功能以提升 Serverless Cold Start 啟動速度
 
 # === Pydantic Schema 定義 ===
 class Manager(BaseModel):
