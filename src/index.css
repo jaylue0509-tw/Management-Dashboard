@@ -1,98 +1,124 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Design Token System */
+/* ============================================
+   PREMIUM LIGHT THEME - Design Token System
+   ============================================ */
 :root {
-  /* Color Tokens */
-  --color-primary-50: #f0f9ff;
-  --color-primary-100: #e0f2fe;
+  /* Brand Color Palette */
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
   --color-primary-500: #3b82f6;
   --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
   --color-primary-900: #1e3a8a;
-  
+
   --color-secondary-50: #f9fafb;
   --color-secondary-100: #f3f4f6;
   --color-secondary-200: #e5e7eb;
   --color-secondary-300: #d1d5db;
+  --color-secondary-400: #9ca3af;
   --color-secondary-500: #6b7280;
   --color-secondary-700: #374151;
   --color-secondary-900: #111827;
-  
-  --color-success-100: #d1fae5;
-  --color-success: #10b981;
+
+  --color-success-50: #f0fdf4;
+  --color-success-100: #dcfce7;
+  --color-success: #16a34a;
+  --color-warning-50: #fffbeb;
   --color-warning-100: #fef3c7;
-  --color-warning: #f59e0b;
-  --color-error-100: #fee2e2;
-  --color-error: #ef4444;
+  --color-warning: #d97706;
+  --color-error-50: #fff1f2;
+  --color-error-100: #ffe4e6;
+  --color-error: #e11d48;
   --color-info-100: #dbeafe;
-  --color-info: #3b82f6;
+  --color-info: #2563eb;
 
-  /* Background & Surface */
-  --bg-app: #f3f4f6;
+  /* Surfaces */
+  --bg-app: #f4f6f9;
   --bg-surface: #ffffff;
+  --bg-surface-2: #f9fafb;
   --border-color: #e5e7eb;
-  
-  /* Typography Tokens */
-  --font-family-primary: 'Inter', system-ui, -apple-system, sans-serif;
-  
-  /* Spacing Tokens */
-  --space-1: 0.25rem;   /* 4px */
-  --space-2: 0.5rem;    /* 8px */
-  --space-3: 0.75rem;   /* 12px */
-  --space-4: 1rem;      /* 16px */
-  --space-5: 1.25rem;   /* 20px */
-  --space-6: 1.5rem;    /* 24px */
-  --space-8: 2rem;      /* 32px */
-  
-  /* Shadow Tokens */
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -1px rgb(0 0 0 / 0.06);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.05);
-  
+  --border-color-strong: #d1d5db;
+
+  /* Typography */
+  --font-family-primary: 'Inter', 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  /* Shadows - crisp and professional */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.04);
+  --shadow-xl: 0 24px 48px rgba(0,0,0,0.12), 0 8px 16px rgba(0,0,0,0.04);
+
   /* Border Radius */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-full: 9999px;
-  
-  /* Transition Tokens */
-  --transition-fast: 150ms ease;
-  --transition-normal: 300ms ease;
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Global Reset */
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+/* ============================================
+   Global Reset & Base
+   ============================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
 
 body {
   font-family: var(--font-family-primary);
   background-color: var(--bg-app);
   color: var(--color-secondary-900);
-  line-height: 1.5;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
 }
 
-/* Base Component Styles */
+/* ============================================
+   Card - Clean & Professional
+   ============================================ */
 .card {
   background-color: var(--bg-surface);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: var(--space-4);
   border: 1px solid var(--border-color);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+  position: relative;
 }
 
+.card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* ============================================
+   Buttons
+   ============================================ */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-family: var(--font-family-primary);
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 0.875rem;
+  letter-spacing: 0.01em;
   text-decoration: none;
   border: none;
   cursor: pointer;
@@ -100,45 +126,75 @@ body {
   user-select: none;
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-4);
-  font-size: 0.875rem;
   gap: var(--space-2);
 }
 
 .btn-primary {
-  background-color: var(--color-primary-500);
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
   color: white;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
 }
 
 .btn-primary:hover {
-  background-color: var(--color-primary-600);
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+  transform: translateY(-1px);
 }
 
 .btn-outline {
-  background-color: transparent;
+  background: white;
   color: var(--color-secondary-700);
   border: 1px solid var(--border-color);
 }
 
 .btn-outline:hover {
-  background-color: var(--color-secondary-50);
+  background: var(--color-secondary-50);
+  border-color: var(--color-secondary-300);
 }
 
+/* ============================================
+   Premium Badges
+   ============================================ */
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.125rem 0.5rem;
+  gap: 4px;
+  padding: 3px 10px;
   border-radius: var(--radius-full);
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
-.badge-info { background-color: var(--color-info-100); color: var(--color-primary-900); }
-.badge-success { background-color: var(--color-success-100); color: var(--color-success); }
-.badge-warning { background-color: var(--color-warning-100); color: var(--color-warning); }
-.badge-error { background-color: var(--color-error-100); color: var(--color-error); }
-.badge-gray { background-color: var(--color-secondary-100); color: var(--color-secondary-700); }
+.badge-info {
+  background: var(--color-info-100);
+  color: var(--color-primary-700);
+  border: 1px solid var(--color-primary-200);
+}
+.badge-success {
+  background: var(--color-success-100);
+  color: var(--color-success);
+  border: 1px solid #bbf7d0;
+}
+.badge-warning {
+  background: var(--color-warning-100);
+  color: var(--color-warning);
+  border: 1px solid #fde68a;
+}
+.badge-error {
+  background: var(--color-error-100);
+  color: var(--color-error);
+  border: 1px solid #fecdd3;
+}
+.badge-gray {
+  background: var(--color-secondary-100);
+  color: var(--color-secondary-500);
+  border: 1px solid var(--color-secondary-200);
+}
 
-/* Layout Utilities */
+/* ============================================
+   Layout Utilities
+   ============================================ */
 .flex { display: flex; }
 .flex-col { flex-direction: column; }
 .items-center { align-items: center; }
@@ -163,25 +219,158 @@ body {
 .font-semibold { font-weight: 600; }
 .font-bold { font-weight: 700; }
 
+.text-gray-400 { color: var(--color-secondary-400); }
 .text-gray-500 { color: var(--color-secondary-500); }
 .text-gray-700 { color: var(--color-secondary-700); }
 .text-gray-900 { color: var(--color-secondary-900); }
 .text-primary { color: var(--color-primary-500); }
 
-/* Skeleton Loader Animations */
+/* Colored text classes (for metrics) */
+.text-glow-blue { color: #2563eb; }
+.text-glow-teal { color: #0d9488; }
+.text-glow-rose { color: #e11d48; }
+.text-glow-amber { color: #d97706; }
+.text-glow-purple { color: #7c3aed; }
+.text-glow-emerald { color: #16a34a; }
+
+/* ============================================
+   Skeleton Loader
+   ============================================ */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: .5; }
+  50% { opacity: 0.5; }
 }
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+
+@keyframes highlightPulse {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
 }
+
+.highlight-pulse {
+  animation: highlightPulse 2s cubic-bezier(0.4, 0, 0.2, 1);
+  border-color: #3b82f6 !important;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+.animate-spin { animation: spin 1s linear infinite; }
+
 .skeleton-box {
-  background-color: var(--color-secondary-200);
+  background: linear-gradient(90deg,
+    #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite;
   border-radius: var(--radius-md);
 }
 
-/* Responsive Layout Utilities */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
+   Scrollbar
+   ============================================ */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-secondary-100); }
+::-webkit-scrollbar-thumb {
+  background: var(--color-secondary-300);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-secondary-400); }
+
+/* ============================================
+   Select Styling
+   ============================================ */
+select {
+  background: white !important;
+  color: var(--color-secondary-700) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--radius-md) !important;
+  outline: none !important;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  font-family: var(--font-family-primary);
+}
+
+select:hover { border-color: var(--color-secondary-400) !important; }
+select:focus {
+  border-color: var(--color-primary-500) !important;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12) !important;
+}
+
+select option {
+  background-color: white;
+  color: var(--color-secondary-900);
+}
+
+/* ============================================
+   Table Styling
+   ============================================ */
+thead th {
+  background: var(--color-secondary-50) !important;
+  color: var(--color-secondary-500) !important;
+  border-color: var(--color-secondary-200) !important;
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+tbody tr {
+  border-color: var(--color-secondary-100) !important;
+  transition: background var(--transition-fast);
+}
+
+tbody tr:hover {
+  background: var(--color-secondary-50) !important;
+}
+
+tbody td {
+  border-color: var(--color-secondary-100) !important;
+  color: var(--color-secondary-700);
+}
+
+/* ============================================
+   Recharts Light Theme
+   ============================================ */
+.recharts-text,
+.recharts-cartesian-axis-tick-value {
+  fill: var(--color-secondary-400) !important;
+  font-size: 11px;
+  font-family: var(--font-family-primary);
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--color-secondary-100) !important;
+}
+
+.recharts-polar-grid-concentric-polygon,
+.recharts-polar-grid-angle line {
+  stroke: var(--color-secondary-200) !important;
+}
+
+.recharts-legend-item-text {
+  color: var(--color-secondary-500) !important;
+  font-size: 12px !important;
+  font-family: var(--font-family-primary) !important;
+}
+
+/* ============================================
+   Responsive Layout Utilities
+   ============================================ */
 @media (max-width: 767px) {
   .mobile-col { flex-direction: column !important; }
   .mobile-w-full { width: 100% !important; }

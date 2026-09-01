@@ -35,6 +35,14 @@ export interface VisitRecord {
   highlightDescription?: string;
   abnormalFlag: boolean;
   createdAt?: string;
+
+  // New AuditApp fields
+  auditMode?: 'A' | 'B' | 'C' | '';
+  selectedTopics?: number[];
+  coreChecks?: Record<string, string>;
+  categoryChecks?: Record<string, string>;
+  pdcaResults?: Record<string, string>;
+  overallRating?: string;
 }
 
 export interface DashboardSummary {
@@ -46,4 +54,14 @@ export interface DashboardSummary {
   improvementIssuesCount: number;
   totalExpectedStayMinutes: number;
   highlightCount: number;
+  coverageRate?: number;
+  pdcaRate?: number;
+  redLightStores?: number;
+  assignedStoresCount?: number;
+  uniqueVisitedStoresCount?: number;
+  coverageStoresInfo?: { visited: string[], unvisited: string[] };
+  pdcaStoresInfo?: { closed: string[], open: string[] };
+  redLightStoresList?: { store: string; reasons: string[]; reportTime?: string }[];
+  visitStoresList?: string[];
+  abnormalStoresList?: { store: string; reasons: string[]; reportTime?: string }[];
 }

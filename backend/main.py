@@ -4,11 +4,21 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
 import uuid
 import psycopg2
 from psycopg2.extras import Json
+import threading
+import requests
+import re
+import jwt
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+JWT_SECRET = os.getenv("JWT_SECRET", "management-dashboard-secret-2026")
+JWT_ALGORITHM = "HS256"
+
 
 load_dotenv()
 
@@ -70,17 +80,76 @@ def init_db():
                         region VARCHAR(50),
                         created_at TIMESTAMP,
                         data JSONB
+                    );
+                """)
+                # 建立待改善事項 (Action Items) 表
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS action_items (
+                        id VARCHAR(50) PRIMARY KEY,
+                        store_name VARCHAR(100),
+                        created_at TIMESTAMP,
+                        data JSONB
+                    );
                 """)
                 # 加入索引優化查詢效能 (確保使用者體驗)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_created_at ON visit_records (created_at DESC);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_region ON visit_records (region);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_data_gin ON visit_records USING GIN (data);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_action_items_store_name ON action_items (store_name);")
+                # 建立使用者表
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        username VARCHAR(50) PRIMARY KEY,
+                        password_hash VARCHAR(255) NOT NULL,
+                        role VARCHAR(20) NOT NULL,
+                        name VARCHAR(50) NOT NULL,
+                        assigned_stores JSONB
+                    );
+                """)
             conn.commit()
+            
+            # 初始化預設帳號
+            init_default_users(conn)
+
     except Exception as e:
         print("DB Init Error:", e)
 
-# init_db() # 效能優化：已建立索引完成，關閉此功能以提升 Serverless Cold Start 啟動速度
+def init_default_users(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        if count == 0:
+            # 建立預設 Admin 帳號 (密碼: admin123)
+            admin_hash = pwd_context.hash("admin123")
+            cur.execute("""
+                INSERT INTO users (username, password_hash, role, name, assigned_stores)
+                VALUES (%s, %s, %s, %s, %s)
+            """, ("admin", admin_hash, "admin", "總部管理員", Json([])))
+            
+            # 根據現有 managers 建立區主管帳號 (預設密碼: 123456)
+            cur.execute("SELECT data FROM store WHERE id = 'managers'")
+            row = cur.fetchone()
+            if row:
+                managers = row[0]
+                mgr_map = {}
+                for m in managers:
+                    name = m.get("areaManagerName", "").strip()
+                    store = m.get("storeName", "").strip()
+                    if name and store:
+                        if name not in mgr_map:
+                            mgr_map[name] = []
+                        mgr_map[name].append(store)
+                
+                mgr_hash = pwd_context.hash("123456")
+                for name, stores in mgr_map.items():
+                    # 帳號預設為主管名稱拼音或直接用名稱 (此處以名稱為帳號)
+                    cur.execute("""
+                        INSERT INTO users (username, password_hash, role, name, assigned_stores)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (name, mgr_hash, "manager", name, Json(stores)))
+            conn.commit()
 
+init_db() # 啟用 DB 初始化，建立 users 表與預設帳號
 # === Pydantic Schema 定義 ===
 class Manager(BaseModel):
     department: str
@@ -102,8 +171,8 @@ class PhotoPair(BaseModel):
 class VisitRecord(BaseModel):
     recordId: str
     areaManagerName: str
-    jobTitle: str
-    actionType: str
+    jobTitle: str = "區主管"
+    actionType: str = "巡店"
     storeName: str
     region: str
     timeAgoMinutes: int = 0
@@ -115,11 +184,78 @@ class VisitRecord(BaseModel):
     photoPairs: List[PhotoPair] = []
     createdAt: datetime = Field(default_factory=datetime.utcnow)
 
+    # New AuditApp fields
+    auditMode: Optional[str] = ""
+    selectedTopics: Optional[List[int]] = []
+    coreChecks: Optional[Dict[str, str]] = {}
+    categoryChecks: Optional[Dict[str, str]] = {}
+    categoryRemarks: Optional[Dict[str, str]] = {}
+    pdcaResults: Optional[Dict[str, str]] = {}
+    overallRating: Optional[str] = ""
+
 
 
 # === API Endpoints ===
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash, role, name, assigned_stores FROM users WHERE username = %s", (req.username,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=401, detail="Invalid username or password")
+            
+            password_hash, role, name, assigned_stores = row
+            if not pwd_context.verify(req.password, password_hash):
+                raise HTTPException(status_code=401, detail="Invalid username or password")
+            
+            token_data = {
+                "sub": req.username,
+                "role": role,
+                "name": name,
+                "assigned_stores": assigned_stores
+            }
+            token = jwt.encode(token_data, JWT_SECRET, algorithm=JWT_ALGORITHM)
+            
+            return {
+                "token": token,
+                "user": token_data
+            }
+
+from fastapi import Depends, Header
+def get_current_user(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = authorization.split(" ")[1]
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+@app.get("/api/auth/me")
+def get_me(user: dict = Depends(get_current_user)):
+    return user
+
+
+def trigger_teams_notify(message: str):
+    webhook_url = os.getenv("TEAMS_WEBHOOK_URL")
+    if not webhook_url:
+        print("No TEAMS_WEBHOOK_URL found. Skip sending Teams notify.")
+        return
+    headers = {"Content-Type": "application/json"}
+    data = {"text": message}
+    try:
+        requests.post(webhook_url, headers=headers, json=data, timeout=5)
+    except Exception as e:
+        print("Failed to send Teams notify:", e)
 
 @app.get("/api/activities", response_model=List[VisitRecord])
 def get_activities(time_range: str = "day", region: str = "all"):
@@ -131,8 +267,13 @@ def get_activities(time_range: str = "day", region: str = "all"):
             conditions = []
             
             # 加入時間區間過濾
-            if time_range == "week":
+            if time_range == "all":
+                pass # 查詢全部歷史與即時資料
+            elif time_range == "week":
                 conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+            elif time_range == "last_week":
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') - interval '1 week'")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
             elif time_range == "month":
                 conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
             else:
@@ -207,7 +348,19 @@ def fix_mgr_names():
 def create_visit_record(payload: dict = Body(...)):
     record_id = str(uuid.uuid4())
     payload["recordId"] = record_id
-    payload["createdAt"] = datetime.utcnow().isoformat()
+    
+    # Allow historical createdAt if provided
+    created_at_str = payload.get("createdAt")
+    if created_at_str:
+        try:
+            created_at = datetime.fromisoformat(created_at_str)
+        except:
+            created_at = datetime.utcnow()
+            payload["createdAt"] = created_at.isoformat()
+    else:
+        created_at = datetime.utcnow()
+        payload["createdAt"] = created_at.isoformat()
+        
     region = payload.get("region", "")
     
     with get_db_connection() as conn:
@@ -215,9 +368,108 @@ def create_visit_record(payload: dict = Body(...)):
             cur.execute("""
                 INSERT INTO visit_records (id, region, created_at, data)
                 VALUES (%s, %s, %s, %s)
-            """, (record_id, region, datetime.utcnow(), Json(payload)))
+            """, (record_id, region, created_at, Json(payload)))
         conn.commit()
         
+    overall_rating = payload.get("overallRating", "")
+    if overall_rating == "需重點輔導":
+        store_name = payload.get("storeName", "未知門市")
+        mgr_name = payload.get("areaManagerName", "未知主管")
+        
+        # 抓取缺失項目
+        category_checks = payload.get("categoryChecks", {})
+        core_checks = payload.get("coreChecks", {})
+        defects = []
+        
+        ITEM_NAMES = {
+          '1-1': '檔期 POP 與宣傳物', '1-2': '主題陳列與佈置', '1-3': '檔期主打商品備貨', '1-4': '結帳區加價購專區',
+          '2-1': '排面平整與拉面', '2-2': '效期與先進先出', '2-3': '臨期品與損耗處置', '2-4': '高單價與高損品防竊', '2-5': 'PB 與高毛利商品陳列',
+          '3-1': '美容房環境與衛生', '3-2': '美容操作 SOP 與安全', '3-3': '活體照護與環境', '3-4': '保健/醫療專區維護',
+          '4-1': '儀容儀態與招呼', '4-2': '專業導購與衛教', '4-3': '櫃檯結帳與附加銷售',
+          '5-1': '門面與整體環境清潔', '5-2': '賣場氣氛與燈光空調', '5-3': '後勤倉庫與公安動線', '5-4': '系統與設備安全運作',
+          '6-1': '業績與 KPI 指標跟進', '6-2': '人員 1-on-1 面談紀錄', '6-3': '團隊士氣與排班合理性'
+        }
+        
+        for k, v in core_checks.items():
+            if v in ['缺失', '待改善']:
+                defects.append(f"• {k}")
+                
+        for k, v in category_checks.items():
+            if v in ['缺失', '待改善']:
+                name = ITEM_NAMES.get(k, k)
+                if re.match(r'^\d-\d+$', name):
+                    mod_names = ['行銷與檔期執行', '商品陳列與損耗管理', '寵物專業服務與照護', '人員服務與顧客體驗', '門市環境與設備安全', '經營數據與團隊管理']
+                    mod_idx = int(k.split('-')[0]) - 1
+                    mod_name = mod_names[mod_idx] if 0 <= mod_idx < len(mod_names) else '模組'
+                    name = f"其他{mod_name}異常"
+                defects.append(f"• {name}")
+                
+        # also capture text from immediateImprovement if any
+        immediate_imp = payload.get("immediateImprovement", "")
+        if immediate_imp:
+            for line in immediate_imp.split('\n'):
+                line = line.strip()
+                if line and not line.startswith("紀錄缺失項目"):
+                    defects.append(f"• {line}")
+
+        defects_text = "\n".join(defects) if defects else "• 未記錄具體異常選項"
+        
+        msg = f"🚨 **【警示】高風險門市通報**\n\n門市：{store_name}\n\n區主管：{mgr_name}\n\n狀態：需重點輔導\n\n**扣分原因 / 異常項目：**\n{defects_text}\n\n請高層主管多加留意！"
+        threading.Thread(target=trigger_teams_notify, args=(msg,)).start()
+        
+    # 自動建立 PDCA (Action Items) 針對所有「缺失」項目
+    category_checks = payload.get("categoryChecks", {})
+    category_remarks = payload.get("categoryRemarks", {})
+    core_checks = payload.get("coreChecks", {})
+    store_name = payload.get("storeName", "未知門市")
+    mgr_name = payload.get("areaManagerName", "未知主管")
+    
+    new_action_items = []
+    
+    # 處理第二層必看核心
+    for k, v in core_checks.items():
+        if v == '缺失':
+            remark = category_remarks.get(k, "未提供說明")
+            desc = f"【核心底線異常】{k}: {remark}"
+            new_action_items.append({"desc": desc})
+            
+    # 處理第三層六大模組
+    ITEM_NAMES = {
+        '1-1': '檔期 POP 與宣傳物', '1-2': '主題陳列與佈置', '1-3': '檔期主打商品備貨', '1-4': '結帳區加價購專區',
+        '2-1': '排面平整與拉面', '2-2': '效期與先進先出', '2-3': '臨期品與損耗處置', '2-4': '高單價與高損品防竊', '2-5': 'PB 與高毛利商品陳列',
+        '3-1': '美容房環境與衛生', '3-2': '美容操作 SOP 與安全', '3-3': '活體照護與環境', '3-4': '保健/醫療專區維護',
+        '4-1': '儀容儀態與招呼', '4-2': '專業導購與衛教', '4-3': '櫃檯結帳與附加銷售',
+        '5-1': '門面與整體環境清潔', '5-2': '賣場氣氛與燈光空調', '5-3': '後勤倉庫與公安動線', '5-4': '系統與設備安全運作',
+        '6-1': '業績與 KPI 指標跟進', '6-2': '人員 1-on-1 面談紀錄', '6-3': '團隊士氣與排班合理性'
+    }
+    for k, v in category_checks.items():
+        if v == '缺失':
+            remark = category_remarks.get(k, "未提供說明")
+            name = ITEM_NAMES.get(k, k)
+            desc = f"【{name}】: {remark}"
+            new_action_items.append({"desc": desc})
+            
+    # 將自動產生的 PDCA 寫入 action_items 資料表
+    if new_action_items:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                for act in new_action_items:
+                    item_id = str(uuid.uuid4())
+                    act_payload = {
+                        "id": item_id,
+                        "storeName": store_name,
+                        "desc": act["desc"],
+                        "assignee": mgr_name,
+                        "dueDate": (datetime.utcnow()).isoformat(), # Default due date today or +7 days
+                        "status": "Open",
+                        "createdAt": datetime.utcnow().isoformat()
+                    }
+                    cur.execute("""
+                        INSERT INTO action_items (id, store_name, created_at, data)
+                        VALUES (%s, %s, %s, %s)
+                    """, (item_id, store_name, datetime.utcnow(), Json(act_payload)))
+            conn.commit()
+
     return {"success": True, "data": {"recordId": record_id}}
 
 @app.post("/api/webhook/google-forms")
@@ -250,6 +502,27 @@ def webhook_google_forms(payload: dict = Body(...)):
     except (ValueError, TypeError):
         stay_mins = 0
 
+    immediate_improvement = str(payload.get("defects") or "") + "\n" + str(payload.get("summary") or "")
+    
+    # Calculate abnormalFlag robustly
+    has_real_defect = False
+    for line in immediate_improvement.split('\n'):
+        line = line.strip()
+        if not line or "紀錄缺失項目" in line:
+            continue
+        
+        sep_idx = line.find('：') if '：' in line else line.find(':')
+        has_sep = sep_idx != -1
+        title = line[:sep_idx].strip() if has_sep else line
+        content = line[sep_idx+1:].strip() if has_sep else ""
+        
+        is_neutral = any(k in title for k in ["姓名", "簽名", "反饋", "店名"])
+        is_ok = (not content or content in ['無', '無缺失', '正常']) if has_sep else (title in ['無', '無缺失', '正常'])
+        
+        if not is_neutral and not is_ok:
+            has_real_defect = True
+            break
+
     # 建立符合 VisitRecord 的資料結構
     visit_record = {
         "recordId": record_id,
@@ -261,9 +534,9 @@ def webhook_google_forms(payload: dict = Body(...)):
         "timeAgoMinutes": 0,
         "expectedStayMinutes": stay_mins,
         "tags": ["巡店回報"],
-        "immediateImprovement": str(payload.get("defects") or "") + "\n" + str(payload.get("summary") or ""),
+        "immediateImprovement": immediate_improvement,
         "highlightDescription": str(payload.get("highlights") or ""),
-        "abnormalFlag": bool(payload.get("defects")),
+        "abnormalFlag": has_real_defect,
         "photoPairs": payload.get("photoPairs") or [],
         "createdAt": datetime.utcnow().isoformat()
     }
@@ -369,4 +642,122 @@ def clean_db_2026():
                 "after_count": len(new_managers),
                 "removed_count": len(removed_stores),
                 "removed_details": removed_stores
+            }
+
+
+# === PDCA Action Items ===
+
+@app.get("/api/action-items", response_model=List[dict])
+def get_action_items(store: str = ""):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            if store:
+                cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
+            else:
+                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
+            rows = cur.fetchall()
+            return [row[0] for row in rows]
+
+
+
+# === PDCA Action Items ===
+
+@app.get("/api/action-items", response_model=List[dict])
+def get_action_items(store: str = ""):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            if store:
+                cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
+            else:
+                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
+            rows = cur.fetchall()
+            return [row[0] for row in rows]
+
+@app.post("/api/action-items")
+def create_action_item(payload: dict = Body(...)):
+    item_id = str(uuid.uuid4())
+    payload["id"] = item_id
+    payload["createdAt"] = datetime.utcnow().isoformat()
+    if "status" not in payload:
+        payload["status"] = "Open"
+    store_name = payload.get("storeName", "未知門市")
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO action_items (id, store_name, created_at, data)
+                VALUES (%s, %s, %s, %s)
+            """, (item_id, store_name, datetime.utcnow(), Json(payload)))
+        conn.commit()
+    return {"success": True, "data": payload}
+
+@app.put("/api/action-items/{item_id}")
+def update_action_item(item_id: str, payload: dict = Body(...)):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM action_items WHERE id = %s", (item_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Item not found")
+            
+            data = row[0]
+            data.update(payload)
+            data["updatedAt"] = datetime.utcnow().isoformat()
+            
+            cur.execute("""
+                UPDATE action_items SET data = %s WHERE id = %s
+            """, (Json(data), item_id))
+        conn.commit()
+    return {"success": True, "data": data}
+
+@app.get("/api/dashboard-data")
+def get_dashboard_data(time_range: str = "day", region: str = "all"):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # 1. Get Managers
+            cur.execute("SELECT data FROM store WHERE id = 'managers'")
+            row = cur.fetchone()
+            managers = row[0] if row else []
+            
+            # 2. Get Activities
+            query = "SELECT data FROM visit_records"
+            params = []
+            conditions = []
+            
+            if time_range == "all":
+                pass
+            elif time_range == "week":
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+            elif time_range == "last_week":
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') - interval '1 week'")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+            elif time_range == "month":
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+            else:
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date")
+            
+            if region != "all":
+                conditions.append("region = %s")
+                params.append(region)
+                
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+                
+            query += " ORDER BY created_at DESC LIMIT 100"
+            cur.execute(query, tuple(params))
+            activities = [r[0] for r in cur.fetchall()]
+            
+            # 3. Get Action Items
+            action_items = []
+            try:
+                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
+                action_items = [r[0] for r in cur.fetchall()]
+            except Exception as e:
+                print("Failed to fetch action_items:", e)
+                conn.rollback() # Important to rollback the aborted transaction
+            
+            return {
+                "managers": managers,
+                "activities": activities,
+                "actionItems": action_items
             }

@@ -37,8 +37,11 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
           '處長': 'directorName',
           '區域': 'region',
           '區主管': 'areaManagerName',
+          '區經理': 'areaManagerName', // 支援新版欄位名稱
           '副區主管': 'deputyManagerName',
           '門市': 'storeName',
+          '店名': 'storeName', // 支援別名
+          'St Name': 'storeName', // 支援英文別名
           '美容區組長/總監': 'beautyLeader'
         };
 
@@ -46,15 +49,26 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
         let lastDept = '';
         let lastDirector = '';
 
+        // Extract enKeys to initialize them
+        const allEnKeys = Array.from(new Set(Object.values(headerMap)));
+
         for (const row of data) {
           const m: Partial<Manager> = { todayVisitCount: 0, assignedStoreCount: 0, hasAbnormal: false, visitStatus: '尚未回填' };
           
+          // Initialize all expected string fields to empty string to prevent Pydantic validation errors
+          for (const key of allEnKeys) {
+            m[key] = '' as never;
+          }
+          
           for (const [chKey, enKey] of Object.entries(headerMap)) {
-            // Find key in row that includes the Chinese word (handles weird hidden characters)
-            const actualKey = Object.keys(row).find(k => k.includes(chKey));
-            const rawVal = actualKey ? row[actualKey] || '' : '';
-            // Remove newlines and extra spaces inside fields
-            m[enKey] = String(rawVal).replace(/\s+/g, ' ').trim() as never;
+            // Find key in row that exactly matches or includes the Chinese/English word
+            // We only set it if it hasn't been set yet (to allow multiple aliases mapping to the same enKey)
+            const actualKey = Object.keys(row).find(k => k.includes(chKey) || k.toLowerCase() === chKey.toLowerCase());
+            if (actualKey && !m[enKey]) {
+                const rawVal = row[actualKey] || '';
+                // Remove newlines and extra spaces inside fields
+                m[enKey] = String(rawVal).replace(/\s+/g, ' ').trim() as never;
+            }
           }
           
           // 如果處別或處長空白，則繼承上一筆資料（解決 Excel 合併儲存格產生的空白問題）
@@ -67,7 +81,7 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
         }
         
         if (newManagers.length === 0) {
-          return alert('找不到任何門市資料！請確認您的 CSV 第一列標題是否為：\n處別, 處長, 區域, 區主管, 副區主管, 門市, 美容區組長/總監');
+          return alert('找不到任何門市資料！請確認您的 CSV 標題是否有包含「門市」或「St Name」。');
         }
         
         try {

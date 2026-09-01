@@ -5,10 +5,6 @@ import type { Manager, VisitRecord } from '../types';
 // ==========================================
 const API_BASE_URL = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
 
-// (MOCK_SUMMARY removed)
-// (MOCK_ACTIVITIES removed)
-// (MOCK_MANAGERS removed for production)
-
 // ==========================================
 // RESTful 呼叫核心 Helper
 // ==========================================
@@ -51,4 +47,14 @@ export const importManagers = async (managers: Manager[]): Promise<boolean> => {
   return !!(data && data.success);
 };
 
-
+export const getActionItems = async (store: string = ""): Promise<any[]> => {
+  const data = await fetchJSON(`/action-items${store ? `?store=${encodeURIComponent(store)}` : ''}`);
+  if (data) {
+    return data;
+  }
+  return [];
+};
+export const getDashboardData = async (timeRange: string = 'day', region: string = 'all'): Promise<any> => {
+  const data = await fetchJSON(`/dashboard-data?time_range=${timeRange}&region=${region}`);
+  return data;
+};
