@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SignatureCanvas from 'react-signature-canvas';
 import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut } from 'lucide-react';
@@ -77,12 +77,7 @@ export const AuditApp = () => {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(draft));
   }, [storeName, mgrName, auditMode, selectedTopics, coreChecks, categoryChecks, categoryRemarks, customItems, pdcaResults, newActionItems, overallRating, photoPairs, currentStep, isDraftRestored]);
 
-  const clearDraftAndReset = () => {
-    if (window.confirm('確定要清除目前的草稿並重新開始嗎？')) {
-      localStorage.removeItem(LOCAL_STORAGE_KEY);
-      window.location.reload();
-    }
-  };
+
 
   const handleAddCustomItem = (index: number) => {
     const val = customInputValues[index]?.trim();
@@ -183,10 +178,6 @@ export const AuditApp = () => {
       alert('送出失敗');
     }
   };
-
-    }
-  };
-
   // --- Stepper Navigation ---
   const handleNext = () => {
     if (currentStep === 1) {
