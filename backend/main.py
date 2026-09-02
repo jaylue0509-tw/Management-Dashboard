@@ -1,7 +1,8 @@
 import os
 import json
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Body, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
@@ -23,6 +24,8 @@ JWT_ALGORITHM = "HS256"
 load_dotenv()
 
 app = FastAPI(title="東寵戰情牆 API", description="採用 Vercel Postgres (Neon) 的輕量級後端")
+
+
 
 # CORS 設定
 app.add_middleware(

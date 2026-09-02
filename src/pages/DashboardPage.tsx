@@ -13,6 +13,7 @@ import { IssuePieChart } from '../components/charts/IssuePieChart';
 import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
 import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
+import { AlertTriangle } from 'lucide-react';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -157,7 +158,7 @@ export const DashboardPage: React.FC = () => {
     return filteredActivities;
   }, [filteredActivities, selectedManager]);
 
-  const { dynamicSummary, radarData, pieData, riskData, topIssues } = useMemo(() => {
+  const { dynamicSummary, radarData, pieData, riskData, topIssues, unresolvedStores } = useMemo(() => {
     let abnormalCount = 0;
     let highlightCount = 0;
     const expectedStayByStore = new Map<string, number>();
@@ -531,7 +532,8 @@ export const DashboardPage: React.FC = () => {
       radarData: rData,
       pieData: pData,
       riskData,
-      topIssues
+      topIssues,
+      unresolvedStores: abnormalStoresList.filter(s => !closedPdcaStores.includes(s.store))
     };
   }, [targetActivities, actionItems]);
 
@@ -608,6 +610,31 @@ export const DashboardPage: React.FC = () => {
           <DashboardSkeleton />
         ) : (
           <>
+            {/* Unresolved Issues Reminder Banner */}
+            {unresolvedStores.length > 0 && (
+              <div className="mb-6 bg-gradient-to-r from-red-500 to-rose-500 rounded-2xl p-1 shadow-lg animate-in slide-in-from-top-4 fade-in duration-500">
+                <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 sm:p-5 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="bg-white/20 p-2 rounded-lg mt-0.5 sm:mt-0">
+                      <AlertTriangle size={24} className="text-white animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg mb-1 flex items-center gap-2">
+                        未結案提醒 
+                        <span className="bg-red-600/50 px-2 py-0.5 rounded-full text-xs font-semibold border border-red-400/30">
+                          {unresolvedStores.length} 間門市
+                        </span>
+                      </h3>
+                      <p className="text-red-50 text-sm font-medium opacity-90 leading-relaxed max-w-2xl">
+                        以下門市巡檢發現缺失，且尚未完成 PDCA 結案，請持續追蹤改善進度直到結案為止：
+                        {unresolvedStores.map(s => s.store).join('、')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'dashboard' ? (
               <>
                 {(() => {
