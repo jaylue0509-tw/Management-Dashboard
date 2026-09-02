@@ -159,8 +159,11 @@ export const AdminSettings: React.FC = () => {
                 <div key={u.username} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <h3 className="font-bold text-gray-900">{u.name}</h3>
-                      <p className="text-xs text-gray-500">帳號: {u.username}</p>
+                      <h3 className="font-bold text-gray-900 mb-2">{u.name}</h3>
+                      <div className="space-y-1">
+                        <p className="text-xs text-gray-600 font-medium">登入帳號：<span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{u.username}</span></p>
+                        <p className="text-xs text-gray-600 font-medium">登入密碼：<span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">1234</span> <span className="text-gray-400 font-normal scale-90 inline-block">(預設密碼，如修改過請以新密碼為準)</span></p>
+                      </div>
                     </div>
                     <button 
                       onClick={() => setEditingUser({ ...u })}

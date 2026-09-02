@@ -17,19 +17,7 @@ export const Login = () => {
     setError('');
     setLoading(true);
 
-    // 本機測試後門：直接放行 admin / admin1234
-    if (username === 'admin' && password === 'admin1234') {
-      const mockUser = {
-        sub: 'admin',
-        role: 'admin' as const,
-        name: '總部管理員',
-        assigned_stores: []
-      };
-      login('mock-token', mockUser);
-      navigate('/dashboard');
-      setLoading(false);
-      return;
-    }
+    // 密碼與帳號驗證已交由後端處理
 
     try {
       const res = await fetch('https://management-dashboard-rust.vercel.app/api/auth/login', {
