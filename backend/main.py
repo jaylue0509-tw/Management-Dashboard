@@ -162,7 +162,7 @@ def init_default_users(conn):
                             mgr_map[name] = []
                         mgr_map[name].append(store)
                 
-                mgr_hash = pwd_context.hash("123456")
+                mgr_hash = pwd_context.hash("1234")
                 for name, stores in mgr_map.items():
                     # 帳號預設為主管名稱拼音或直接用名稱 (此處以名稱為帳號)
                     cur.execute("""
@@ -439,6 +439,17 @@ def fix_mgr_names():
                     data['areaManagerName'] = store_mgr_map[store_name]
                     cur.execute("UPDATE visit_records SET data = %s WHERE id = %s", (Json(data), rid))
                     updated += 1
+        conn.commit()
+    return {"success": True, "updated": updated}
+
+@app.get("/api/admin/temp-reset")
+def temp_reset_passwords():
+    updated = 0
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            new_hash = pwd_context.hash("1234")
+            cur.execute("UPDATE users SET password_hash = %s WHERE role = 'manager'", (new_hash,))
+            updated = cur.rowcount
         conn.commit()
     return {"success": True, "updated": updated}
 
