@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import SignatureCanvas from 'react-signature-canvas';
 import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { storeRegions } from '../data/storeRegions';
 
 const LOCAL_STORAGE_KEY = 'audit_app_draft';
 
@@ -148,8 +149,44 @@ export const AuditApp = () => {
       });
       
       if (res.ok) {
-        const validActions = newActionItems.filter(i => i.desc);
-        for (const act of validActions) {
+        const finalActionItems = newActionItems.filter(i => i.desc).map(act => ({
+          desc: act.desc,
+          assignee: act.assignee || '店長',
+          dueDate: act.dueDate || new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0],
+        }));
+
+        const CORE_LABELS: Record<string, string> = {
+          'core-1': '環境異味與清潔', 'core-2': '櫃檯焦點陳列', 'core-3': '人員狀態與迎賓'
+        };
+        const CAT_LABELS: Record<string, string> = {
+          '1-1': '檔期 POP 與宣傳物', '1-2': '主題陳列與佈置 (VMD)', '1-3': '檔期主打商品備貨', '1-4': '結帳區加價購專區',
+          '2-1': '排面平整與拉面', '2-2': '效期與先進先出 (FIFO)', '2-3': '臨期品與損耗處置', '2-4': '高單價與高損品防竊', '2-5': 'PB 與高毛利商品陳列',
+          '3-1': '美容房環境與衛生', '3-2': '美容操作 SOP 與安全', '3-3': '活體照護與環境（若有）', '3-4': '保健/醫療專區維護',
+          '4-1': '儀容儀態與招呼', '4-2': '專業導購與衛教', '4-3': '櫃檯結帳與附加銷售 (Add-on)',
+          '5-1': '門面與整體環境清潔', '5-2': '賣場氣氛與燈光空調', '5-3': '後勤倉庫與公安動線', '5-4': '系統與設備安全運作',
+          '6-1': '業績與 KPI 指標跟進', '6-2': '人員 1-on-1 面談紀錄', '6-3': '團隊士氣與排班合理性'
+        };
+
+        for (const [k, v] of Object.entries(coreChecks)) {
+          if (v === '缺失') {
+            finalActionItems.push({
+              desc: `[必看核心] ${CORE_LABELS[k] || k}: ${categoryRemarks[k] || '未填寫說明'}`,
+              assignee: '店長',
+              dueDate: new Date(Date.now() + 3*24*60*60*1000).toISOString().split('T')[0]
+            });
+          }
+        }
+        for (const [k, v] of Object.entries(categoryChecks)) {
+          if (v === '缺失') {
+            finalActionItems.push({
+              desc: `[模組細項] ${CAT_LABELS[k] || k}: ${categoryRemarks[k] || '未填寫說明'}`,
+              assignee: '店長',
+              dueDate: new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0]
+            });
+          }
+        }
+
+        for (const act of finalActionItems) {
           await fetch('https://management-dashboard-rust.vercel.app/api/action-items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -216,19 +253,32 @@ export const AuditApp = () => {
       <div className="space-y-5">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-1">巡店門市 <span className="text-red-500">*</span></label>
-          <select
-            value={storeName}
-            onChange={(e) => {
-              setStoreName(e.target.value);
-              fetchActionItems(e.target.value);
-            }}
-            className="w-full border rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 appearance-none"
-          >
-            <option value="" disabled>請選擇負責的門市</option>
-            {user?.assigned_stores.map(store => (
-              <option key={store} value={store}>{store}</option>
-            ))}
-          </select>
+            <select
+              value={storeName}
+              onChange={(e) => {
+                setStoreName(e.target.value);
+                fetchActionItems(e.target.value);
+              }}
+              className="w-full border rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+            >
+              <option value="" disabled>請選擇負責的門市</option>
+              {Object.entries(storeRegions).map(([region, stores]) => {
+                // 如果是總部管理員(admin) 或 權限全開，就顯示全部；否則過濾出指派的門市
+                const visibleStores = user?.role === 'admin' 
+                  ? stores 
+                  : stores.filter(s => user?.assigned_stores?.includes(s));
+                  
+                if (visibleStores.length === 0) return null;
+                
+                return (
+                  <optgroup key={region} label={`【${region}】`}>
+                    {visibleStores.map(store => (
+                      <option key={store} value={store}>{store}</option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            </select>
         </div>
         
         {/* 前次未結案 */}
@@ -749,7 +799,7 @@ export const AuditApp = () => {
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 pt-6">
+      <div className="md:max-w-4xl max-w-2xl mx-auto px-4 pt-6">
         {/* Stepper Progress */}
         <div className="mb-8">
           <div className="flex justify-between items-center mb-2">
@@ -779,7 +829,7 @@ export const AuditApp = () => {
 
         {/* Navigation Buttons */}
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-          <div className="max-w-2xl mx-auto flex gap-3">
+          <div className="md:max-w-4xl max-w-2xl mx-auto flex gap-3">
             {currentStep > 1 && (
               <button
                 onClick={handlePrev}

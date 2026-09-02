@@ -52,100 +52,88 @@ export const ExecutiveSummary: React.FC<Props> = ({ activities, summary, timeRan
     return `(${formatDate(minDate)} - ${formatDate(maxDate)})`;
   }, [activities]);
 
-  if (!summary || !insights || (timeRange !== 'week' && timeRange !== 'month' && timeRange !== 'last_week' && timeRange !== 'all')) {
+  if (!summary || !insights || !['week', 'month', 'last_week', 'all'].includes(timeRange)) {
     return null;
   }
 
-  let rangeText = '本月';
-  if (timeRange === 'week') rangeText = '本週';
-  if (timeRange === 'last_week') rangeText = '上週';
-  if (timeRange === 'all') rangeText = '歷史總計';
+  const rangeTextMap: Record<string, string> = {
+    week: '本週',
+    month: '本月',
+    last_week: '上週',
+    all: '歷史總計'
+  };
+  const rangeText = rangeTextMap[timeRange] || '本月';
 
   return (
-    <div style={{
-      marginBottom: '22px',
-      padding: '20px 24px',
-      background: 'linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%)',
-      borderRadius: '12px',
-      border: '1px solid #bfdbfe',
-      borderLeft: '4px solid #3b82f6',
-      position: 'relative',
-      overflow: 'hidden',
-    }}>
+    <div className="mb-6 p-5 sm:p-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-200 border-l-4 border-l-blue-500 relative overflow-hidden">
       {/* Decorative circle */}
-      <div style={{
-        position: 'absolute', top: '-20px', right: '-20px',
-        width: '100px', height: '100px', borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(99,102,241,0.1), transparent)',
-        pointerEvents: 'none',
-      }} />
+      <div className="absolute -top-5 -right-5 w-24 h-24 rounded-full bg-[radial-gradient(circle,rgba(99,102,241,0.1),transparent)] pointer-events-none" />
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-        <div style={{
-          width: '32px', height: '32px',
-          background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
-          borderRadius: '8px',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Sparkles size={16} color="white" />
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center shrink-0 shadow-sm">
+          <Sparkles size={16} className="text-white" />
         </div>
         <div>
-          <h2 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1e3a8a', lineHeight: 1.2, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <h2 className="text-[0.95rem] font-bold text-blue-900 leading-tight flex items-center gap-2 flex-wrap">
             高階主管 {rangeText} 營運重點摘要 
-            {dateRangeStr && <span style={{ fontSize: '0.8rem', color: '#3b82f6', fontWeight: 600, background: '#dbeafe', padding: '2px 8px', borderRadius: '12px' }}>{dateRangeStr}</span>}
+            {dateRangeStr && (
+              <span className="text-xs text-blue-600 font-semibold bg-blue-100 px-2 py-0.5 rounded-full">
+                {dateRangeStr}
+              </span>
+            )}
           </h2>
-          <div style={{ fontSize: '0.67rem', color: '#93c5fd', letterSpacing: '0.05em', marginTop: '4px' }}>
+          <div className="text-[0.65rem] text-blue-400 tracking-wider mt-1 font-semibold">
             EXECUTIVE INSIGHTS
           </div>
         </div>
       </div>
 
-      <p style={{ lineHeight: 1.7, fontSize: '0.875rem', color: '#374151', marginBottom: '16px' }}>
-        本區間共完成 <strong style={{ color: '#1d4ed8' }}>{summary.totalVisits}</strong> 筆巡店紀錄，
-        投入約 <strong style={{ color: '#1d4ed8' }}>{insights.totalHours}</strong> 小時於門市輔導。
-        全台巡店覆蓋率達 <strong style={{ color: '#2563eb' }}>{summary.coverageRate ?? 0}%</strong> 
+      <p className="leading-relaxed text-sm text-gray-700 mb-5">
+        本區間共完成 <strong className="text-blue-700 font-bold">{summary.totalVisits}</strong> 筆巡店紀錄，
+        投入約 <strong className="text-blue-700 font-bold">{insights.totalHours}</strong> 小時於門市輔導。
+        全台巡店覆蓋率達 <strong className="text-blue-600 font-bold">{summary.coverageRate ?? 0}%</strong> 
         （已巡視 {summary.uniqueVisitedStoresCount ?? 0} 家 / 總分派 {summary.assignedStoresCount ?? 0} 家）。
       </p>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem', color: '#374151' }}>
-          <AlertTriangle size={15} color="#e11d48" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <span>
-            <strong style={{ color: '#be123c' }}>首要營運痛點：</strong>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start gap-2 text-sm text-gray-700 bg-white/60 p-3 rounded-lg border border-white/40">
+          <AlertTriangle size={16} className="text-rose-600 shrink-0 mt-0.5" />
+          <span className="leading-relaxed">
+            <strong className="text-rose-700 font-semibold">首要營運痛點：</strong>
             {insights.primaryIssue ? (
-              <>最需關注的環節為「<strong style={{ color: '#111827' }}>{insights.primaryIssue.category}</strong>」中的
-              「<strong style={{ color: '#111827' }}>{insights.primaryIssue.item}</strong>」（累計 {insights.primaryIssue.count} 件異常{insights.primaryIssue.stores && insights.primaryIssue.stores.length > 0 ? `，發生於：${insights.primaryIssue.stores.map(s => s.name).join('、')}` : ''}），建議通報各區主管加強要求。</>
+              <>最需關注的環節為「<strong className="text-gray-900 font-semibold">{insights.primaryIssue.category}</strong>」中的
+              「<strong className="text-gray-900 font-semibold">{insights.primaryIssue.item}</strong>」（累計 {insights.primaryIssue.count} 件異常{insights.primaryIssue.stores && insights.primaryIssue.stores.length > 0 ? `，發生於：${insights.primaryIssue.stores.map(s => s.name).join('、')}` : ''}），建議通報各區主管加強要求。</>
             ) : (
-              <span style={{ color: '#6b7280' }}>目前區間尚無異常提報數據。</span>
+              <span className="text-gray-500">目前區間尚無異常提報數據。</span>
             )}
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem', color: '#374151' }}>
-          <TrendingDown size={15} color="#c2410c" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <span>
-            <strong style={{ color: '#9a3412' }}>模組表現弱勢：</strong>
+        <div className="flex items-start gap-2 text-sm text-gray-700 bg-white/60 p-3 rounded-lg border border-white/40">
+          <TrendingDown size={16} className="text-orange-600 shrink-0 mt-0.5" />
+          <span className="leading-relaxed">
+            <strong className="text-orange-800 font-semibold">模組表現弱勢：</strong>
             {insights.weakestModule.subject ? (
-              <>六大模組中，以「<strong style={{ color: '#111827' }}>{insights.weakestModule.subject}</strong>」表現較弱（平均得分 {insights.weakestModule.score} 分），應列為下階段輔導與教育訓練之重點。</>
+              <>六大模組中，以「<strong className="text-gray-900 font-semibold">{insights.weakestModule.subject}</strong>」表現較弱（平均得分 {insights.weakestModule.score} 分），應列為下階段輔導與教育訓練之重點。</>
             ) : (
-              <span style={{ color: '#6b7280' }}>目前尚無各模組評分數據。</span>
+              <span className="text-gray-500">目前尚無各模組評分數據。</span>
             )}
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem', color: '#374151' }}>
-          <Store size={15} color="#b91c1c" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <span>
-            <strong style={{ color: '#991b1b' }}>高風險門市警示：</strong>
-            目前有 <strong style={{ color: '#ef4444' }}>{summary.redLightStores ?? 0}</strong> 家門市被評為「需重點輔導」{(summary.redLightStores ?? 0) > 0 ? '，請盡速安排資源協助改善。' : '。'}
+        <div className="flex items-start gap-2 text-sm text-gray-700 bg-white/60 p-3 rounded-lg border border-white/40">
+          <Store size={16} className="text-red-700 shrink-0 mt-0.5" />
+          <span className="leading-relaxed">
+            <strong className="text-red-800 font-semibold">高風險門市警示：</strong>
+            目前有 <strong className="text-red-500 font-bold">{summary.redLightStores ?? 0}</strong> 家門市被評為「需重點輔導」{(summary.redLightStores ?? 0) > 0 ? '，請盡速安排資源協助改善。' : '。'}
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem', color: '#374151' }}>
-          <Star size={15} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <span>
-            <strong style={{ color: '#92400e' }}>優良表現：</strong>
-            本區間共發掘 <strong style={{ color: '#111827' }}>{summary.highlightCount}</strong> 件好人好事，建議於內部會議中表揚，以凝聚團隊服務士氣。
+        <div className="flex items-start gap-2 text-sm text-gray-700 bg-white/60 p-3 rounded-lg border border-white/40">
+          <Star size={16} className="text-amber-500 shrink-0 mt-0.5" />
+          <span className="leading-relaxed">
+            <strong className="text-amber-800 font-semibold">優良表現：</strong>
+            本區間共發掘 <strong className="text-gray-900 font-semibold">{summary.highlightCount}</strong> 件好人好事，建議於內部會議中表揚，以凝聚團隊服務士氣。
           </span>
         </div>
       </div>

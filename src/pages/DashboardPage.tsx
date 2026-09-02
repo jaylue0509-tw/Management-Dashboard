@@ -305,9 +305,22 @@ export const DashboardPage: React.FC = () => {
     const validRawManagers = selectedDepartment === 'all'
       ? managers
       : managers.filter(m => m.department.includes(keyword) || m.department === selectedDepartment);
-    const totalAssignedStores = new Set(validRawManagers.map(m => m.storeName)).size;
+      
+    const normalizeStore = (s: string) => (s || '').trim().replace(/店$/, '');
+    const allAssignedStoresList = Array.from(new Set(validRawManagers.map(m => m.storeName)));
+    const assignedStoresNormalized = new Map(allAssignedStoresList.map(s => [normalizeStore(s), s]));
+    const totalAssignedStores = allAssignedStoresList.length;
     
-    const uniqueVisitedStoresInPeriod = new Set(targetActivities.map(a => a.storeName)).size;
+    // Only count visited stores that match an assigned store (fuzzily by ignoring trailing '店')
+    const visitedStoresSet = new Set<string>();
+    targetActivities.forEach(a => {
+      const norm = normalizeStore(a.storeName);
+      if (assignedStoresNormalized.has(norm)) {
+        visitedStoresSet.add(assignedStoresNormalized.get(norm)!);
+      }
+    });
+    
+    const uniqueVisitedStoresInPeriod = visitedStoresSet.size;
     const coverageRate = totalAssignedStores > 0 ? Math.round((uniqueVisitedStoresInPeriod / totalAssignedStores) * 100) : 0;
     // Compute Pie Data
     const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
@@ -476,9 +489,8 @@ export const DashboardPage: React.FC = () => {
       return { store, reasons, reportTime };
     });
     
-    const visitedStoresList = Array.from(new Set(targetActivities.map(a => a.storeName)));
-    const allAssignedStoresList = Array.from(new Set(validRawManagers.map(m => m.storeName)));
-    const unvisitedStoresList = allAssignedStoresList.filter(s => !visitedStoresList.includes(s));
+    const visitedStoresList = Array.from(visitedStoresSet);
+    const unvisitedStoresList = allAssignedStoresList.filter(s => !visitedStoresSet.has(s));
     
     const closedPdcaStores = Array.from(new Set(validActionItems.filter(ai => ai.status === 'Closed').map(ai => ai.storeName)));
     const openPdcaStores = Array.from(new Set(validActionItems.filter(ai => ai.status !== 'Closed').map(ai => ai.storeName)));
@@ -593,7 +605,7 @@ export const DashboardPage: React.FC = () => {
                 })()}
 
                 {/* Charts Row */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
                   <CoverageRadarChart data={radarData} />
                   <RiskDistributionChart data={riskData} />
                   <IssuePieChart data={pieData} />
@@ -611,7 +623,7 @@ export const DashboardPage: React.FC = () => {
                 )}
 
                 {/* Main Content: Manager List + Activity Wall */}
-                <div className="flex mobile-col gap-6" style={{ alignItems: 'flex-start' }}>
+                <div className="flex flex-col md:flex-row gap-6" style={{ alignItems: 'flex-start' }}>
                   <ManagerList
                     managers={filteredManagers}
                     selectedManager={selectedManager}

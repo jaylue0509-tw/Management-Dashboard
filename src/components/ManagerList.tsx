@@ -21,20 +21,7 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
   };
 
   return (
-    <aside style={{
-      width: '290px',
-      flexShrink: 0,
-      background: '#ffffff',
-      borderRadius: '12px',
-      border: '1px solid #e5e7eb',
-      padding: '18px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '14px',
-      height: 'fit-content',
-      maxHeight: '80vh',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-    }}>
+    <aside className="w-full md:w-[260px] lg:w-[290px] shrink-0 bg-white rounded-xl border border-gray-200 p-[18px] flex flex-col gap-[14px] h-fit max-h-[80vh] shadow-sm">
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

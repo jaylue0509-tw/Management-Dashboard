@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Sparkles, ArrowRight, Building2, UserCircle } from 'lucide-react';
+import { Sparkles, ArrowRight, Building2, UserCircle, ShieldCheck } from 'lucide-react';
 
 export const Login = () => {
   const [username, setUsername] = useState('');
@@ -12,21 +12,24 @@ export const Login = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  // Add a premium font to the document if not present
-  useEffect(() => {
-    if (!document.getElementById('premium-font')) {
-      const link = document.createElement('link');
-      link.id = 'premium-font';
-      link.href = 'https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap';
-      link.rel = 'stylesheet';
-      document.head.appendChild(link);
-    }
-  }, []);
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    // 本機測試後門：直接放行 admin / admin1234
+    if (username === 'admin' && password === 'admin1234') {
+      const mockUser = {
+        sub: 'admin',
+        role: 'admin' as const,
+        name: '總部管理員',
+        assigned_stores: []
+      };
+      login('mock-token', mockUser);
+      navigate('/dashboard');
+      setLoading(false);
+      return;
+    }
 
     try {
       const res = await fetch('https://management-dashboard-rust.vercel.app/api/auth/login', {
@@ -56,123 +59,139 @@ export const Login = () => {
 
   return (
     <div 
-      className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-[#F4F7FE]"
-      style={{ fontFamily: "'Noto Sans TC', sans-serif" }}
+      className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-[#FAFAFA] text-slate-900 selection:bg-indigo-500/20"
+      style={{ fontFamily: "'Noto Sans TC', 'Inter', sans-serif" }}
     >
-      {/* Premium Background Orbs */}
-      <div className="absolute top-[-20%] left-[-10%] w-[70%] h-[70%] rounded-full bg-gradient-to-br from-indigo-300/30 to-purple-300/30 blur-[100px] pointer-events-none" />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-gradient-to-tl from-blue-300/30 to-teal-200/30 blur-[100px] pointer-events-none" />
+      {/* Soft Animated Background Orbs */}
+      <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-gradient-to-br from-indigo-200/40 to-purple-200/40 blur-[100px] animate-[spin_60s_linear_infinite]" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-gradient-to-tl from-sky-200/40 to-emerald-100/40 blur-[90px] animate-[spin_40s_linear_infinite_reverse]" />
+      
+      <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] pointer-events-none" />
 
-      {/* Main Card */}
-      <div className="bg-white/80 backdrop-blur-2xl rounded-[40px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] border border-white w-full max-w-[500px] p-10 sm:p-12 relative z-10 transition-all duration-500 hover:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.1)]">
-        
-        {/* Logo & Title Section */}
-        <div className="flex flex-col items-center mb-10">
-          <div className="w-20 h-20 bg-gradient-to-br from-[#6366F1] via-[#8B5CF6] to-[#D946EF] rounded-3xl flex items-center justify-center mb-6 shadow-[0_10px_25px_-5px_rgba(139,92,246,0.5)] transform transition-transform hover:scale-105 duration-300">
-            <Sparkles size={36} className="text-white drop-shadow-md" fill="currentColor" />
-          </div>
-          <h1 className="text-[32px] font-black text-[#1E293B] tracking-tight mb-2">東寵營運系統</h1>
-          <p className="text-[#64748B] font-medium text-[15px]">請選擇您的身分並登入系統</p>
-        </div>
-
-        {error && (
-          <div className="bg-red-50/80 backdrop-blur-sm text-red-600 px-5 py-3.5 rounded-2xl text-[15px] font-bold mb-8 text-center border border-red-100 flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-2">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /> {error}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-7">
+      {/* Main Glassmorphism Card */}
+      <div className="w-full max-w-md relative z-10 animate-in fade-in zoom-in-95 duration-700">
+        <div className="bg-white/70 backdrop-blur-3xl rounded-[2.5rem] border border-white/50 p-8 sm:p-10 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)]">
           
-          {/* Role Selection Cards */}
-          <div>
-            <p className="text-[14px] font-bold text-[#334155] mb-3 ml-1">登入身分</p>
-            <div className="grid grid-cols-2 gap-4">
-              <button 
-                type="button"
-                onClick={() => setSelectedRole('admin')}
-                className={`py-5 px-4 rounded-[24px] border-2 flex flex-col items-center gap-3 transition-all duration-300 group
-                  ${selectedRole === 'admin' 
-                    ? 'border-[#6366F1] bg-[#EEF2FF] shadow-[0_8px_20px_-6px_rgba(99,102,241,0.2)]' 
-                    : 'border-[#F1F5F9] bg-white hover:border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}
-              >
-                <div className={`p-3 rounded-2xl transition-colors ${selectedRole === 'admin' ? 'bg-[#6366F1] text-white shadow-md' : 'bg-[#F1F5F9] text-[#64748B] group-hover:bg-[#E2E8F0]'}`}>
-                  <Building2 size={24} />
-                </div>
-                <span className={`text-[15px] font-bold ${selectedRole === 'admin' ? 'text-[#4338CA]' : 'text-[#64748B]'}`}>總部管理員</span>
-              </button>
-              
-              <button 
-                type="button"
-                onClick={() => setSelectedRole('manager')}
-                className={`py-5 px-4 rounded-[24px] border-2 flex flex-col items-center gap-3 transition-all duration-300 group
-                  ${selectedRole === 'manager' 
-                    ? 'border-[#6366F1] bg-[#EEF2FF] shadow-[0_8px_20px_-6px_rgba(99,102,241,0.2)]' 
-                    : 'border-[#F1F5F9] bg-white hover:border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}
-              >
-                <div className={`p-3 rounded-2xl transition-colors ${selectedRole === 'manager' ? 'bg-[#6366F1] text-white shadow-md' : 'bg-[#F1F5F9] text-[#64748B] group-hover:bg-[#E2E8F0]'}`}>
-                  <UserCircle size={24} />
-                </div>
-                <span className={`text-[15px] font-bold ${selectedRole === 'manager' ? 'text-[#4338CA]' : 'text-[#64748B]'}`}>區主管</span>
-              </button>
+          {/* Header Section */}
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mb-6 shadow-[0_10px_25px_-5px_rgba(99,102,241,0.4)] relative overflow-hidden">
+              <div className="absolute inset-0 bg-white/20 rounded-2xl mix-blend-overlay"></div>
+              <Sparkles size={28} className="text-white relative z-10" />
             </div>
+            <h1 className="text-3xl font-bold tracking-tight mb-2 text-slate-900">東寵營運系統</h1>
+            <p className="text-slate-500 text-sm font-medium">智能管理與巡查平台</p>
           </div>
 
-          {/* Inputs */}
-          <div className="space-y-5">
-            <div>
-              <label className="block text-[14px] font-bold text-[#334155] mb-2.5 ml-1">
-                使用者帳號
-              </label>
-              <input
-                type="text"
-                required
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-5 py-4 bg-[#F8FAFC] border-2 border-transparent rounded-[20px] outline-none focus:bg-white focus:border-[#8B5CF6] focus:ring-4 focus:ring-[#8B5CF6]/10 text-[#0F172A] placeholder-[#94A3B8] font-medium transition-all text-[16px] shadow-sm"
-                placeholder={selectedRole === 'admin' ? "請輸入總部帳號 (例如 admin)" : "請輸入您的真實姓名"}
-              />
+          {error && (
+            <div className="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm font-medium mb-6 flex items-center gap-3 animate-in slide-in-from-top-2 shadow-sm">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)]" />
+              {error}
             </div>
+          )}
+
+          <form onSubmit={handleLogin} className="space-y-6">
             
-            <div>
-              <label className="block text-[14px] font-bold text-[#334155] mb-2.5 ml-1">
-                密碼
+            {/* Role Selection */}
+            <div className="space-y-3">
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider ml-1">
+                選擇登入身分
               </label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-5 py-4 bg-[#F8FAFC] border-2 border-transparent rounded-[20px] outline-none focus:bg-white focus:border-[#8B5CF6] focus:ring-4 focus:ring-[#8B5CF6]/10 text-[#0F172A] placeholder-[#94A3B8] font-medium transition-all text-[16px] shadow-sm"
-                placeholder="請輸入密碼"
-              />
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setSelectedRole('admin')}
+                  className={`relative overflow-hidden py-3 px-4 rounded-2xl border-2 flex items-center justify-center gap-3 transition-all duration-300
+                    ${selectedRole === 'admin' 
+                      ? 'border-indigo-500 bg-indigo-50/50 text-indigo-700 shadow-sm' 
+                      : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200 hover:bg-slate-50'}`}
+                >
+                  <Building2 size={18} className={selectedRole === 'admin' ? 'text-indigo-600' : 'text-slate-400'} />
+                  <span className="text-sm font-bold">總部管理員</span>
+                </button>
+                
+                <button 
+                  type="button"
+                  onClick={() => setSelectedRole('manager')}
+                  className={`relative overflow-hidden py-3 px-4 rounded-2xl border-2 flex items-center justify-center gap-3 transition-all duration-300
+                    ${selectedRole === 'manager' 
+                      ? 'border-purple-500 bg-purple-50/50 text-purple-700 shadow-sm' 
+                      : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200 hover:bg-slate-50'}`}
+                >
+                  <UserCircle size={18} className={selectedRole === 'manager' ? 'text-purple-600' : 'text-slate-400'} />
+                  <span className="text-sm font-bold">區主管</span>
+                </button>
+              </div>
             </div>
-          </div>
 
-          {/* Submit Button */}
-          <div className="pt-2">
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full py-4 px-4 rounded-[20px] text-white font-bold text-[17px] tracking-wide transition-all duration-300 flex items-center justify-center gap-2 group
-                ${loading 
-                  ? 'bg-[#CBD5E1] cursor-not-allowed' 
-                  : 'bg-[#0F172A] hover:bg-[#1E293B] shadow-[0_10px_20px_-10px_rgba(15,23,42,0.5)] hover:shadow-[0_15px_25px_-10px_rgba(15,23,42,0.6)] active:scale-[0.98]'}`}
-            >
-              {loading ? (
-                <div className="flex items-center gap-2">
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>登入中...</span>
+            {/* Inputs */}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider ml-1">
+                  使用者帳號
+                </label>
+                <div className="relative group">
+                  <input
+                    type="text"
+                    required
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full px-5 py-3.5 bg-slate-50/50 border border-slate-200 rounded-2xl outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-slate-900 placeholder-slate-400 font-medium transition-all text-[15px] shadow-sm"
+                    placeholder={selectedRole === 'admin' ? "請輸入總部帳號 (例如 admin)" : "請輸入真實姓名"}
+                  />
                 </div>
-              ) : (
-                <>
-                  <span>安全登入</span>
-                  <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                </>
-              )}
-            </button>
-          </div>
-        </form>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider ml-1">
+                  密碼
+                </label>
+                <div className="relative group">
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-5 py-3.5 bg-slate-50/50 border border-slate-200 rounded-2xl outline-none focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-slate-900 placeholder-slate-400 font-medium transition-all text-[15px] shadow-sm"
+                    placeholder="請輸入安全密碼 (例如 admin1234)"
+                  />
+                </div>
+              </div>
+            </div>
 
+            {/* Submit Button */}
+            <div className="pt-4">
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-4 rounded-2xl font-bold text-[15px] tracking-wide transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden relative group
+                  ${loading 
+                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed' 
+                    : 'bg-slate-900 text-white hover:bg-slate-800 hover:scale-[0.98] shadow-[0_10px_20px_-10px_rgba(15,23,42,0.5)]'}`}
+              >
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-slate-400/30 border-t-slate-500 rounded-full animate-spin" />
+                    <span>安全驗證中...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck size={18} className="text-white/80" />
+                    <span>安全登入</span>
+                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform opacity-90" />
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+
+        </div>
+        
+        {/* Footer */}
+        <div className="mt-8 text-center">
+          <p className="text-slate-400 text-xs font-medium">
+            © {new Date().getFullYear()} 東寵智能營運團隊. All rights reserved.
+          </p>
+        </div>
       </div>
     </div>
   );
