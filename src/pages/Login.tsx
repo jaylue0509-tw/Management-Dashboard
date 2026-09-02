@@ -45,11 +45,7 @@ export const Login = () => {
       const data = await res.json();
       login(data.token, data.user);
       
-      if (data.user.role === 'admin') {
-        navigate('/dashboard');
-      } else {
-        navigate('/audit');
-      }
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || '系統連線異常，請稍後再試');
     } finally {

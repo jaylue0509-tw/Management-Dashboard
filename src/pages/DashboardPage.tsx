@@ -12,6 +12,7 @@ import { CoverageRadarChart } from '../components/charts/CoverageRadarChart';
 import { IssuePieChart } from '../components/charts/IssuePieChart';
 import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
 import { TopIssuesList } from '../components/TopIssuesList';
+import { useAuth } from '../contexts/AuthContext';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -47,6 +48,7 @@ export const DashboardPage: React.FC = () => {
   const [timeRange, setTimeRange] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const { user } = useAuth();
 
   const fetchData = async (isBackground = false) => {
     if (!isBackground) setLoading(true);
@@ -55,9 +57,19 @@ export const DashboardPage: React.FC = () => {
     try {
       const data = await getDashboardData(timeRange, 'all');
       if (data) {
-        setManagers(data.managers.filter((m: any) => !m.storeName?.includes('測試')));
-        setActivities(data.activities.filter((a: any) => !a.storeName?.includes('測試')));
-        setActionItems(data.actionItems.filter((i: any) => !i.storeName?.includes('測試')));
+        let validManagers = data.managers.filter((m: any) => !m.storeName?.includes('測試'));
+        let validActivities = data.activities.filter((a: any) => !a.storeName?.includes('測試'));
+        let validActionItems = data.actionItems.filter((i: any) => !i.storeName?.includes('測試'));
+
+        if (user?.role === 'manager' && user.assigned_stores) {
+          validManagers = validManagers.filter(m => user.assigned_stores.includes(m.storeName));
+          validActivities = validActivities.filter(a => user.assigned_stores.includes(a.storeName));
+          validActionItems = validActionItems.filter(i => user.assigned_stores.includes(i.storeName));
+        }
+
+        setManagers(validManagers);
+        setActivities(validActivities);
+        setActionItems(validActionItems);
       }
     } catch (err) {
       console.error("Failed to load dashboard data", err);

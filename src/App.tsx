@@ -29,7 +29,7 @@ const App: React.FC = () => {
             <Route path="/login" element={<Login />} />
             
             <Route path="/dashboard" element={
-              <ProtectedRoute allowedRoles={['admin']}>
+              <ProtectedRoute allowedRoles={['admin', 'manager']}>
                 <DashboardPage />
               </ProtectedRoute>
             } />
@@ -56,11 +56,7 @@ const App: React.FC = () => {
 };
 
 const IndexRedirect = () => {
-  const { user } = useAuth();
-  if (user?.role === 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
-  return <Navigate to="/audit" replace />;
+  return <Navigate to="/dashboard" replace />;
 };
 
 export default App;
