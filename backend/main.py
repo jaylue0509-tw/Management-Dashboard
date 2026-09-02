@@ -116,6 +116,18 @@ def init_db():
                         assigned_stores JSONB
                     );
                 """)
+                # 建立異動紀錄表
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS audit_logs (
+                        id VARCHAR(50) PRIMARY KEY,
+                        action VARCHAR(50),
+                        target_user VARCHAR(50),
+                        changed_by VARCHAR(50),
+                        before_data JSONB,
+                        after_data JSONB,
+                        created_at TIMESTAMP
+                    );
+                """)
             conn.commit()
             
             # 初始化預設帳號
@@ -338,6 +350,74 @@ def import_managers(managers: List[Manager] = Body(...)):
         conn.commit()
         
     return {"success": True, "count": len(payload)}
+
+class UserUpdateReq(BaseModel):
+    username: str
+    password: Optional[str] = None
+    name: str
+    assigned_stores: List[str]
+
+@app.get("/api/admin/users")
+def get_users(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT username, role, name, assigned_stores FROM users WHERE role = 'manager'")
+            rows = cur.fetchall()
+            return [{"username": r[0], "role": r[1], "name": r[2], "assigned_stores": r[3]} for r in rows]
+
+@app.post("/api/admin/users")
+def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+        
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name, assigned_stores FROM users WHERE username = %s", (req.username,))
+            row = cur.fetchone()
+            
+            is_new = not row
+            before_data = {"name": row[0], "assigned_stores": row[1]} if row else None
+            after_data = {"name": req.name, "assigned_stores": req.assigned_stores}
+            
+            if req.password:
+                pwd_hash = pwd_context.hash(req.password)
+                if is_new:
+                    cur.execute("INSERT INTO users (username, password_hash, role, name, assigned_stores) VALUES (%s, %s, %s, %s, %s)",
+                                (req.username, pwd_hash, "manager", req.name, Json(req.assigned_stores)))
+                else:
+                    cur.execute("UPDATE users SET password_hash = %s, name = %s, assigned_stores = %s WHERE username = %s",
+                                (pwd_hash, req.name, Json(req.assigned_stores), req.username))
+                after_data["password_changed"] = True
+            else:
+                if is_new:
+                    raise HTTPException(status_code=400, detail="Password is required for new users")
+                cur.execute("UPDATE users SET name = %s, assigned_stores = %s WHERE username = %s",
+                            (req.name, Json(req.assigned_stores), req.username))
+                            
+            log_id = str(uuid.uuid4())
+            action = "CREATE_USER" if is_new else "UPDATE_USER"
+            cur.execute("""
+                INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (log_id, action, req.username, user.get("name", "admin"), Json(before_data) if before_data else None, Json(after_data), datetime.utcnow()))
+            
+        conn.commit()
+    return {"success": True}
+
+@app.get("/api/admin/audit-logs")
+def get_audit_logs(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, action, target_user, changed_by, before_data, after_data, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 100")
+            rows = cur.fetchall()
+            return [{
+                "id": r[0], "action": r[1], "target_user": r[2], "changed_by": r[3],
+                "before_data": r[4], "after_data": r[5], "created_at": r[6]
+            } for r in rows]
 
 @app.get("/api/admin/fix-mgr-names")
 def fix_mgr_names():

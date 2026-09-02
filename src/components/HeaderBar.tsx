@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown } from 'lucide-react';
+import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Props {
   selectedDepartment: string;
@@ -12,6 +13,7 @@ interface Props {
 export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentChange, timeRange, onTimeRangeChange }) => {
   const [time, setTime] = useState(new Date());
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -147,6 +149,36 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
             <Clock size={13} color="#9ca3af" />
             {time.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </div>
+
+          {/* Settings Button (Admin Only) */}
+          {user?.role === 'admin' && (
+            <button
+              onClick={() => navigate('/admin/settings')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                background: '#f3f4f6',
+                color: '#4b5563',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLButtonElement).style.background = '#e5e7eb';
+                (e.currentTarget as HTMLButtonElement).style.color = '#1f2937';
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLButtonElement).style.background = '#f3f4f6';
+                (e.currentTarget as HTMLButtonElement).style.color = '#4b5563';
+              }}
+            >
+              <Settings size={14} />
+              系統設定
+            </button>
+          )}
 
           {/* CTA Button */}
           <button

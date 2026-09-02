@@ -5,6 +5,7 @@ import { Login } from './pages/Login';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const AuditApp = lazy(() => import('./pages/AuditApp').then(m => ({ default: m.AuditApp })));
+const AdminSettings = lazy(() => import('./pages/AdminSettings').then(m => ({ default: m.AdminSettings })));
 
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles?: ('admin' | 'manager')[] }) => {
   const { user, token } = useAuth();
@@ -31,6 +32,12 @@ const App: React.FC = () => {
             <Route path="/dashboard" element={
               <ProtectedRoute allowedRoles={['admin', 'manager']}>
                 <DashboardPage />
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/admin/settings" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminSettings />
               </ProtectedRoute>
             } />
             

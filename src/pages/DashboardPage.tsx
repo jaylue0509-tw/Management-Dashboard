@@ -62,9 +62,9 @@ export const DashboardPage: React.FC = () => {
         let validActionItems = data.actionItems.filter((i: any) => !i.storeName?.includes('測試'));
 
         if (user?.role === 'manager' && user.assigned_stores) {
-          validManagers = validManagers.filter(m => user.assigned_stores.includes(m.storeName));
-          validActivities = validActivities.filter(a => user.assigned_stores.includes(a.storeName));
-          validActionItems = validActionItems.filter(i => user.assigned_stores.includes(i.storeName));
+          validManagers = validManagers.filter((m: any) => user.assigned_stores.includes(m.storeName));
+          validActivities = validActivities.filter((a: any) => user.assigned_stores.includes(a.storeName));
+          validActionItems = validActionItems.filter((i: any) => user.assigned_stores.includes(i.storeName));
         }
 
         setManagers(validManagers);
