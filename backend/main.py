@@ -444,14 +444,17 @@ def fix_mgr_names():
 
 @app.get("/api/admin/temp-reset")
 def temp_reset_passwords():
-    updated = 0
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            new_hash = pwd_context.hash("1234")
-            cur.execute("UPDATE users SET password_hash = %s WHERE role = 'manager'", (new_hash,))
-            updated = cur.rowcount
-        conn.commit()
-    return {"success": True, "updated": updated}
+    try:
+        updated = 0
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                new_hash = pwd_context.hash("1234")
+                cur.execute("UPDATE users SET password_hash = %s WHERE role = 'manager'", (new_hash,))
+                updated = cur.rowcount
+            conn.commit()
+        return {"success": True, "updated": updated}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.post("/api/visit-records")
 def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(...)):
