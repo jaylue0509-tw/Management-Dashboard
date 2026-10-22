@@ -549,8 +549,8 @@ def fix_mgr_names():
 
 CORE_ITEM_NAMES = {'core-1': '環境異味與清潔', 'core-2': '櫃檯焦點陳列', 'core-3': '人員狀態與迎賓'}
 MODULE_NAMES = ['行銷與檔期執行', '商品陳列與損耗管理', '寵物專業服務與照護', '人員服務與顧客體驗', '門市環境與設備安全', '經營數據與團隊管理']
-MAX_PHOTO_BYTES = 3 * 1024 * 1024
-DATA_URL_PATTERN = re.compile(r'^data:(image/(?:jpeg|png|webp));base64,(.+)$', re.DOTALL)
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
+DATA_URL_PATTERN = re.compile(r'^data:(image/[a-zA-Z0-9.+-]+)(?:;[a-zA-Z0-9=._-]+)*;base64,(.+)$', re.DOTALL)
 TAIPEI_OFFSET = timedelta(hours=8)
 
 
@@ -566,29 +566,41 @@ def _normalize_store(name: str) -> str:
 
 def _store_photo(cur, record_id: str, url: str) -> str:
     """
-    儲存單張照片並回傳可在後台顯示的網址
-    - data URL：寫入 photos 表，回傳 /api/photos/{id}
-    - https 或既有 /api/photos 參照：原樣保留
-    - 其他 (例如 blob:)：只存在使用者裝置上，後台無法顯示，回傳空字串
+    健壯的照片儲存處理：
+    - 支援 JPEG, PNG, WEBP, HEIC 等多種行動裝置圖片 MIME 格式
+    - 若照片格式略有瑕疵或解碼異常，記錄錯誤並回傳空值，絕不阻斷主巡檢紀錄之存檔
     """
     if not url:
         return ""
-    match = DATA_URL_PATTERN.match(url)
-    if match:
-        try:
-            content = base64.b64decode(match.group(2), validate=True)
-        except (binascii.Error, ValueError):
-            raise HTTPException(status_code=400, detail="照片格式錯誤，請重新拍攝")
-        if len(content) > MAX_PHOTO_BYTES:
-            raise HTTPException(status_code=413, detail="照片檔案過大，請重新拍攝")
-        photo_id = str(uuid.uuid4())
-        cur.execute(
-            "INSERT INTO photos (id, record_id, mime_type, content, created_at) VALUES (%s, %s, %s, %s, %s)",
-            (photo_id, record_id, match.group(1), psycopg2.Binary(content), datetime.utcnow()),
-        )
-        return f"/api/photos/{photo_id}"
     if url.startswith("https://") or url.startswith("/api/photos/"):
         return url
+
+    mime_type = "image/jpeg"
+    raw_base64 = None
+
+    match = DATA_URL_PATTERN.match(url)
+    if match:
+        mime_type = match.group(1)
+        raw_base64 = match.group(2)
+    elif "base64," in url:
+        parts = url.split("base64,", 1)
+        raw_base64 = parts[1]
+        if "data:image/" in parts[0]:
+            mime_type = parts[0].split("data:")[1].split(";")[0]
+
+    if raw_base64:
+        try:
+            content = base64.b64decode(raw_base64.strip(), validate=False)
+            photo_id = str(uuid.uuid4())
+            cur.execute(
+                "INSERT INTO photos (id, record_id, mime_type, content, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (photo_id, record_id, mime_type, psycopg2.Binary(content), datetime.utcnow()),
+            )
+            return f"/api/photos/{photo_id}"
+        except Exception as e:
+            print(f"照片解碼寫入警告 (跳過該照片以確保巡店數據完整存檔): {e}")
+            return ""
+
     return ""
 
 

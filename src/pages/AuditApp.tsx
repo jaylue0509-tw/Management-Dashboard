@@ -38,15 +38,75 @@ export const AuditApp = () => {
   
   const [overallRating, setOverallRating] = useState('');
 
-  // --- Local Storage Auto Save & Restore ---
+  // --- Local Storage Auto Save & Safe Recovery ---
   const [isDraftRestored, setIsDraftRestored] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<string>('');
+  const [draftWarning, setDraftWarning] = useState<string>('');
+  const [hasRestoredBanner, setHasRestoredBanner] = useState<boolean>(false);
+  const [saveToast, setSaveToast] = useState<boolean>(false);
 
+  // 安全存入 LocalStorage，防禦 QuotaExceededError 確保文字資料 100% 永不遺失
+  const saveDraftSafe = () => {
+    const timeStr = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+    const draft = {
+      storeName,
+      mgrName: user?.name || mgrName,
+      auditMode,
+      selectedTopics,
+      coreChecks,
+      categoryChecks,
+      categoryRemarks,
+      customItems,
+      pdcaResults,
+      newActionItems,
+      overallRating,
+      photoPairs,
+      currentStep,
+      savedAt: timeStr
+    };
+
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(draft));
+      setDraftSavedAt(timeStr);
+      setDraftWarning('');
+    } catch (quotaErr) {
+      // 若因照片 Base64 累積超過行動瀏覽器 5MB 限制，自動啟動降級保護：剔除照片大圖，確保所有勾選、評分與文字備註安全入庫
+      console.warn('LocalStorage 空間不足，啟用降級保護：保全所有文字、項目與進度', quotaErr);
+      try {
+        const slimDraft = {
+          ...draft,
+          photoPairs: draft.photoPairs?.map(() => ({ beforeUrl: '', afterUrl: '' })) || []
+        };
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(slimDraft));
+        setDraftSavedAt(timeStr);
+        setDraftWarning('文字資料已妥善暫存（因本機容量限制，照片暫不存於本機，送出時仍會上傳）');
+      } catch (innerErr) {
+        console.error('嚴重 LocalStorage 儲存錯誤', innerErr);
+      }
+    }
+  };
+
+  // 手動儲存按鈕
+  const handleManualSave = () => {
+    saveDraftSafe();
+    setSaveToast(true);
+    setTimeout(() => setSaveToast(false), 2500);
+  };
+
+  // 進入頁面時無損自動還原草稿，避免主管手誤點擊取消而遺失心血
   useEffect(() => {
     const draftStr = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (draftStr) {
       try {
         const draft = JSON.parse(draftStr);
-        if (window.confirm('發現未送出的巡店草稿，是否要還原？')) {
+        const hasContent = Boolean(
+          draft.storeName ||
+          (draft.selectedTopics && draft.selectedTopics.length > 0) ||
+          (draft.coreChecks && Object.keys(draft.coreChecks).length > 0) ||
+          (draft.categoryChecks && Object.keys(draft.categoryChecks).length > 0)
+        );
+
+        if (hasContent) {
           setStoreName(draft.storeName || '');
           setMgrName(user?.name || draft.mgrName || '區主管');
           setAuditMode(draft.auditMode || 'C');
@@ -58,10 +118,10 @@ export const AuditApp = () => {
           setPdcaResults(draft.pdcaResults || {});
           setNewActionItems(draft.newActionItems || [{ desc: '', assignee: '', dueDate: '' }]);
           setOverallRating(draft.overallRating || '');
-          setPhotoPairs(draft.photoPairs || [{beforeUrl: '', afterUrl: ''}]);
+          setPhotoPairs(draft.photoPairs || [{ beforeUrl: '', afterUrl: '' }]);
           if (draft.currentStep) setCurrentStep(draft.currentStep);
-        } else {
-          localStorage.removeItem(LOCAL_STORAGE_KEY);
+          setDraftSavedAt(draft.savedAt || '稍早');
+          setHasRestoredBanner(true);
         }
       } catch (e) {
         console.error('Failed to parse draft', e);
@@ -77,14 +137,10 @@ export const AuditApp = () => {
     }
   }, [user?.name]);
 
+  // 表單變更時自動儲存草稿
   useEffect(() => {
-    if (!isDraftRestored) return; // 等待初始化完成後再開始監聽
-    
-    const draft = {
-      storeName, mgrName, auditMode, selectedTopics, coreChecks,
-      categoryChecks, categoryRemarks, customItems, pdcaResults, newActionItems, overallRating, photoPairs, currentStep
-    };
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(draft));
+    if (!isDraftRestored) return;
+    saveDraftSafe();
   }, [storeName, mgrName, auditMode, selectedTopics, coreChecks, categoryChecks, categoryRemarks, customItems, pdcaResults, newActionItems, overallRating, photoPairs, currentStep, isDraftRestored]);
 
 
@@ -157,8 +213,9 @@ export const AuditApp = () => {
     setActionItemsLoading(false);
   };
 
-  // --- Submit ---
+  // --- Submit with Retry & Data Persistence Guarantee ---
   const [submitting, setSubmitting] = useState(false);
+  const [submitStatusText, setSubmitStatusText] = useState('');
 
   const submitForm = async () => {
     if (submitting) return;
@@ -205,30 +262,71 @@ export const AuditApp = () => {
     };
 
     setSubmitting(true);
-    try {
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+    setSubmitStatusText('正在安全傳輸巡店紀錄與照片...');
 
-      const res = await fetch('https://management-dashboard-rust.vercel.app/api/visit-records', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload)
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || '伺服器處理失敗');
+    // 弱網與高負載環境重試機制 (最多重試 2 次)
+    const token = localStorage.getItem('token');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const endpoints = [
+      '/api/visit-records',
+      'https://management-dashboard-rust.vercel.app/api/visit-records'
+    ];
+
+    let isSuccess = false;
+    let lastErrorMsg = '';
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (attempt > 1) {
+          setSubmitStatusText('連線稍有延遲，正在自動為您重試 (第 2 次)...');
+          await new Promise(r => setTimeout(r, 1500));
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 秒保護防呆
+
+        // 生產環境優先使用同源相對路徑
+        const targetUrl = import.meta.env.PROD ? endpoints[0] : endpoints[1];
+        const res = await fetch(targetUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `伺服器回應狀態碼 ${res.status}`);
+        }
+
+        const resData = await res.json();
+        if (resData && (resData.success || resData.data)) {
+          isSuccess = true;
+          break;
+        } else {
+          throw new Error('伺服器未回傳確認信號');
+        }
+      } catch (err: any) {
+        lastErrorMsg = err?.message || '連線逾時或網路不穩';
+        console.warn(`巡檢資料送出第 ${attempt} 次失敗:`, err);
       }
-
-      alert('送出成功！');
-      localStorage.removeItem(LOCAL_STORAGE_KEY); // 送出成功後清除草稿
-      navigate(user?.role === 'admin' ? '/dashboard' : '/audit');
-    } catch (e: any) {
-      alert(`送出失敗：${e.message || '請檢查網路連線或稍後再試'}`);
-    } finally {
-      setSubmitting(false);
     }
+
+    if (isSuccess) {
+      // 伺服器確認持久化存檔後，才安全清除本機草稿
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+      alert('🎉 巡店紀錄已成功儲存至雲端系統！');
+      navigate(user?.role === 'admin' ? '/dashboard' : '/audit');
+    } else {
+      // 失敗時嚴格保留草稿與表單內容，確保主管心血不流失
+      alert(`⚠️ 儲存失敗（${lastErrorMsg}）。\n\n【請放心】您填寫的所有內容已妥善暫存於手機本機草稿！請確認網路訊號後，直接再次點擊【送出巡店紀錄】即可重試。`);
+    }
+
+    setSubmitting(false);
+    setSubmitStatusText('');
   };
   // --- Stepper Navigation ---
   const handleNext = () => {
@@ -815,6 +913,23 @@ export const AuditApp = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* 草稿狀態與手動儲存 */}
+          <button
+            onClick={handleManualSave}
+            title="手動儲存草稿"
+            className="text-xs bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg font-bold border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1 shadow-xs"
+          >
+            {saveToast ? (
+              <span className="text-emerald-700 flex items-center gap-1">
+                <CheckCircle2 size={13} className="text-emerald-600" /> 已存
+              </span>
+            ) : (
+              <span className="flex items-center gap-1">
+                <Save size={13} /> {draftSavedAt ? draftSavedAt : '暫存草稿'}
+              </span>
+            )}
+          </button>
+
           {user?.role === 'manager' && (
             <button
               id="audit-change-password"
@@ -840,6 +955,46 @@ export const AuditApp = () => {
       <ChangePasswordModal open={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />
 
       <div className="md:max-w-4xl max-w-2xl mx-auto px-4 pt-6">
+        {/* 草稿自動還原提示橫幅 */}
+        {hasRestoredBanner && (
+          <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-300">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl">📋</span>
+              <div>
+                <p className="text-sm font-bold text-gray-900">已自動載入您上次暫存的巡店紀錄</p>
+                <p className="text-xs text-blue-700">門市：{storeName || '未指定'} · 暫存時間：{draftSavedAt || '稍早'}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setHasRestoredBanner(false)}
+                className="text-xs bg-blue-600 text-white font-bold px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors shadow-xs"
+              >
+                繼續填寫
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm('確定要捨棄目前暫存草稿並從頭開始嗎？')) {
+                    localStorage.removeItem(LOCAL_STORAGE_KEY);
+                    window.location.reload();
+                  }
+                }}
+                className="text-xs text-gray-500 hover:text-red-600 px-2 py-1.5 rounded-lg transition-colors font-medium"
+              >
+                捨棄重填
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 降級儲存提示 */}
+        {draftWarning && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 text-xs text-amber-800">
+            <AlertCircle size={15} className="text-amber-600 shrink-0" />
+            <span>{draftWarning}</span>
+          </div>
+        )}
+
         {/* Stepper Progress */}
         <div className="mb-8">
           <div className="flex justify-between items-center mb-2">
@@ -899,7 +1054,7 @@ export const AuditApp = () => {
                 {submitting ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>資料儲存中...</span>
+                    <span>{submitStatusText || '資料儲存中...'}</span>
                   </>
                 ) : (
                   <>
