@@ -61,6 +61,11 @@ export const AdminSettings: React.FC = () => {
     e.preventDefault();
     if (!editingUser) return;
     
+    // NOTE: 區主管帳號統一為姓名；新增時以姓名作為帳號，既有帳號維持原值避免主鍵變動
+    const isExisting = users.some(u => u.username === editingUser.username);
+    const trimmedName = editingUser.name.trim();
+    const username = isExisting ? editingUser.username : trimmedName;
+
     try {
       const res = await fetch('https://management-dashboard-rust.vercel.app/api/admin/users', {
         method: 'POST',
@@ -69,8 +74,8 @@ export const AdminSettings: React.FC = () => {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          username: editingUser.username,
-          name: editingUser.name,
+          username,
+          name: trimmedName,
           password: editPassword || null,
           assigned_stores: editingUser.assigned_stores
         })
@@ -162,7 +167,7 @@ export const AdminSettings: React.FC = () => {
                       <h3 className="font-bold text-gray-900 mb-2">{u.name}</h3>
                       <div className="space-y-1">
                         <p className="text-xs text-gray-600 font-medium">登入帳號：<span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{u.username}</span></p>
-                        <p className="text-xs text-gray-600 font-medium">登入密碼：<span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">1234</span> <span className="text-gray-400 font-normal scale-90 inline-block">(預設密碼，如修改過請以新密碼為準)</span></p>
+                        <p className="text-xs text-gray-600 font-medium">登入密碼：<span className="text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">admin1234</span> <span className="text-gray-400 font-normal scale-90 inline-block">(預設密碼，如修改過請以新密碼為準)</span></p>
                       </div>
                     </div>
                     <button 
@@ -206,16 +211,14 @@ export const AdminSettings: React.FC = () => {
                   <label className="block text-sm font-semibold text-gray-700 mb-1">登入帳號 (Username)</label>
                   <input 
                     type="text" 
-                    required 
-                    readOnly={!!users.find(u => u.username === editingUser.username)}
-                    value={editingUser.username}
-                    onChange={e => setEditingUser({...editingUser, username: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100 disabled:text-gray-500"
-                    placeholder="例如: admin_taipei"
+                    readOnly
+                    value={users.find(u => u.username === editingUser.username) ? editingUser.username : editingUser.name.trim()}
+                    className="w-full border border-gray-200 rounded-lg px-4 py-2 outline-none bg-gray-100 text-gray-500 cursor-not-allowed"
+                    placeholder="將自動使用主管姓名"
                   />
-                  {users.find(u => u.username === editingUser.username) && (
-                    <p className="text-xs text-gray-400 mt-1">帳號建立後無法修改</p>
-                  )}
+                  <p className="text-xs text-gray-400 mt-1">
+                    {users.find(u => u.username === editingUser.username) ? '帳號建立後無法修改' : '帳號統一為主管姓名，自動帶入'}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">主管姓名 (Name)</label>

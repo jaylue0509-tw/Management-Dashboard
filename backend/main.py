@@ -1,13 +1,14 @@
 import os
 import json
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
+import base64
+import binascii
 import psycopg2
 from psycopg2.extras import Json
 import threading
@@ -67,11 +68,23 @@ def get_db_connection():
     
     # 從連線池中獲取一條可用連線
     conn = db_pool.getconn()
+    # NOTE: Neon / Vercel Postgres 會主動關閉閒置連線，取得已斷線的連線時直接丟棄並換一條新的
+    if conn.closed:
+        db_pool.putconn(conn, close=True)
+        conn = db_pool.getconn()
     try:
         yield conn
     finally:
-        # 使用完畢後，務必將連線放回池中供下一次請求使用
-        db_pool.putconn(conn)
+        # NOTE: 歸還前回滾任何未提交 / 已中斷的交易，避免一次 SQL 錯誤讓這條連線卡在
+        # "current transaction is aborted" 狀態，進而影響下一位使用者的請求
+        if conn.closed:
+            db_pool.putconn(conn, close=True)
+        else:
+            try:
+                conn.rollback()
+                db_pool.putconn(conn)
+            except psycopg2.Error:
+                db_pool.putconn(conn, close=True)
 
 # 初始化資料表 (如果不存在的話)
 def init_db():
@@ -109,6 +122,16 @@ def init_db():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_region ON visit_records (region);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_visit_records_data_gin ON visit_records USING GIN (data);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_action_items_store_name ON action_items (store_name);")
+                # NOTE: 巡店照片獨立存放，紀錄中只保留 /api/photos/{id} 參照，避免戰情牆一次載入大量圖片資料
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS photos (
+                        id VARCHAR(50) PRIMARY KEY,
+                        record_id VARCHAR(50),
+                        mime_type VARCHAR(50) NOT NULL,
+                        content BYTEA NOT NULL,
+                        created_at TIMESTAMP
+                    );
+                """)
                 # 建立使用者表
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS users (
@@ -165,7 +188,7 @@ def init_default_users(conn):
                             mgr_map[name] = []
                         mgr_map[name].append(store)
                 
-                mgr_hash = pwd_context.hash("1234")
+                mgr_hash = pwd_context.hash("admin1234")
                 for name, stores in mgr_map.items():
                     # 帳號預設為主管名稱拼音或直接用名稱 (此處以名稱為帳號)
                     cur.execute("""
@@ -273,9 +296,65 @@ def get_current_user(authorization: str = Header(None)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+
+def get_optional_user(authorization: str = Header(None)) -> Optional[dict]:
+    """
+    可選的身分解析：有帶有效 token 時回傳使用者資訊，否則回傳 None (相容舊版前端與外部匯入腳本)
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        return jwt.decode(authorization.split(" ")[1], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+
+
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """
+    僅允許 admin 呼叫的端點依賴
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return user
+
 @app.get("/api/auth/me")
 def get_me(user: dict = Depends(get_current_user)):
     return user
+
+
+class ChangePasswordReq(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6, max_length=64)
+
+
+@app.post("/api/auth/change-password")
+def change_password(req: ChangePasswordReq, user: dict = Depends(get_current_user)):
+    """
+    區主管自行修改密碼：必須通過目前密碼驗證才可更新
+    """
+    # NOTE: admin 登入有寫死的 admin1234 後門，自行改密碼無法真正生效，故僅開放區主管使用
+    if user.get("role") != "manager":
+        raise HTTPException(status_code=403, detail="僅區主管可使用此功能")
+    if req.current_password == req.new_password:
+        raise HTTPException(status_code=400, detail="新密碼不可與目前密碼相同")
+
+    username = user.get("sub")
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash FROM users WHERE username = %s", (username,))
+            row = cur.fetchone()
+            if not row or not pwd_context.verify(req.current_password, row[0]):
+                raise HTTPException(status_code=400, detail="目前密碼錯誤")
+
+            cur.execute("UPDATE users SET password_hash = %s WHERE username = %s",
+                        (pwd_context.hash(req.new_password), username))
+            cur.execute("""
+                INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (str(uuid.uuid4()), "UPDATE_USER", username, user.get("name", username), None,
+                  Json({"password_changed": True, "self_service": True}), datetime.utcnow()))
+        conn.commit()
+    return {"success": True}
 
 
 def trigger_teams_notify(message: str):
@@ -375,12 +454,23 @@ def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
         
+    req.name = req.name.strip()
+    req.username = req.username.strip()
+    if not req.name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT name, assigned_stores FROM users WHERE username = %s", (req.username,))
             row = cur.fetchone()
             
             is_new = not row
+            if is_new:
+                # NOTE: 區主管帳號統一為姓名，新建帳號時強制以姓名為帳號 (不信任前端傳入值)
+                req.username = req.name
+                cur.execute("SELECT 1 FROM users WHERE username = %s", (req.username,))
+                if cur.fetchone():
+                    raise HTTPException(status_code=409, detail="此姓名帳號已存在")
             before_data = {"name": row[0], "assigned_stores": row[1]} if row else None
             after_data = {"name": req.name, "assigned_stores": req.assigned_stores}
             
@@ -445,131 +535,189 @@ def fix_mgr_names():
         conn.commit()
     return {"success": True, "updated": updated}
 
-@app.get("/api/admin/temp-reset")
-def temp_reset_passwords():
-    try:
-        updated = 0
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                new_hash = pwd_context.hash("1234")
-                cur.execute("UPDATE users SET password_hash = %s WHERE role = 'manager'", (new_hash,))
-                updated = cur.rowcount
-            conn.commit()
-        return {"success": True, "updated": updated}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+CORE_ITEM_NAMES = {'core-1': '環境異味與清潔', 'core-2': '櫃檯焦點陳列', 'core-3': '人員狀態與迎賓'}
+MODULE_NAMES = ['行銷與檔期執行', '商品陳列與損耗管理', '寵物專業服務與照護', '人員服務與顧客體驗', '門市環境與設備安全', '經營數據與團隊管理']
+MAX_PHOTO_BYTES = 3 * 1024 * 1024
+DATA_URL_PATTERN = re.compile(r'^data:(image/(?:jpeg|png|webp));base64,(.+)$', re.DOTALL)
+TAIPEI_OFFSET = timedelta(hours=8)
 
-@app.post("/api/visit-records")
-def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(...)):
-    record_id = str(uuid.uuid4())
-    payload["recordId"] = record_id
-    
-    # Allow historical createdAt if provided
-    created_at_str = payload.get("createdAt")
-    if created_at_str:
+
+def _taipei_date_after(days: int) -> str:
+    """回傳台北時區今天往後 N 天的日期字串 (YYYY-MM-DD)"""
+    return (datetime.utcnow() + TAIPEI_OFFSET + timedelta(days=days)).date().isoformat()
+
+
+def _normalize_store(name: str) -> str:
+    """門市名稱正規化：去空白與「店」字，避免表單與主檔寫法不一致而對不上"""
+    return str(name or "").strip().replace("店", "")
+
+
+def _store_photo(cur, record_id: str, url: str) -> str:
+    """
+    儲存單張照片並回傳可在後台顯示的網址
+    - data URL：寫入 photos 表，回傳 /api/photos/{id}
+    - https 或既有 /api/photos 參照：原樣保留
+    - 其他 (例如 blob:)：只存在使用者裝置上，後台無法顯示，回傳空字串
+    """
+    if not url:
+        return ""
+    match = DATA_URL_PATTERN.match(url)
+    if match:
         try:
-            created_at = datetime.fromisoformat(created_at_str)
-        except:
-            created_at = datetime.utcnow()
-            payload["createdAt"] = created_at.isoformat()
-    else:
-        created_at = datetime.utcnow()
-        payload["createdAt"] = created_at.isoformat()
-        
-    region = payload.get("region", "")
-    
+            content = base64.b64decode(match.group(2), validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=400, detail="照片格式錯誤，請重新拍攝")
+        if len(content) > MAX_PHOTO_BYTES:
+            raise HTTPException(status_code=413, detail="照片檔案過大，請重新拍攝")
+        photo_id = str(uuid.uuid4())
+        cur.execute(
+            "INSERT INTO photos (id, record_id, mime_type, content, created_at) VALUES (%s, %s, %s, %s, %s)",
+            (photo_id, record_id, match.group(1), psycopg2.Binary(content), datetime.utcnow()),
+        )
+        return f"/api/photos/{photo_id}"
+    if url.startswith("https://") or url.startswith("/api/photos/"):
+        return url
+    return ""
+
+
+def _build_defect_label(key: str) -> str:
+    """將檢查項目代碼轉為可讀名稱"""
+    if key in CORE_ITEM_NAMES:
+        return CORE_ITEM_NAMES[key]
+    name = ITEM_NAMES.get(key, key)
+    if re.match(r'^\d-\d+$', name):
+        mod_idx = int(name.split('-')[0]) - 1
+        mod_name = MODULE_NAMES[mod_idx] if 0 <= mod_idx < len(MODULE_NAMES) else '模組'
+        return f"其他{mod_name}異常"
+    return name
+
+
+@app.get("/api/photos/{photo_id}")
+def get_photo(photo_id: str):
+    """
+    讀取巡店照片 (照片 id 為隨機 UUID，內容不可變，可長期快取)
+    """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT mime_type, content FROM photos WHERE id = %s", (photo_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return Response(content=bytes(row[1]), media_type=row[0],
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+@app.post("/api/visit-records")
+def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(...),
+                        user: Optional[dict] = Depends(get_optional_user)):
+    """
+    建立巡店紀錄：紀錄、照片、PDCA 新增與結案在同一個交易內完成，避免部分成功造成資料不一致
+    """
+    record_id = str(uuid.uuid4())
+    payload["recordId"] = record_id
+
+    store_name = str(payload.get("storeName") or "").strip()
+    if not store_name:
+        raise HTTPException(status_code=400, detail="缺少門市名稱")
+    payload["storeName"] = store_name
+
+    is_manager = bool(user and user.get("role") == "manager")
+    if is_manager:
+        # NOTE: 區主管送出時以登入身分為準，避免共用裝置草稿殘留造成紀錄掛錯人；時間以伺服器為準避免手機時鐘誤差
+        payload["areaManagerName"] = user.get("name") or payload.get("areaManagerName")
+        created_at = datetime.utcnow()
+        payload["createdAt"] = created_at.isoformat()
+    else:
+        # 相容外部匯入：允許帶入歷史 createdAt
+        created_at = datetime.utcnow()
+        created_at_str = payload.get("createdAt")
+        if created_at_str:
+            try:
+                created_at = datetime.fromisoformat(str(created_at_str).replace("Z", "+00:00")).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                created_at = datetime.utcnow()
+        payload["createdAt"] = created_at.isoformat()
+
+    mgr_name = payload.get("areaManagerName") or "未知主管"
+    core_checks = payload.get("coreChecks") or {}
+    category_checks = payload.get("categoryChecks") or {}
+    category_remarks = payload.get("categoryRemarks") or {}
+    action_items_created = 0
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # 補齊區域 / 處別，讓戰情牆的區域篩選能正確統計這筆紀錄
+            if not payload.get("region") or not payload.get("department"):
+                cur.execute("SELECT data FROM store WHERE id = 'managers'")
+                row = cur.fetchone()
+                target = _normalize_store(store_name)
+                for m in (row[0] if row else []):
+                    if _normalize_store(m.get("storeName")) == target:
+                        if not payload.get("region"):
+                            payload["region"] = m.get("region", "")
+                        if not payload.get("department"):
+                            payload["department"] = m.get("department", "")
+                        break
+            region = payload.get("region") or ""
+
+            # 照片：data URL 轉存 photos 表，紀錄內只保留參照網址
+            cleaned_pairs = []
+            for pair in payload.get("photoPairs") or []:
+                before_url = _store_photo(cur, record_id, (pair or {}).get("beforeUrl", ""))
+                after_url = _store_photo(cur, record_id, (pair or {}).get("afterUrl", ""))
+                if before_url or after_url:
+                    cleaned_pairs.append({"beforeUrl": before_url, "afterUrl": after_url})
+            payload["photoPairs"] = cleaned_pairs
+
             cur.execute("""
                 INSERT INTO visit_records (id, region, created_at, data)
                 VALUES (%s, %s, %s, %s)
             """, (record_id, region, created_at, Json(payload)))
-        conn.commit()
-        
-    overall_rating = payload.get("overallRating", "")
-    if overall_rating == "需重點輔導":
-        store_name = payload.get("storeName", "未知門市")
-        mgr_name = payload.get("areaManagerName", "未知主管")
-        
-        # 抓取缺失項目
-        category_checks = payload.get("categoryChecks", {})
-        core_checks = payload.get("coreChecks", {})
-        defects = []
-        
-        
-        for k, v in core_checks.items():
-            if v in ['缺失', '待改善']:
-                defects.append(f"• {k}")
-                
-        for k, v in category_checks.items():
-            if v in ['缺失', '待改善']:
-                name = ITEM_NAMES.get(k, k)
-                if re.match(r'^\d-\d+$', name):
-                    mod_names = ['行銷與檔期執行', '商品陳列與損耗管理', '寵物專業服務與照護', '人員服務與顧客體驗', '門市環境與設備安全', '經營數據與團隊管理']
-                    mod_idx = int(k.split('-')[0]) - 1
-                    mod_name = mod_names[mod_idx] if 0 <= mod_idx < len(mod_names) else '模組'
-                    name = f"其他{mod_name}異常"
-                defects.append(f"• {name}")
-                
-        # also capture text from immediateImprovement if any
-        immediate_imp = payload.get("immediateImprovement", "")
-        if immediate_imp:
-            for line in immediate_imp.split('\n'):
-                line = line.strip()
-                if line and not line.startswith("紀錄缺失項目"):
-                    defects.append(f"• {line}")
 
+            # PDCA：缺失項目自動建立 + 主管手動新增的交辦事項
+            new_items = []
+            for k, v in core_checks.items():
+                if v == '缺失':
+                    remark = category_remarks.get(k) or "未提供說明"
+                    new_items.append({"desc": f"[必看核心] {_build_defect_label(k)}: {remark}",
+                                      "assignee": "店長", "dueDate": _taipei_date_after(3)})
+            for k, v in category_checks.items():
+                if v == '缺失':
+                    remark = category_remarks.get(k) or "未提供說明"
+                    new_items.append({"desc": f"[模組細項] {_build_defect_label(k)}: {remark}",
+                                      "assignee": "店長", "dueDate": _taipei_date_after(7)})
+            for act in payload.get("newActionItems") or []:
+                desc = str((act or {}).get("desc") or "").strip()
+                if desc:
+                    new_items.append({"desc": desc,
+                                      "assignee": str(act.get("assignee") or "").strip() or "店長",
+                                      "dueDate": str(act.get("dueDate") or "").strip() or _taipei_date_after(7)})
+
+            now_iso = datetime.utcnow().isoformat()
+            for item in new_items:
+                item_id = str(uuid.uuid4())
+                item.update({"id": item_id, "storeName": store_name, "status": "Open",
+                             "createdAt": now_iso, "sourceRecordId": record_id, "createdBy": mgr_name})
+                cur.execute("""
+                    INSERT INTO action_items (id, store_name, created_at, data)
+                    VALUES (%s, %s, %s, %s)
+                """, (item_id, store_name, datetime.utcnow(), Json(item)))
+            action_items_created = len(new_items)
+
+            # PDCA：上次交辦事項本次確認已改善者結案
+            for item_id, result in (payload.get("pdcaResults") or {}).items():
+                if result == '已改善':
+                    cur.execute("UPDATE action_items SET data = data || %s WHERE id = %s",
+                                (Json({"status": "Closed", "updatedAt": now_iso, "closedByRecordId": record_id}), item_id))
+        conn.commit()
+
+    if payload.get("overallRating") == "需重點輔導":
+        defects = [f"• {_build_defect_label(k)}" for k, v in {**core_checks, **category_checks}.items() if v in ['缺失', '待改善']]
         defects_text = "\n".join(defects) if defects else "• 未記錄具體異常選項"
-        
         msg = f"🚨 **【警示】高風險門市通報**\n\n門市：{store_name}\n\n區主管：{mgr_name}\n\n狀態：需重點輔導\n\n**扣分原因 / 異常項目：**\n{defects_text}\n\n請高層主管多加留意！"
         background_tasks.add_task(trigger_teams_notify, msg)
-        
-    # 自動建立 PDCA (Action Items) 針對所有「缺失」項目
-    category_checks = payload.get("categoryChecks", {})
-    category_remarks = payload.get("categoryRemarks", {})
-    core_checks = payload.get("coreChecks", {})
-    store_name = payload.get("storeName", "未知門市")
-    mgr_name = payload.get("areaManagerName", "未知主管")
-    
-    new_action_items = []
-    
-    # 處理第二層必看核心
-    for k, v in core_checks.items():
-        if v == '缺失':
-            remark = category_remarks.get(k, "未提供說明")
-            desc = f"【核心底線異常】{k}: {remark}"
-            new_action_items.append({"desc": desc})
-            
-    # 處理第三層六大模組
-    for k, v in category_checks.items():
-        if v == '缺失':
-            remark = category_remarks.get(k, "未提供說明")
-            name = ITEM_NAMES.get(k, k)
-            desc = f"【{name}】: {remark}"
-            new_action_items.append({"desc": desc})
-            
-    # 將自動產生的 PDCA 寫入 action_items 資料表
-    if new_action_items:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                for act in new_action_items:
-                    item_id = str(uuid.uuid4())
-                    act_payload = {
-                        "id": item_id,
-                        "storeName": store_name,
-                        "desc": act["desc"],
-                        "assignee": mgr_name,
-                        "dueDate": (datetime.utcnow()).isoformat(), # Default due date today or +7 days
-                        "status": "Open",
-                        "createdAt": datetime.utcnow().isoformat()
-                    }
-                    cur.execute("""
-                        INSERT INTO action_items (id, store_name, created_at, data)
-                        VALUES (%s, %s, %s, %s)
-                    """, (item_id, store_name, datetime.utcnow(), Json(act_payload)))
-            conn.commit()
 
-    return {"success": True, "data": {"recordId": record_id}}
+    return {"success": True, "data": {"recordId": record_id, "actionItemsCreated": action_items_created}}
 
 @app.post("/api/webhook/google-forms")
 def webhook_google_forms(payload: dict = Body(...)):

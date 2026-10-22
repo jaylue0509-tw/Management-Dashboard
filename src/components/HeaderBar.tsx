@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown, Settings } from 'lucide-react';
+import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown, Settings, KeyRound } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { ChangePasswordModal } from './ChangePasswordModal';
 
 interface Props {
   selectedDepartment: string;
@@ -14,6 +15,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
   const [time, setTime] = useState(new Date());
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -180,6 +182,29 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
             </button>
           )}
 
+          {/* Change Password (Manager Only) */}
+          {user?.role === 'manager' && (
+            <button
+              id="header-change-password"
+              onClick={() => setIsChangePasswordOpen(true)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                background: '#f3f4f6',
+                color: '#4b5563',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <KeyRound size={14} />
+              修改密碼
+            </button>
+          )}
+
           {/* CTA Button */}
           <button
             onClick={() => navigate('/audit')}
@@ -212,6 +237,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
           </button>
         </div>
       </div>
+      <ChangePasswordModal open={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />
     </header>
   );
 };

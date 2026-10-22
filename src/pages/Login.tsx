@@ -23,7 +23,7 @@ export const Login = () => {
       const res = await fetch('https://management-dashboard-rust.vercel.app/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username: username.trim(), password })
       });
 
       if (!res.ok) {

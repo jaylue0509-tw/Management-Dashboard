@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SignatureCanvas from 'react-signature-canvas';
-import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut } from 'lucide-react';
+import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut, KeyRound } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { storeRegions } from '../data/storeRegions';
+import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
 const LOCAL_STORAGE_KEY = 'audit_app_draft';
 
@@ -11,6 +12,7 @@ export const AuditApp = () => {
   const navigate = useNavigate();
   const sigCanvas = useRef<SignatureCanvas>(null);
   const { user, logout } = useAuth();
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
 
   // Stepper State
   const [currentStep, setCurrentStep] = useState(1);
@@ -46,7 +48,7 @@ export const AuditApp = () => {
         const draft = JSON.parse(draftStr);
         if (window.confirm('發現未送出的巡店草稿，是否要還原？')) {
           setStoreName(draft.storeName || '');
-          setMgrName(draft.mgrName || '涂綺恬');
+          setMgrName(user?.name || draft.mgrName || '區主管');
           setAuditMode(draft.auditMode || 'C');
           setSelectedTopics(draft.selectedTopics || []);
           setCoreChecks(draft.coreChecks || {});
@@ -66,7 +68,14 @@ export const AuditApp = () => {
       }
     }
     setIsDraftRestored(true);
-  }, []);
+  }, [user]);
+
+  // 當使用者登入身分載入後，同步主管姓名
+  useEffect(() => {
+    if (user?.name) {
+      setMgrName(user.name);
+    }
+  }, [user?.name]);
 
   useEffect(() => {
     if (!isDraftRestored) return; // 等待初始化完成後再開始監聽
@@ -79,6 +88,47 @@ export const AuditApp = () => {
   }, [storeName, mgrName, auditMode, selectedTopics, coreChecks, categoryChecks, categoryRemarks, customItems, pdcaResults, newActionItems, overallRating, photoPairs, currentStep, isDraftRestored]);
 
 
+
+  /**
+   * 將使用者拍照/上傳的圖片進行客戶端等比縮放壓縮轉為 base64 (JPEG)
+   * 限制最大寬高 1280px，品質 0.75，大幅降低網路傳輸耗時並確保後台有效儲存
+   */
+  const compressImageToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1280;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.75));
+        };
+        img.onerror = reject;
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
 
   const handleAddCustomItem = (index: number) => {
     const val = customInputValues[index]?.trim();
@@ -108,7 +158,10 @@ export const AuditApp = () => {
   };
 
   // --- Submit ---
+  const [submitting, setSubmitting] = useState(false);
+
   const submitForm = async () => {
+    if (submitting) return;
     if (!storeName) return alert('請選擇門市名稱');
     if (!auditMode) return alert('請選擇巡店模式');
     
@@ -125,94 +178,56 @@ export const AuditApp = () => {
     
     const signature = sigCanvas.current?.isEmpty() ? null : sigCanvas.current?.toDataURL();
 
+    // 查找所選門市所屬區域
+    let detectedRegion = '';
+    for (const [r, stores] of Object.entries(storeRegions)) {
+      if (stores.includes(storeName)) {
+        detectedRegion = r;
+        break;
+      }
+    }
+
     const payload = {
       storeName,
-      areaManagerName: mgrName,
+      region: detectedRegion,
+      areaManagerName: user?.name || mgrName,
       auditMode,
       selectedTopics,
       coreChecks,
       categoryChecks,
       categoryRemarks,
       pdcaResults,
-      newActionItems: newActionItems.filter(i => i.desc),
+      newActionItems: newActionItems.filter(i => i.desc?.trim()),
       overallRating,
       signature,
       photoPairs: photoPairs.filter(p => p.beforeUrl || p.afterUrl),
       createdAt: new Date().toISOString()
     };
 
+    setSubmitting(true);
     try {
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch('https://management-dashboard-rust.vercel.app/api/visit-records', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload)
       });
       
-      if (res.ok) {
-        const finalActionItems = newActionItems.filter(i => i.desc).map(act => ({
-          desc: act.desc,
-          assignee: act.assignee || '店長',
-          dueDate: act.dueDate || new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0],
-        }));
-
-        const CORE_LABELS: Record<string, string> = {
-          'core-1': '環境異味與清潔', 'core-2': '櫃檯焦點陳列', 'core-3': '人員狀態與迎賓'
-        };
-        const CAT_LABELS: Record<string, string> = {
-          '1-1': '檔期 POP 與宣傳物', '1-2': '主題陳列與佈置 (VMD)', '1-3': '檔期主打商品備貨', '1-4': '結帳區加價購專區',
-          '2-1': '排面平整與拉面', '2-2': '效期與先進先出 (FIFO)', '2-3': '臨期品與損耗處置', '2-4': '高單價與高損品防竊', '2-5': 'PB 與高毛利商品陳列',
-          '3-1': '美容房環境與衛生', '3-2': '美容操作 SOP 與安全', '3-3': '活體照護與環境（若有）', '3-4': '保健/醫療專區維護',
-          '4-1': '儀容儀態與招呼', '4-2': '專業導購與衛教', '4-3': '櫃檯結帳與附加銷售 (Add-on)',
-          '5-1': '門面與整體環境清潔', '5-2': '賣場氣氛與燈光空調', '5-3': '後勤倉庫與公安動線', '5-4': '系統與設備安全運作',
-          '6-1': '業績與 KPI 指標跟進', '6-2': '人員 1-on-1 面談紀錄', '6-3': '團隊士氣與排班合理性'
-        };
-
-        for (const [k, v] of Object.entries(coreChecks)) {
-          if (v === '缺失') {
-            finalActionItems.push({
-              desc: `[必看核心] ${CORE_LABELS[k] || k}: ${categoryRemarks[k] || '未填寫說明'}`,
-              assignee: '店長',
-              dueDate: new Date(Date.now() + 3*24*60*60*1000).toISOString().split('T')[0]
-            });
-          }
-        }
-        for (const [k, v] of Object.entries(categoryChecks)) {
-          if (v === '缺失') {
-            finalActionItems.push({
-              desc: `[模組細項] ${CAT_LABELS[k] || k}: ${categoryRemarks[k] || '未填寫說明'}`,
-              assignee: '店長',
-              dueDate: new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0]
-            });
-          }
-        }
-
-        for (const act of finalActionItems) {
-          await fetch('https://management-dashboard-rust.vercel.app/api/action-items', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              storeName, desc: act.desc, assignee: act.assignee,
-              dueDate: act.dueDate, status: 'Open'
-            })
-          });
-        }
-        
-        for (const [id, result] of Object.entries(pdcaResults)) {
-          if (result === '已改善') {
-            await fetch(`https://management-dashboard-rust.vercel.app/api/action-items/${id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ status: 'Closed' })
-            });
-          }
-        }
-
-        alert('送出成功！');
-        localStorage.removeItem(LOCAL_STORAGE_KEY); // 送出成功後清除草稿
-        navigate(user?.role === 'admin' ? '/dashboard' : '/audit');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || '伺服器處理失敗');
       }
-    } catch (e) {
-      alert('送出失敗');
+
+      alert('送出成功！');
+      localStorage.removeItem(LOCAL_STORAGE_KEY); // 送出成功後清除草稿
+      navigate(user?.role === 'admin' ? '/dashboard' : '/audit');
+    } catch (e: any) {
+      alert(`送出失敗：${e.message || '請檢查網路連線或稍後再試'}`);
+    } finally {
+      setSubmitting(false);
     }
   };
   // --- Stepper Navigation ---
@@ -660,12 +675,17 @@ export const AuditApp = () => {
                         accept="image/*" 
                         capture="environment" 
                         className="hidden" 
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           if (e.target.files && e.target.files[0]) {
-                            const url = URL.createObjectURL(e.target.files[0]);
-                            const newPairs = [...photoPairs];
-                            newPairs[idx].beforeUrl = url;
-                            setPhotoPairs(newPairs);
+                            try {
+                              const base64Url = await compressImageToBase64(e.target.files[0]);
+                              const newPairs = [...photoPairs];
+                              newPairs[idx].beforeUrl = base64Url;
+                              setPhotoPairs(newPairs);
+                            } catch (err) {
+                              console.error('照片讀取失敗', err);
+                              alert('照片讀取失敗，請重新拍攝');
+                            }
                           }
                         }} 
                       />
@@ -688,12 +708,17 @@ export const AuditApp = () => {
                         accept="image/*" 
                         capture="environment" 
                         className="hidden" 
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           if (e.target.files && e.target.files[0]) {
-                            const url = URL.createObjectURL(e.target.files[0]);
-                            const newPairs = [...photoPairs];
-                            newPairs[idx].afterUrl = url;
-                            setPhotoPairs(newPairs);
+                            try {
+                              const base64Url = await compressImageToBase64(e.target.files[0]);
+                              const newPairs = [...photoPairs];
+                              newPairs[idx].afterUrl = base64Url;
+                              setPhotoPairs(newPairs);
+                            } catch (err) {
+                              console.error('照片讀取失敗', err);
+                              alert('照片讀取失敗，請重新拍攝');
+                            }
                           }
                         }} 
                       />
@@ -784,7 +809,16 @@ export const AuditApp = () => {
             {mgrName} · {new Date().toLocaleDateString('zh-TW')}
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-2">
+          {user?.role === 'manager' && (
+            <button
+              id="audit-change-password"
+              onClick={() => setIsChangePasswordOpen(true)}
+              className="text-xs bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg font-bold border border-gray-200 hover:bg-gray-200 transition-colors flex items-center gap-1"
+            >
+              改密碼 <KeyRound size={12} />
+            </button>
+          )}
           <button
             onClick={() => {
               if (window.confirm('確定要登出嗎？未送出的草稿將不會遺失。')) {
@@ -798,6 +832,7 @@ export const AuditApp = () => {
           </button>
         </div>
       </div>
+      <ChangePasswordModal open={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />
 
       <div className="md:max-w-4xl max-w-2xl mx-auto px-4 pt-6">
         {/* Stepper Progress */}
@@ -849,9 +884,23 @@ export const AuditApp = () => {
             ) : (
               <button
                 onClick={submitForm}
-                className="flex-[2] py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:from-blue-700 hover:to-indigo-700 transition-colors shadow-lg shadow-blue-500/40"
+                disabled={submitting}
+                className={`flex-[2] py-3 px-4 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg ${
+                  submitting
+                    ? 'bg-gray-400 cursor-not-allowed shadow-none'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-blue-500/40'
+                }`}
               >
-                <Save size={16} /> 送出巡店紀錄
+                {submitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>資料儲存中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save size={16} /> 送出巡店紀錄
+                  </>
+                )}
               </button>
             )}
           </div>
