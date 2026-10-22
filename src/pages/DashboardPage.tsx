@@ -62,10 +62,12 @@ export const DashboardPage: React.FC = () => {
         let validActivities = data.activities.filter((a: any) => !a.storeName?.includes('測試'));
         let validActionItems = data.actionItems.filter((i: any) => !i.storeName?.includes('測試'));
 
-        if (user?.role === 'manager' && user.assigned_stores) {
-          validManagers = validManagers.filter((m: any) => user.assigned_stores.includes(m.storeName));
-          validActivities = validActivities.filter((a: any) => user.assigned_stores.includes(a.storeName));
-          validActionItems = validActionItems.filter((i: any) => user.assigned_stores.includes(i.storeName));
+        if (user?.role === 'manager') {
+          const mgrName = user.name;
+          const assignedStores = new Set(user.assigned_stores || []);
+          validManagers = validManagers.filter((m: any) => m.areaManagerName === mgrName || assignedStores.has(m.storeName));
+          validActivities = validActivities.filter((a: any) => a.areaManagerName === mgrName || assignedStores.has(a.storeName));
+          validActionItems = validActionItems.filter((i: any) => assignedStores.has(i.storeName) || i.assignee === mgrName || i.createdBy === mgrName);
         }
 
         setManagers(validManagers);
@@ -92,8 +94,16 @@ export const DashboardPage: React.FC = () => {
   }, [timeRange]);
 
   const uniqueManagers = useMemo(() => {
-    const grouped = groupBy(managers, m => m.areaManagerName);
-    return Object.entries(grouped).map(([name, stores]) => {
+    let sourceManagers = managers;
+    if (user?.role === 'manager') {
+      sourceManagers = managers.filter(m => m.areaManagerName === user.name || (user.assigned_stores && user.assigned_stores.includes(m.storeName)));
+    }
+    const grouped = groupBy(sourceManagers, m => m.areaManagerName);
+    let entries = Object.entries(grouped);
+    if (user?.role === 'manager') {
+      entries = entries.filter(([name]) => name === user.name);
+    }
+    return entries.map(([name, stores]) => {
       // 找出該主管所有動態
       const managerActivities = activities.filter(a => a.areaManagerName === name);
       
@@ -138,18 +148,22 @@ export const DashboardPage: React.FC = () => {
   }, [managers, activities]);
 
   const filteredManagers = useMemo(() => {
+    // 區主管只看自己，不受處別篩選干擾
+    if (user?.role === 'manager') return uniqueManagers;
     if (selectedDepartment === 'all') return uniqueManagers;
     
     // 將「營業一處」轉為「一處」作為關鍵字比對
     const keyword = selectedDepartment.replace('營業', ''); 
     return uniqueManagers.filter(m => m.department.includes(keyword) || m.department === selectedDepartment);
-  }, [uniqueManagers, selectedDepartment]);
+  }, [uniqueManagers, selectedDepartment, user]);
 
   const filteredActivities = useMemo(() => {
+    // 區主管只看自己與轄下門市的動態
+    if (user?.role === 'manager') return activities;
     if (selectedDepartment === 'all') return activities;
     const validManagerNames = new Set(filteredManagers.map(m => m.areaManagerName));
     return activities.filter(a => validManagerNames.has(a.areaManagerName));
-  }, [activities, filteredManagers, selectedDepartment]);
+  }, [activities, filteredManagers, selectedDepartment, user]);
 
   const targetActivities = useMemo(() => {
     if (selectedManager) {

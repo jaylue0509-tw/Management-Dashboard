@@ -370,7 +370,7 @@ def trigger_teams_notify(message: str):
         print("Failed to send Teams notify:", e)
 
 @app.get("/api/activities", response_model=List[VisitRecord])
-def get_activities(time_range: str = "day", region: str = "all"):
+def get_activities(time_range: str = "day", region: str = "all", user: Optional[dict] = Depends(get_optional_user)):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             # 建立基本的查詢語句
@@ -396,6 +396,13 @@ def get_activities(time_range: str = "day", region: str = "all"):
             if region != "all":
                 conditions.append("region = %s")
                 params.append(region)
+
+            # NOTE: 區主管僅能查看自己負責之門市與動態
+            if user and user.get("role") == "manager":
+                mgr_name = user.get("name")
+                assigned = list(user.get("assigned_stores") or [])
+                conditions.append("(data->>'areaManagerName' = %s OR data->>'storeName' = ANY(%s))")
+                params.extend([mgr_name, assigned])
                 
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
@@ -407,13 +414,18 @@ def get_activities(time_range: str = "day", region: str = "all"):
             return [row[0] for row in rows]
 
 @app.get("/api/managers", response_model=List[Manager])
-def get_managers():
+def get_managers(user: Optional[dict] = Depends(get_optional_user)):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT data FROM store WHERE id = 'managers'")
             row = cur.fetchone()
             if row:
-                return row[0]
+                data = row[0]
+                if user and user.get("role") == "manager":
+                    mgr_name = user.get("name")
+                    assigned = set(user.get("assigned_stores") or [])
+                    return [m for m in data if m.get("areaManagerName") == mgr_name or m.get("storeName") in assigned]
+                return data
             return []
 
 @app.post("/api/managers/import")
@@ -895,28 +907,26 @@ def clean_db_2026():
 # === PDCA Action Items ===
 
 @app.get("/api/action-items", response_model=List[dict])
-def get_action_items(store: str = ""):
+def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optional_user)):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            if store:
-                cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
+            if user and user.get("role") == "manager":
+                mgr_name = user.get("name")
+                assigned = list(user.get("assigned_stores") or [])
+                if store:
+                    if store not in assigned:
+                        return []
+                    cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
+                else:
+                    cur.execute(
+                        "SELECT data FROM action_items WHERE store_name = ANY(%s) OR data->>'assignee' = %s OR data->>'createdBy' = %s ORDER BY created_at DESC LIMIT 200",
+                        (assigned, mgr_name, mgr_name)
+                    )
             else:
-                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
-            rows = cur.fetchall()
-            return [row[0] for row in rows]
-
-
-
-# === PDCA Action Items ===
-
-@app.get("/api/action-items", response_model=List[dict])
-def get_action_items(store: str = ""):
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            if store:
-                cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
-            else:
-                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
+                if store:
+                    cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
+                else:
+                    cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
             rows = cur.fetchall()
             return [row[0] for row in rows]
 
@@ -958,7 +968,7 @@ def update_action_item(item_id: str, payload: dict = Body(...)):
     return {"success": True, "data": data}
 
 @app.get("/api/dashboard-data")
-def get_dashboard_data(time_range: str = "day", region: str = "all"):
+def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optional[dict] = Depends(get_optional_user)):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             # 1. Get Managers
@@ -1003,6 +1013,14 @@ def get_dashboard_data(time_range: str = "day", region: str = "all"):
                 print("Failed to fetch action_items:", e)
                 conn.rollback() # Important to rollback the aborted transaction
             
+            # NOTE: 區主管僅能看到自己的門市與活動紀錄
+            if user and user.get("role") == "manager":
+                mgr_name = user.get("name")
+                assigned = set(user.get("assigned_stores") or [])
+                managers = [m for m in managers if m.get("areaManagerName") == mgr_name or m.get("storeName") in assigned]
+                activities = [a for a in activities if a.get("areaManagerName") == mgr_name or a.get("storeName") in assigned]
+                action_items = [i for i in action_items if i.get("storeName") in assigned or i.get("assignee") == mgr_name or i.get("createdBy") == mgr_name]
+
             return {
                 "managers": managers,
                 "activities": activities,

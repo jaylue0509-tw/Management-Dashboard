@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
 import { MapPin, Building, Users } from 'lucide-react';
 import { importManagers } from '../api/api';
@@ -17,9 +18,18 @@ const groupBy = <T, K extends keyof any>(list: T[], getKey: (item: T) => K) =>
   }, {} as Record<K, T[]>);
 
 export const OrganizationMap: React.FC<Props> = ({ managers }) => {
+  const { user } = useAuth();
+
+  const filteredManagers = useMemo(() => {
+    if (user?.role === 'manager') {
+      return managers.filter(m => m.areaManagerName === user.name || (user.assigned_stores && user.assigned_stores.includes(m.storeName)));
+    }
+    return managers;
+  }, [managers, user]);
+
   const groupedData = useMemo(() => {
-    return groupBy(managers, m => `${m.department}|${m.directorName}`);
-  }, [managers]);
+    return groupBy(filteredManagers, m => `${m.department}|${m.directorName}`);
+  }, [filteredManagers]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -113,27 +123,29 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
       <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-6)' }}>
         <h2 className="text-xl font-bold flex items-center gap-2">
           <Building className="text-primary" size={24} />
-          區主管門店配置圖
+          {user?.role === 'manager' ? `${user.name} 區主管轄區門店配置` : '區主管門店配置圖'}
         </h2>
         
-        <div>
-          <label 
-            className="btn btn-primary" 
-            style={{ cursor: 'pointer', backgroundColor: 'var(--color-info)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-          >
-            <span>📥 上傳 CSV 匯入完整名單</span>
-            <input 
-              type="file" 
-              accept=".csv" 
-              style={{ display: 'none' }} 
-              onChange={handleFileUpload} 
-              onClick={(e) => { (e.target as HTMLInputElement).value = '' }}
-            />
-          </label>
-        </div>
+        {user?.role === 'admin' && (
+          <div>
+            <label 
+              className="btn btn-primary" 
+              style={{ cursor: 'pointer', backgroundColor: 'var(--color-info)', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+            >
+              <span>📥 上傳 CSV 匯入完整名單</span>
+              <input 
+                type="file" 
+                accept=".csv" 
+                style={{ display: 'none' }} 
+                onChange={handleFileUpload} 
+                onClick={(e) => { (e.target as HTMLInputElement).value = '' }}
+              />
+            </label>
+          </div>
+        )}
       </div>
       
-      {managers.length === 0 ? (
+      {filteredManagers.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--color-secondary-500)' }}>
           <Building size={48} style={{ margin: '0 auto 1rem', opacity: 0.2 }} />
           <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>尚無組織架構資料</h3>

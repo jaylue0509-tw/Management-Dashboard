@@ -1,4 +1,5 @@
 import React from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
 import { Users, TrendingUp, ArrowLeft } from 'lucide-react';
 
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect, timeRangeLabel = '今日' }) => {
+  const { user } = useAuth();
   const displayList = selectedManager
     ? managers.filter(m => m.areaManagerName === selectedManager.areaManagerName)
     : managers;
@@ -34,7 +36,9 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
           }}>
             <Users size={14} color="#2563eb" />
           </div>
-          <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#111827' }}>區主管進度</span>
+          <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#111827' }}>
+            {user?.role === 'manager' ? '我的巡店進度' : '區主管進度'}
+          </span>
         </div>
         {selectedManager && (
           <button

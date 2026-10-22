@@ -6,11 +6,22 @@ import type { Manager, VisitRecord } from '../types';
 const API_BASE_URL = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
 
 // ==========================================
-// RESTful 呼叫核心 Helper
+// RESTful 呼叫核心 Helper (自動帶入 Bearer Token 確保權限隔離)
 // ==========================================
 const fetchJSON = async (endpoint: string, options?: RequestInit) => {
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
+    const token = localStorage.getItem('token');
+    const headers: Record<string, string> = {
+      ...((options?.headers as Record<string, string>) || {})
+    };
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers
+    });
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     return await response.json();
   } catch (error) {
@@ -23,8 +34,7 @@ const fetchJSON = async (endpoint: string, options?: RequestInit) => {
 // 匯出 API 函數
 // ==========================================
 
-
-export const getActivityWall = async (timeRange: string = 'day', region: string): Promise<VisitRecord[]> => {
+export const getActivityWall = async (timeRange: string = 'day', region: string = 'all'): Promise<VisitRecord[]> => {
   const data = await fetchJSON(`/activities?time_range=${timeRange}&region=${region}`);
   if (data) {
     return data;
@@ -54,6 +64,7 @@ export const getActionItems = async (store: string = ""): Promise<any[]> => {
   }
   return [];
 };
+
 export const getDashboardData = async (timeRange: string = 'day', region: string = 'all'): Promise<any> => {
   const data = await fetchJSON(`/dashboard-data?time_range=${timeRange}&region=${region}`);
   return data;

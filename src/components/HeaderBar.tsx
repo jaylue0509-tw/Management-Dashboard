@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown, Settings, KeyRound } from 'lucide-react';
+import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown, Settings, KeyRound, LogOut, UserCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -14,7 +14,7 @@ interface Props {
 export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentChange, timeRange, onTimeRangeChange }) => {
   const [time, setTime] = useState(new Date());
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
 
   useEffect(() => {
@@ -113,28 +113,48 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
             <ChevronDown size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
           </div>
 
-          {/* Dept Select */}
-          <div style={{ position: 'relative' }}>
-            <select
-              value={selectedDepartment}
-              onChange={(e) => onDepartmentChange(e.target.value)}
-              style={{
-                appearance: 'none',
-                padding: '7px 30px 7px 12px',
-                fontSize: '0.82rem',
-                fontWeight: 500,
-                background: '#f9fafb',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                color: '#374151',
-                cursor: 'pointer',
-                outline: 'none',
-              }}
-            >
-              {deptOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <ChevronDown size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
-          </div>
+          {/* Dept Select or Manager Identity Badge */}
+          {user?.role === 'manager' ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              padding: '6px 12px',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: '8px',
+              color: '#1d4ed8',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+            }}>
+              <UserCheck size={14} color="#2563eb" />
+              <span>區主管：{user.name}</span>
+              <span style={{ color: '#93c5fd', fontWeight: 400 }}>|</span>
+              <span style={{ fontSize: '0.75rem', color: '#2563eb', fontWeight: 500 }}>
+                轄屬 {user.assigned_stores?.length || 0} 間門市
+              </span>
+            </div>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              <select
+                value={selectedDepartment}
+                onChange={(e) => onDepartmentChange(e.target.value)}
+                style={{
+                  appearance: 'none',
+                  padding: '7px 30px 7px 12px',
+                  fontSize: '0.82rem',
+                  fontWeight: 500,
+                  background: '#f9fafb',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  outline: 'none',
+                }}
+              >
+                {deptOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <ChevronDown size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
+            </div>
+          )}
 
           {/* Divider */}
           <div style={{ width: '1px', height: '24px', background: '#e5e7eb' }} />
@@ -204,6 +224,42 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               修改密碼
             </button>
           )}
+
+          {/* Logout Button */}
+          <button
+            onClick={() => {
+              if (window.confirm('確定要安全登出系統嗎？')) {
+                logout();
+                navigate('/login');
+              }
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              background: '#ffffff',
+              color: '#6b7280',
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              padding: '8px 12px',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = '#fca5a5';
+              (e.currentTarget as HTMLButtonElement).style.color = '#dc2626';
+              (e.currentTarget as HTMLButtonElement).style.background = '#fef2f2';
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = '#e5e7eb';
+              (e.currentTarget as HTMLButtonElement).style.color = '#6b7280';
+              (e.currentTarget as HTMLButtonElement).style.background = '#ffffff';
+            }}
+          >
+            <LogOut size={13} />
+            登出
+          </button>
 
           {/* CTA Button */}
           <button

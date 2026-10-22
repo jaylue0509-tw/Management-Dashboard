@@ -294,6 +294,11 @@ export const AuditApp = () => {
                 );
               })}
             </select>
+            {user?.role === 'manager' && (!user.assigned_stores || user.assigned_stores.length === 0) && (
+              <p className="text-xs text-amber-600 font-medium mt-1.5 flex items-center gap-1">
+                ⚠️ 您的帳號目前尚未指派負責門市，請聯繫總部管理員於「系統設定」勾選負責門市。
+              </p>
+            )}
         </div>
         
         {/* 前次未結案 */}
