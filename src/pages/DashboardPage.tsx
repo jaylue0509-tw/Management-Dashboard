@@ -49,8 +49,6 @@ export const DashboardPage: React.FC = () => {
   const [timeRange, setTimeRange] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdatedText, setLastUpdatedText] = useState<string>('');
-  const [focusedRecordId, setFocusedRecordId] = useState<string | null>(null);
   const { user } = useAuth();
 
   const fetchData = async (isBackground = false) => {
@@ -60,20 +58,9 @@ export const DashboardPage: React.FC = () => {
     try {
       const data = await getDashboardData(timeRange, 'all');
       if (data) {
-        let validManagers = (data.managers || []).filter((m: any) => !m.storeName?.includes('測試') && !m.storeName?.includes('文心秀泰'));
-        const validStoreNames = new Set(validManagers.map((m: any) => m.storeName?.trim()));
-
-        // 確保活動與待辦事項僅對齊合法門市，徹底排除測試紀錄 (如文心秀泰)
-        let validActivities = (data.activities || []).filter((a: any) => 
-          !a.storeName?.includes('測試') && 
-          !a.storeName?.includes('文心秀泰') &&
-          (validStoreNames.size === 0 || validStoreNames.has(a.storeName?.trim()))
-        );
-        let validActionItems = (data.actionItems || []).filter((i: any) => 
-          !i.storeName?.includes('測試') && 
-          !i.storeName?.includes('文心秀泰') &&
-          (validStoreNames.size === 0 || validStoreNames.has(i.storeName?.trim()))
-        );
+        let validManagers = (data.managers || []).filter((m: any) => !m.storeName?.includes('測試'));
+        let validActivities = (data.activities || []).filter((a: any) => !a.storeName?.includes('測試'));
+        let validActionItems = (data.actionItems || []).filter((i: any) => !i.storeName?.includes('測試'));
 
         if (user?.role === 'manager') {
           const mgrName = user.name;
@@ -86,7 +73,6 @@ export const DashboardPage: React.FC = () => {
         setManagers(validManagers);
         setActivities(validActivities);
         setActionItems(validActionItems);
-        setLastUpdatedText(new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
       }
     } catch (err) {
       console.error("Failed to load dashboard data", err);
@@ -226,9 +212,6 @@ export const DashboardPage: React.FC = () => {
     };
 
     targetActivities.forEach(a => {
-      const abnormalCoreChecks = a.coreChecks
-        ? Object.entries(a.coreChecks).filter(([_, val]) => val === '缺失' || val === '待改善')
-        : [];
       const abnormalChecks = a.categoryChecks 
         ? Object.entries(a.categoryChecks).filter(([_, val]) => val === '缺失' || val === '待改善')
         : [];
@@ -254,7 +237,7 @@ export const DashboardPage: React.FC = () => {
         }
       }
       
-      if (abnormalCoreChecks.length > 0 || abnormalChecks.length > 0 || hasRealDefectInNotes) {
+      if (abnormalChecks.length > 0 || hasRealDefectInNotes) {
         abnormalCount++;
         // If we want to override the property so that ActivityWall gets it cleanly, we can do:
         a.abnormalFlag = true;
@@ -493,7 +476,7 @@ export const DashboardPage: React.FC = () => {
            const mm = d.getMinutes().toString().padStart(2, '0');
            reportTime = `${m}/${dd} ${hh}:${mm}`;
         }
-        return { store, reasons, reportTime, recordId: data.activity.recordId };
+        return { store, reasons, reportTime };
       });
       
     const visitStoresList = Array.from(new Set(todayActivitiesList.map(a => a.storeName)));
@@ -530,7 +513,7 @@ export const DashboardPage: React.FC = () => {
          const mm = d.getMinutes().toString().padStart(2, '0');
          reportTime = `${m}/${dd} ${hh}:${mm}`;
       }
-      return { store, reasons, reportTime, recordId: activity.recordId };
+      return { store, reasons, reportTime };
     });
     
     const visitedStoresList = Array.from(visitedStoresSet);
@@ -615,32 +598,26 @@ export const DashboardPage: React.FC = () => {
           </div>
 
           {/* Refresh Button */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-            {lastUpdatedText && (
-              <span style={{ fontSize: '0.73rem', color: '#9ca3af', fontWeight: 500 }}>
-                最後同步：{lastUpdatedText}
-              </span>
-            )}
-            <button
-              onClick={() => fetchData(true)}
-              disabled={isRefreshing}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '7px 14px',
-                background: '#f9fafb',
-                color: isRefreshing ? '#d1d5db' : '#6b7280',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                fontSize: '0.78rem',
-                fontWeight: 600,
-                cursor: isRefreshing ? 'not-allowed' : 'pointer',
-                transition: 'all 0.15s',
-              }}
-            >
-              <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
-              {isRefreshing ? '更新中...' : '立即更新'}
-            </button>
-          </div>
+          <button
+            onClick={() => fetchData(true)}
+            disabled={isRefreshing}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              padding: '7px 14px',
+              background: '#f9fafb',
+              color: isRefreshing ? '#d1d5db' : '#6b7280',
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+              marginBottom: '8px',
+            }}
+          >
+            <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+            {isRefreshing ? '更新中...' : '立即更新'}
+          </button>
         </div>
 
         {loading ? (
@@ -664,29 +641,7 @@ export const DashboardPage: React.FC = () => {
                       </h3>
                       <p className="text-red-50 text-sm font-medium opacity-90 leading-relaxed max-w-2xl">
                         以下門市巡檢發現缺失，且尚未完成 PDCA 結案，請持續追蹤改善進度直到結案為止：
-                        {unresolvedStores.map(s => (
-                          <button
-                            key={s.store}
-                            type="button"
-                            onClick={() => {
-                              setActiveTab('dashboard');
-                              if (s.recordId) {
-                                setFocusedRecordId(s.recordId);
-                                setTimeout(() => {
-                                  const el = document.getElementById(`activity-${s.recordId}`);
-                                  if (el) {
-                                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                    el.classList.add('highlight-pulse');
-                                    setTimeout(() => el.classList.remove('highlight-pulse'), 2000);
-                                  }
-                                }, 80);
-                              }
-                            }}
-                            className="inline-flex items-center px-2.5 py-0.5 mr-1.5 mt-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs font-bold border border-white/30 transition-all cursor-pointer"
-                          >
-                            📍 {s.store}
-                          </button>
-                        ))}
+                        {unresolvedStores.map(s => s.store).join('、')}
                       </p>
                     </div>
                   </div>
@@ -731,7 +686,7 @@ export const DashboardPage: React.FC = () => {
                   <main style={{ flex: 1, width: '100%', minWidth: 0 }}>
                     <TopIssuesList 
                       issues={topIssues} 
-                      onStoreClick={(recordId) => { setFocusedRecordId(recordId);
+                      onStoreClick={(recordId) => {
                         const el = document.getElementById(`activity-${recordId}`);
                         if (el) {
                           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -746,17 +701,7 @@ export const DashboardPage: React.FC = () => {
                       }}
                     />
                     <div style={{ marginTop: '24px' }}>
-                      <ActivityWall
-                        activities={targetActivities}
-                        actionItems={actionItems}
-                        externalExpandedId={focusedRecordId}
-                        onActionItemStatusChange={(itemId, newStatus) => {
-                          setActionItems(prev => prev.map(item => item.id === itemId ? { ...item, status: newStatus } : item));
-                        }}
-                        onActivityPhotosChange={(recordId, newPairs) => {
-                          setActivities(prev => prev.map(act => act.recordId === recordId ? { ...act, photoPairs: newPairs } : act));
-                        }}
-                      />
+                      <ActivityWall activities={targetActivities} actionItems={actionItems} />
                     </div>
                   </main>
                 </div>

@@ -1,23 +1,7 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SignatureCanvas from 'react-signature-canvas';
-import {
-  Camera,
-  Mic,
-  Save,
-  ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
-  AlertCircle,
-  Trash2,
-  LogOut,
-  KeyRound,
-  Sparkles,
-  Clock,
-  CheckCheck,
-  ClipboardList,
-  X
-} from 'lucide-react';
+import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut, KeyRound } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { storeRegions } from '../data/storeRegions';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
@@ -38,27 +22,22 @@ export const AuditApp = () => {
   const [storeName, setStoreName] = useState('');
   const [mgrName, setMgrName] = useState(user?.name || '未知主管');
   const [auditMode, setAuditMode] = useState<string>('C');
-  const [expectedStayMinutes, setExpectedStayMinutes] = useState<number>(60);
   const [selectedTopics, setSelectedTopics] = useState<number[]>([]);
   const [coreChecks, setCoreChecks] = useState<Record<string, string>>({});
   const [categoryChecks, setCategoryChecks] = useState<Record<string, string>>({});
   const [categoryRemarks, setCategoryRemarks] = useState<Record<string, string>>({});
   const [customItems, setCustomItems] = useState<Record<number, string[]>>({});
   const [customInputValues, setCustomInputValues] = useState<Record<number, string>>({});
-
-  // PDCA & Before/After Photos States
+  
+  // PDCA States
   const [actionItemsLoading, setActionItemsLoading] = useState(false);
   const [pastActionItems, setPastActionItems] = useState<any[]>([]);
   const [pdcaResults, setPdcaResults] = useState<Record<string, string>>({});
   const [newActionItems, setNewActionItems] = useState([{ desc: '', assignee: '', dueDate: '' }]);
-  const [photoPairs, setPhotoPairs] = useState<{ beforeUrl: string; afterUrl: string; label?: string }[]>([
-    { beforeUrl: '', afterUrl: '' }
-  ]);
-  // 各細項專屬的改善前/改善後照片 (key -> { beforeUrl, afterUrl })
-  const [itemPhotoPairs, setItemPhotoPairs] = useState<Record<string, { beforeUrl: string; afterUrl: string }>>({});
-
+  const [photoPairs, setPhotoPairs] = useState<{beforeUrl: string, afterUrl: string}[]>([{beforeUrl: '', afterUrl: ''}]);
+  const [defectPhotos, setDefectPhotos] = useState<Record<string, { beforeUrl: string; afterUrl: string }>>({});
+  
   const [overallRating, setOverallRating] = useState('');
-  const [highlightDescription, setHighlightDescription] = useState('');
 
   // --- Local Storage Auto Save & Safe Recovery ---
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -67,21 +46,16 @@ export const AuditApp = () => {
   const [hasRestoredBanner, setHasRestoredBanner] = useState<boolean>(false);
   const [saveToast, setSaveToast] = useState<boolean>(false);
 
-  // 確保 photoPairs 永遠至少有一組改善前/改善後欄位，不會因空陣列而消失
-  useEffect(() => {
-    if (!photoPairs || photoPairs.length === 0) {
-      setPhotoPairs([{ beforeUrl: '', afterUrl: '' }]);
-    }
-  }, [photoPairs]);
-
   // 安全存入 LocalStorage，防禦 QuotaExceededError 確保文字資料 100% 永不遺失
   const saveDraftSafe = () => {
     const timeStr = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+    const safePairs = Array.isArray(photoPairs) && photoPairs.length > 0
+      ? photoPairs
+      : [{ beforeUrl: '', afterUrl: '' }];
     const draft = {
       storeName,
       mgrName: user?.name || mgrName,
       auditMode,
-      expectedStayMinutes,
       selectedTopics,
       coreChecks,
       categoryChecks,
@@ -90,9 +64,8 @@ export const AuditApp = () => {
       pdcaResults,
       newActionItems,
       overallRating,
-      highlightDescription,
-      photoPairs: photoPairs.length > 0 ? photoPairs : [{ beforeUrl: '', afterUrl: '' }],
-      itemPhotoPairs,
+      photoPairs: safePairs,
+      defectPhotos,
       currentStep,
       savedAt: timeStr
     };
@@ -102,17 +75,17 @@ export const AuditApp = () => {
       setDraftSavedAt(timeStr);
       setDraftWarning('');
     } catch (quotaErr) {
-      // 若因照片 Base64 累積超過行動瀏覽器 5MB 限制，自動啟動降級保護：保留至少一組空照片框，確保所有勾選、評分與文字備註安全入庫
+      // 若因照片 Base64 累積超過行動瀏覽器 5MB 限制，自動啟動降級保護：剔除照片大圖，確保所有勾選、評分與文字備註安全入庫
       console.warn('LocalStorage 空間不足，啟用降級保護：保全所有文字、項目與進度', quotaErr);
       try {
         const slimDraft = {
           ...draft,
           photoPairs: [{ beforeUrl: '', afterUrl: '' }],
-          itemPhotoPairs: {}
+          defectPhotos: {}
         };
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(slimDraft));
         setDraftSavedAt(timeStr);
-        setDraftWarning('文字資料已妥善暫存（因本機容量限制，照片暫存於記憶體，送出時仍會完整上傳）');
+        setDraftWarning('文字資料已妥善暫存（因本機容量限制，照片暫不存於本機，送出時仍會上傳）');
       } catch (innerErr) {
         console.error('嚴重 LocalStorage 儲存錯誤', innerErr);
       }
@@ -124,27 +97,6 @@ export const AuditApp = () => {
     saveDraftSafe();
     setSaveToast(true);
     setTimeout(() => setSaveToast(false), 2500);
-  };
-
-  // --- Fetch Action Items ---
-  const fetchActionItems = async (store: string) => {
-    if (!store) return;
-    setActionItemsLoading(true);
-    try {
-      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`${apiBase}/action-items?store=${encodeURIComponent(store)}`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        setPastActionItems(data.filter((item: any) => item.status === 'Open'));
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    setActionItemsLoading(false);
   };
 
   // 進入頁面時無損自動還原草稿，避免主管手誤點擊取消而遺失心血
@@ -162,14 +114,8 @@ export const AuditApp = () => {
 
         if (hasContent) {
           setStoreName(draft.storeName || '');
-          if (draft.storeName) {
-            fetchActionItems(draft.storeName);
-          }
           setMgrName(user?.name || draft.mgrName || '區主管');
           setAuditMode(draft.auditMode || 'C');
-          if (typeof draft.expectedStayMinutes === 'number') {
-            setExpectedStayMinutes(draft.expectedStayMinutes);
-          }
           setSelectedTopics(draft.selectedTopics || []);
           setCoreChecks(draft.coreChecks || {});
           setCategoryChecks(draft.categoryChecks || {});
@@ -182,14 +128,12 @@ export const AuditApp = () => {
               : [{ desc: '', assignee: '', dueDate: '' }]
           );
           setOverallRating(draft.overallRating || '');
-          setHighlightDescription(draft.highlightDescription || '');
-          // 修正空陣列導致拍照前後框消失的問題
           setPhotoPairs(
             Array.isArray(draft.photoPairs) && draft.photoPairs.length > 0
               ? draft.photoPairs
               : [{ beforeUrl: '', afterUrl: '' }]
           );
-          setItemPhotoPairs(draft.itemPhotoPairs || {});
+          setDefectPhotos(draft.defectPhotos || {});
           if (draft.currentStep) setCurrentStep(draft.currentStep);
           setDraftSavedAt(draft.savedAt || '稍早');
           setHasRestoredBanner(true);
@@ -208,29 +152,18 @@ export const AuditApp = () => {
     }
   }, [user?.name]);
 
+  // 確保 photoPairs 永遠至少有一組改善前/改善後框，不會因空陣列而消失
+  useEffect(() => {
+    if (!Array.isArray(photoPairs) || photoPairs.length === 0) {
+      setPhotoPairs([{ beforeUrl: '', afterUrl: '' }]);
+    }
+  }, [photoPairs]);
+
   // 表單變更時自動儲存草稿
   useEffect(() => {
     if (!isDraftRestored) return;
     saveDraftSafe();
-  }, [
-    storeName,
-    mgrName,
-    auditMode,
-    expectedStayMinutes,
-    selectedTopics,
-    coreChecks,
-    categoryChecks,
-    categoryRemarks,
-    customItems,
-    pdcaResults,
-    newActionItems,
-    overallRating,
-    highlightDescription,
-    photoPairs,
-    itemPhotoPairs,
-    currentStep,
-    isDraftRestored
-  ]);
+  }, [storeName, mgrName, auditMode, selectedTopics, coreChecks, categoryChecks, categoryRemarks, customItems, pdcaResults, newActionItems, overallRating, photoPairs, defectPhotos, currentStep, isDraftRestored]);
 
   /**
    * 將使用者拍照/上傳的圖片進行客戶端等比縮放壓縮轉為 base64 (JPEG)
@@ -273,6 +206,112 @@ export const AuditApp = () => {
     });
   };
 
+  /**
+   * 缺失項目專屬之拍照前後 (改善前 Before & 改善後 After) 上傳元件
+   */
+  const renderDefectPhotoPair = (itemKey: string) => {
+    const pair = defectPhotos[itemKey] || { beforeUrl: '', afterUrl: '' };
+    const handleUpload = async (field: 'beforeUrl' | 'afterUrl', file?: File) => {
+      if (!file) return;
+      try {
+        const base64Url = await compressImageToBase64(file);
+        setDefectPhotos(prev => ({
+          ...prev,
+          [itemKey]: {
+            beforeUrl: field === 'beforeUrl' ? base64Url : (prev[itemKey]?.beforeUrl || ''),
+            afterUrl: field === 'afterUrl' ? base64Url : (prev[itemKey]?.afterUrl || '')
+          }
+        }));
+      } catch (err) {
+        console.error('照片讀取失敗', err);
+        alert('照片讀取失敗，請重新拍攝');
+      }
+    };
+
+    const handleClear = (field: 'beforeUrl' | 'afterUrl') => {
+      setDefectPhotos(prev => ({
+        ...prev,
+        [itemKey]: {
+          beforeUrl: field === 'beforeUrl' ? '' : (prev[itemKey]?.beforeUrl || ''),
+          afterUrl: field === 'afterUrl' ? '' : (prev[itemKey]?.afterUrl || '')
+        }
+      }));
+    };
+
+    return (
+      <div className="mt-3 pt-3 border-t border-red-200/70">
+        <p className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5">
+          <Camera size={14} className="text-purple-600" />
+          現場拍照存證 (Before & After)
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          {/* Before */}
+          <div className="relative">
+            <p className="text-xs font-bold text-gray-500 mb-1.5 text-center">改善前 (Before)</p>
+            {pair.beforeUrl && (
+              <button
+                type="button"
+                onClick={() => handleClear('beforeUrl')}
+                className="absolute top-7 right-1.5 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
+                title="移除重拍"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+            <label className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-white">
+              {pair.beforeUrl ? (
+                <img src={pair.beforeUrl} alt="Before" className="w-full h-full object-cover" />
+              ) : (
+                <>
+                  <Camera size={20} className="mb-1" />
+                  <span className="text-xs font-medium">拍照 / 上傳</span>
+                </>
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                onChange={(e) => handleUpload('beforeUrl', e.target.files?.[0])}
+              />
+            </label>
+          </div>
+          {/* After */}
+          <div className="relative">
+            <p className="text-xs font-bold text-gray-500 mb-1.5 text-center">改善後 (After)</p>
+            {pair.afterUrl && (
+              <button
+                type="button"
+                onClick={() => handleClear('afterUrl')}
+                className="absolute top-7 right-1.5 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
+                title="移除重拍"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+            <label className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-white">
+              {pair.afterUrl ? (
+                <img src={pair.afterUrl} alt="After" className="w-full h-full object-cover" />
+              ) : (
+                <>
+                  <Camera size={20} className="mb-1" />
+                  <span className="text-xs font-medium">拍照 / 上傳</span>
+                </>
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                onChange={(e) => handleUpload('afterUrl', e.target.files?.[0])}
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const handleAddCustomItem = (index: number) => {
     const val = customInputValues[index]?.trim();
     if (val) {
@@ -284,303 +323,21 @@ export const AuditApp = () => {
     }
   };
 
-  /**
-   * 渲染單一檢核項目的「改善前 (Before) & 改善後 (After)」拍照上傳元件
-   */
-  const renderInlineBeforeAfterBox = (itemKey: string, itemLabel: string) => {
-    const currentPair = itemPhotoPairs[itemKey] || { beforeUrl: '', afterUrl: '' };
-
-    const updateItemPhoto = (side: 'beforeUrl' | 'afterUrl', url: string) => {
-      setItemPhotoPairs(prev => ({
-        ...prev,
-        [itemKey]: {
-          beforeUrl: side === 'beforeUrl' ? url : (prev[itemKey]?.beforeUrl || ''),
-          afterUrl: side === 'afterUrl' ? url : (prev[itemKey]?.afterUrl || '')
-        }
-      }));
-    };
-
-    return (
-      <div className="mt-3 p-3 bg-white rounded-xl border border-purple-200 shadow-2xs">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-bold text-purple-800 flex items-center gap-1.5">
-            <Camera size={14} className="text-purple-600" />
-            現場拍照存證：改善前 (Before) & 改善後 (After)
-          </span>
-          <span className="text-[11px] text-gray-400">{itemLabel}</span>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          {/* 改善前 (Before) */}
-          <div>
-            <p className="text-xs font-bold text-rose-600 mb-1.5 text-center bg-rose-50 py-0.5 rounded">
-              改善前 (Before)
-            </p>
-            <div className="relative">
-              {currentPair.beforeUrl && (
-                <button
-                  type="button"
-                  onClick={() => updateItemPhoto('beforeUrl', '')}
-                  className="absolute top-1.5 right-1.5 z-10 bg-black/60 text-white rounded-full p-1 hover:bg-red-600 transition-colors"
-                  title="移除改善前照片"
-                >
-                  <X size={12} />
-                </button>
-              )}
-              <label className="w-full h-28 sm:h-32 border-2 border-dashed border-rose-200 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-rose-50/40 hover:border-rose-400 transition-colors overflow-hidden bg-gray-50">
-                {currentPair.beforeUrl ? (
-                  <img src={currentPair.beforeUrl} alt="改善前 (Before)" className="w-full h-full object-cover" />
-                ) : (
-                  <>
-                    <Camera size={22} className="mb-1 text-rose-400" />
-                    <span className="text-xs font-bold text-gray-600">拍攝 / 上傳改善前</span>
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={async (e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      try {
-                        const base64Url = await compressImageToBase64(e.target.files[0]);
-                        updateItemPhoto('beforeUrl', base64Url);
-                      } catch (err) {
-                        console.error('照片讀取失敗', err);
-                        alert('照片讀取失敗，請重新拍攝');
-                      }
-                    }
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* 改善後 (After) */}
-          <div>
-            <p className="text-xs font-bold text-emerald-600 mb-1.5 text-center bg-emerald-50 py-0.5 rounded">
-              改善後 (After)
-            </p>
-            <div className="relative">
-              {currentPair.afterUrl && (
-                <button
-                  type="button"
-                  onClick={() => updateItemPhoto('afterUrl', '')}
-                  className="absolute top-1.5 right-1.5 z-10 bg-black/60 text-white rounded-full p-1 hover:bg-red-600 transition-colors"
-                  title="移除改善後照片"
-                >
-                  <X size={12} />
-                </button>
-              )}
-              <label className="w-full h-28 sm:h-32 border-2 border-dashed border-emerald-200 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-emerald-50/40 hover:border-emerald-400 transition-colors overflow-hidden bg-gray-50">
-                {currentPair.afterUrl ? (
-                  <img src={currentPair.afterUrl} alt="改善後 (After)" className="w-full h-full object-cover" />
-                ) : (
-                  <>
-                    <Camera size={22} className="mb-1 text-emerald-500" />
-                    <span className="text-xs font-bold text-gray-600">拍攝 / 上傳改善後</span>
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={async (e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      try {
-                        const base64Url = await compressImageToBase64(e.target.files[0]);
-                        updateItemPhoto('afterUrl', base64Url);
-                      } catch (err) {
-                        console.error('照片讀取失敗', err);
-                        alert('照片讀取失敗，請重新拍攝');
-                      }
-                    }
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  /**
-   * 渲染完整的「現場拍照存證 (改善前 Before & 改善後 After)」區塊
-   */
-  const renderBeforeAfterGallerySection = () => {
-    const safePairs = photoPairs.length > 0 ? photoPairs : [{ beforeUrl: '', afterUrl: '' }];
-    return (
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-base font-bold text-gray-800 flex items-center gap-2">
-            <Camera size={18} className="text-purple-600" />
-            現場拍照存證：改善前 (Before) & 改善後 (After)
-          </p>
-          <span className="text-xs font-semibold text-purple-600 bg-purple-50 px-2.5 py-0.5 rounded-full">
-            支援手機相機直拍或相簿選圖
-          </span>
-        </div>
-
-        <div className="space-y-4">
-          {safePairs.map((pair, idx) => (
-            <div key={idx} className="bg-white p-4 rounded-xl border border-gray-200 relative shadow-xs">
-              {safePairs.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setPhotoPairs(safePairs.filter((_, i) => i !== idx))}
-                  className="absolute top-2.5 right-2.5 text-gray-400 hover:text-red-500 z-10 bg-white rounded-full p-1 shadow-xs border border-gray-100"
-                  title="刪除此組照片"
-                >
-                  <Trash2 size={15} />
-                </button>
-              )}
-              <div className="grid grid-cols-2 gap-4">
-                {/* Before */}
-                <div>
-                  <p className="text-xs font-bold text-rose-600 bg-rose-50 py-1 rounded-md mb-2 text-center">
-                    改善前 (Before)
-                  </p>
-                  <div className="relative">
-                    {pair.beforeUrl && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newPairs = [...safePairs];
-                          newPairs[idx] = { ...newPairs[idx], beforeUrl: '' };
-                          setPhotoPairs(newPairs);
-                        }}
-                        className="absolute top-2 right-2 z-10 bg-black/60 text-white rounded-full p-1 hover:bg-red-600"
-                        title="清除重拍"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                    <label className="w-full aspect-square border-2 border-dashed border-rose-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-rose-50/30 hover:border-rose-500 transition-colors overflow-hidden bg-gray-50">
-                      {pair.beforeUrl ? (
-                        <img src={pair.beforeUrl} alt="Before" className="w-full h-full object-cover" />
-                      ) : (
-                        <>
-                          <Camera size={28} className="mb-1.5 text-rose-400" />
-                          <span className="text-xs font-bold text-gray-600">拍照 / 上傳 (改善前)</span>
-                        </>
-                      )}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        className="hidden"
-                        onChange={async (e) => {
-                          if (e.target.files && e.target.files[0]) {
-                            try {
-                              const base64Url = await compressImageToBase64(e.target.files[0]);
-                              const newPairs = [...safePairs];
-                              newPairs[idx] = { ...newPairs[idx], beforeUrl: base64Url };
-                              setPhotoPairs(newPairs);
-                            } catch (err) {
-                              console.error('照片讀取失敗', err);
-                              alert('照片讀取失敗，請重新拍攝');
-                            }
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                {/* After */}
-                <div>
-                  <p className="text-xs font-bold text-emerald-600 bg-emerald-50 py-1 rounded-md mb-2 text-center">
-                    改善後 (After)
-                  </p>
-                  <div className="relative">
-                    {pair.afterUrl && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newPairs = [...safePairs];
-                          newPairs[idx] = { ...newPairs[idx], afterUrl: '' };
-                          setPhotoPairs(newPairs);
-                        }}
-                        className="absolute top-2 right-2 z-10 bg-black/60 text-white rounded-full p-1 hover:bg-red-600"
-                        title="清除重拍"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
-                    <label className="w-full aspect-square border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-emerald-50/30 hover:border-emerald-500 transition-colors overflow-hidden bg-gray-50">
-                      {pair.afterUrl ? (
-                        <img src={pair.afterUrl} alt="After" className="w-full h-full object-cover" />
-                      ) : (
-                        <>
-                          <Camera size={28} className="mb-1.5 text-emerald-500" />
-                          <span className="text-xs font-bold text-gray-600">拍照 / 上傳 (改善後)</span>
-                        </>
-                      )}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        className="hidden"
-                        onChange={async (e) => {
-                          if (e.target.files && e.target.files[0]) {
-                            try {
-                              const base64Url = await compressImageToBase64(e.target.files[0]);
-                              const newPairs = [...safePairs];
-                              newPairs[idx] = { ...newPairs[idx], afterUrl: base64Url };
-                              setPhotoPairs(newPairs);
-                            } catch (err) {
-                              console.error('照片讀取失敗', err);
-                              alert('照片讀取失敗，請重新拍攝');
-                            }
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={() => setPhotoPairs([...safePairs, { beforeUrl: '', afterUrl: '' }])}
-            className="text-purple-700 text-sm font-bold mt-2 w-full py-3 bg-purple-50 rounded-xl hover:bg-purple-100 transition-colors border border-purple-200 flex items-center justify-center gap-1.5"
-          >
-            <Camera size={16} /> + 新增一組「改善前 / 改善後」對比照片
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  // 計算巡店統計摘要（供 Step 5 總結預覽與評級建議）
-  const inspectionStats = useMemo(() => {
-    const coreDefectCount = Object.values(coreChecks).filter(v => v === '缺失').length;
-    const catDefectCount = Object.values(categoryChecks).filter(v => v === '缺失').length;
-    const catImproveCount = Object.values(categoryChecks).filter(v => v === '待改善').length;
-    const catPassCount = Object.values(categoryChecks).filter(v => v === '合格').length;
-    const manualActionCount = newActionItems.filter(i => i.desc?.trim()).length;
-    const totalAutoPdca = coreDefectCount + catDefectCount + catImproveCount + manualActionCount;
-
-    let recommendedRating = '良好';
-    if (coreDefectCount > 0 || catDefectCount >= 2) {
-      recommendedRating = '需重點輔導';
-    } else if (catDefectCount === 1 || catImproveCount >= 2) {
-      recommendedRating = '需追蹤';
+  // --- Fetch Action Items ---
+  const fetchActionItems = async (store: string) => {
+    if (!store) return;
+    setActionItemsLoading(true);
+    try {
+      const res = await fetch(`/api/action-items?store=${encodeURIComponent(store)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPastActionItems(data.filter((item: any) => item.status === 'Open'));
+      }
+    } catch (e) {
+      console.error(e);
     }
-
-    return {
-      coreDefectCount,
-      catDefectCount,
-      catImproveCount,
-      catPassCount,
-      manualActionCount,
-      totalAutoPdca,
-      recommendedRating
-    };
-  }, [coreChecks, categoryChecks, newActionItems]);
+    setActionItemsLoading(false);
+  };
 
   // --- Submit with Retry & Data Persistence Guarantee ---
   const [submitting, setSubmitting] = useState(false);
@@ -590,27 +347,18 @@ export const AuditApp = () => {
     if (submitting) return;
     if (!storeName) return alert('請選擇門市名稱');
     if (!auditMode) return alert('請選擇巡店模式');
-
+    
     // 檢查是否有缺失未填寫備註
     for (const [k, v] of Object.entries(coreChecks)) {
-      if (v === '缺失' && !categoryRemarks[k]?.trim()) {
-        setCurrentStep(2);
-        return alert('核心底線有「缺失」項目尚未填寫說明，已為您切換至步驟 2 補齊！');
-      }
+      if (v === '缺失' && !categoryRemarks[k]?.trim()) return alert(`核心底線有缺失未填寫說明，請返回步驟2補齊`);
     }
     for (const [k, v] of Object.entries(categoryChecks)) {
-      if ((v === '缺失' || v === '待改善') && !categoryRemarks[k]?.trim()) {
-        setCurrentStep(3);
-        return alert(`模組細項 (${k}) 標記為「${v}」但尚未填寫說明，已為您切換至步驟 3 補齊！`);
-      }
+      if (v === '缺失' && !categoryRemarks[k]?.trim()) return alert(`模組細項有缺失未填寫說明，請返回步驟3補齊`);
     }
 
-    if (Object.keys(coreChecks).length < 3) {
-      setCurrentStep(2);
-      return alert('請先完成步驟 2：必看核心底線（共 3 項）');
-    }
+    if (Object.keys(coreChecks).length < 3) return alert('請完成第二層：必看核心底線');
     if (!overallRating) return alert('請選擇巡店綜合評價');
-
+    
     const signature = sigCanvas.current?.isEmpty() ? null : sigCanvas.current?.toDataURL();
 
     // 查找所選門市所屬區域
@@ -622,10 +370,10 @@ export const AuditApp = () => {
       }
     }
 
-    // 合併各細項專屬的 Before/After 照片與 Step 4 通用對比照片
-    const mergedPhotoPairs = [
-      ...Object.values(itemPhotoPairs).filter(p => p.beforeUrl || p.afterUrl),
-      ...photoPairs.filter(p => p.beforeUrl || p.afterUrl)
+    // 合併步驟 2/3 缺失拍照與步驟 4 現場拍照存證
+    const mergedPhotos = [
+      ...Object.values(defectPhotos).filter(p => p && (p.beforeUrl || p.afterUrl)),
+      ...photoPairs.filter(p => p && (p.beforeUrl || p.afterUrl))
     ];
 
     const payload = {
@@ -633,7 +381,6 @@ export const AuditApp = () => {
       region: detectedRegion,
       areaManagerName: user?.name || mgrName,
       auditMode,
-      expectedStayMinutes,
       selectedTopics,
       coreChecks,
       categoryChecks,
@@ -641,9 +388,8 @@ export const AuditApp = () => {
       pdcaResults,
       newActionItems: newActionItems.filter(i => i.desc?.trim()),
       overallRating,
-      highlightDescription: highlightDescription.trim(),
       signature,
-      photoPairs: mergedPhotoPairs,
+      photoPairs: mergedPhotos,
       createdAt: new Date().toISOString()
     };
 
@@ -705,7 +451,7 @@ export const AuditApp = () => {
       // 伺服器確認持久化存檔後，才安全清除本機草稿
       localStorage.removeItem(LOCAL_STORAGE_KEY);
       alert('🎉 巡店紀錄已成功儲存至雲端系統！');
-      navigate('/dashboard');
+      navigate(user?.role === 'admin' ? '/dashboard' : '/audit');
     } else {
       // 失敗時嚴格保留草稿與表單內容，確保主管心血不流失
       alert(`⚠️ 儲存失敗（${lastErrorMsg}）。\n\n【請放心】您填寫的所有內容已妥善暫存於手機本機草稿！請確認網路訊號後，直接再次點擊【送出巡店紀錄】即可重試。`);
@@ -714,7 +460,6 @@ export const AuditApp = () => {
     setSubmitting(false);
     setSubmitStatusText('');
   };
-
   // --- Stepper Navigation ---
   const handleNext = () => {
     if (currentStep === 1) {
@@ -722,28 +467,16 @@ export const AuditApp = () => {
       if (auditMode === 'B' && selectedTopics.length === 0) return alert('請至少選擇一個查核主題');
     }
     if (currentStep === 2) {
-      if (Object.keys(coreChecks).length < 3) return alert('請完成所有必看核心底線（共 3 項）');
-      for (const [k, v] of Object.entries(coreChecks)) {
-        if (v === '缺失' && !categoryRemarks[k]?.trim()) {
-          return alert('核心底線有「缺失」項目尚未填寫詳細說明，請補充後再繼續');
-        }
-      }
+      if (Object.keys(coreChecks).length < 3) return alert('請完成所有必看核心底線');
     }
-    if (currentStep === 3) {
-      for (const [k, v] of Object.entries(categoryChecks)) {
-        if ((v === '缺失' || v === '待改善') && !categoryRemarks[k]?.trim()) {
-          return alert(`項目 ${k} 標記為「${v}」，請填寫詳細說明後再進入下一步`);
-        }
-      }
-    }
-
+    
     // 如果是模式A，Step 2 結束直接跳到 Step 4
     if (currentStep === 2 && auditMode === 'A') {
       setCurrentStep(4);
     } else {
       setCurrentStep(prev => Math.min(prev + 1, totalSteps));
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo(0, 0);
   };
 
   const handlePrev = () => {
@@ -752,7 +485,7 @@ export const AuditApp = () => {
     } else {
       setCurrentStep(prev => Math.max(prev - 1, 1));
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo(0, 0);
   };
 
   // --- Render Sections ---
@@ -762,162 +495,98 @@ export const AuditApp = () => {
         <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">1</span>
         基本資訊與模式
       </h2>
-      <div className="space-y-6">
+      <div className="space-y-5">
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-            巡店門市 <span className="text-red-500">*</span>
-          </label>
-          <select
-            value={storeName}
-            onChange={(e) => {
-              setStoreName(e.target.value);
-              fetchActionItems(e.target.value);
-            }}
-            className="w-full border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 font-medium text-gray-800"
-          >
-            <option value="" disabled>請選擇負責的門市</option>
-            {Object.entries(storeRegions).map(([region, stores]) => {
-              // 如果是總部管理員(admin) 或 權限全開，就顯示全部；否則過濾出指派的門市
-              const visibleStores = user?.role === 'admin'
-                ? stores
-                : stores.filter(s => user?.assigned_stores?.includes(s));
-
-              if (visibleStores.length === 0) return null;
-
-              return (
-                <optgroup key={region} label={`【${region}】`}>
-                  {visibleStores.map(store => (
-                    <option key={store} value={store}>{store}</option>
-                  ))}
-                </optgroup>
-              );
-            })}
-          </select>
-          {user?.role === 'manager' && (!user.assigned_stores || user.assigned_stores.length === 0) && (
-            <p className="text-xs text-amber-600 font-medium mt-1.5 flex items-center gap-1">
-              ⚠️ 您的帳號目前尚未指派負責門市，請聯繫總部管理員於「系統設定」勾選負責門市。
-            </p>
-          )}
+          <label className="block text-sm font-semibold text-gray-700 mb-1">巡店門市 <span className="text-red-500">*</span></label>
+            <select
+              value={storeName}
+              onChange={(e) => {
+                setStoreName(e.target.value);
+                fetchActionItems(e.target.value);
+              }}
+              className="w-full border rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+            >
+              <option value="" disabled>請選擇負責的門市</option>
+              {Object.entries(storeRegions).map(([region, stores]) => {
+                // 如果是總部管理員(admin) 或 權限全開，就顯示全部；否則過濾出指派的門市
+                const visibleStores = user?.role === 'admin' 
+                  ? stores 
+                  : stores.filter(s => user?.assigned_stores?.includes(s));
+                  
+                if (visibleStores.length === 0) return null;
+                
+                return (
+                  <optgroup key={region} label={`【${region}】`}>
+                    {visibleStores.map(store => (
+                      <option key={store} value={store}>{store}</option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            </select>
+            {user?.role === 'manager' && (!user.assigned_stores || user.assigned_stores.length === 0) && (
+              <p className="text-xs text-amber-600 font-medium mt-1.5 flex items-center gap-1">
+                ⚠️ 您的帳號目前尚未指派負責門市，請聯繫總部管理員於「系統設定」勾選負責門市。
+              </p>
+            )}
         </div>
-
+        
         {/* 前次未結案 */}
         {storeName && (
-          <div className="bg-orange-50/60 p-4 rounded-xl border border-orange-200/80">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <AlertCircle size={17} className="text-orange-500" />
-                前次未結案缺失複查 (PDCA)
-                {pastActionItems.length > 0 && (
-                  <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-bold">
-                    {pastActionItems.length} 筆待複查
-                  </span>
-                )}
-              </p>
-              {actionItemsLoading && <span className="text-xs text-gray-400">載入中...</span>}
-            </div>
-
-            <div className="space-y-3">
-              {pastActionItems.length === 0 && !actionItemsLoading ? (
-                <div className="text-sm text-gray-500 bg-white p-3.5 rounded-lg text-center border border-dashed border-gray-200">
-                  目前該門市無未結案之改善事項 🎉
-                </div>
-              ) : (
-                pastActionItems.map(item => {
-                  const itemTitle = item.issueDescription || item.desc || '待改善項目';
-                  return (
-                    <div key={item.id} className="border border-orange-100 p-4 rounded-xl bg-white shadow-xs">
-                      <div className="text-sm font-semibold text-gray-800 mb-1.5">
-                        {item.category ? <span className="text-xs bg-orange-50 text-orange-700 px-1.5 py-0.5 rounded mr-1.5 font-bold">{item.category}</span> : null}
-                        {itemTitle}
-                      </div>
-                      <div className="text-xs text-gray-500 mb-3 flex flex-wrap gap-4">
-                        <span>負責人：{item.assignee || '店長'}</span>
-                        {item.dueDate && (
-                          <span className="text-red-500 font-medium">
-                            改善期限：{new Date(item.dueDate).toLocaleDateString('zh-TW')}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setPdcaResults({ ...pdcaResults, [item.id]: '已改善' })}
-                          className={`flex-1 py-2.5 rounded-lg text-xs sm:text-sm font-bold border transition-colors ${
-                            pdcaResults[item.id] === '已改善'
-                              ? 'bg-green-600 text-white border-green-600 shadow-xs'
-                              : 'bg-white text-gray-600 border-gray-200 hover:bg-green-50'
-                          }`}
-                        >
-                          ✅ 現場確認已改善 (自動結案)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPdcaResults({ ...pdcaResults, [item.id]: '未改善' })}
-                          className={`flex-1 py-2.5 rounded-lg text-xs sm:text-sm font-bold border transition-colors ${
-                            pdcaResults[item.id] === '未改善'
-                              ? 'bg-red-600 text-white border-red-600 shadow-xs'
-                              : 'bg-white text-gray-600 border-gray-200 hover:bg-red-50'
-                          }`}
-                        >
-                          ❌ 依然未改善
-                        </button>
-                      </div>
-                      {pdcaResults[item.id] && renderInlineBeforeAfterBox(`pdca-${item.id}`, `PDCA 複查：${itemTitle}`)}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+        <div className="bg-orange-50/50 p-4 rounded-xl border border-orange-100">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-base font-bold text-gray-800 flex items-center gap-2">
+              <AlertCircle size={18} className="text-orange-500" /> 前次未結案缺失 (PDCA)
+            </p>
+            {actionItemsLoading && <span className="text-xs text-gray-400">載入中...</span>}
           </div>
-        )}
-
-        {/* 預計停留時間 */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
-            <Clock size={15} className="text-blue-600" /> 本次巡店輔導停留時間
-          </label>
-          <div className="grid grid-cols-5 gap-2">
-            {[30, 60, 90, 120, 180].map(mins => (
-              <button
-                key={mins}
-                type="button"
-                onClick={() => setExpectedStayMinutes(mins)}
-                className={`py-2.5 px-2 rounded-xl text-xs sm:text-sm font-bold border transition-all ${
-                  expectedStayMinutes === mins
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50 hover:border-blue-200'
-                }`}
-              >
-                {mins >= 60 ? `${mins / 60} 小時` : `${mins} 分鐘`}
-              </button>
-            ))}
+          
+          <div className="space-y-3">
+            {pastActionItems.length === 0 && !actionItemsLoading ? (
+              <div className="text-sm text-gray-500 bg-white p-4 rounded-lg text-center border border-dashed">
+                無未結案之改善事項 🎉
+              </div>
+            ) : (
+              pastActionItems.map(item => (
+                <div key={item.id} className="border p-4 rounded-xl bg-white shadow-sm">
+                  <div className="text-sm font-semibold text-gray-800 mb-2">{item.issueDescription || item.desc}</div>
+                  <div className="text-xs text-gray-500 mb-3 flex gap-4">
+                    <span>負責人: {item.assignee}</span>
+                    <span className="text-red-500 font-medium">期限: {new Date(item.dueDate).toLocaleDateString()}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPdcaResults({ ...pdcaResults, [item.id]: '已改善' })} className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${pdcaResults[item.id] === '已改善' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-green-50'}`}>✅ 現場已改善</button>
+                    <button onClick={() => setPdcaResults({ ...pdcaResults, [item.id]: '未改善' })} className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${pdcaResults[item.id] === '未改善' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-red-50'}`}>❌ 依然未改善</button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
+        )}
 
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            巡店模式 <span className="text-red-500">*</span>
-          </label>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">巡店模式 <span className="text-red-500">*</span></label>
           <div className="grid grid-cols-1 gap-3">
-            <label className={`border-2 p-4 rounded-xl flex items-center gap-3 cursor-pointer transition-all ${auditMode === 'A' ? 'bg-blue-50 border-blue-500 shadow-xs' : 'bg-white border-gray-200 hover:border-blue-200'}`}>
+            <label className={`border-2 p-4 rounded-xl flex items-center gap-3 cursor-pointer transition-all ${auditMode === 'A' ? 'bg-blue-50 border-blue-500 shadow-sm' : 'bg-white border-gray-200 hover:border-blue-200'}`}>
               <input type="radio" name="mode" checked={auditMode === 'A'} onChange={() => setAuditMode('A')} className="w-5 h-5 text-blue-600" />
               <div>
                 <div className="font-bold text-gray-800 text-base">【模式 A】快閃巡店</div>
-                <div className="text-sm text-gray-500 mt-0.5">僅看必看底線 + 歷程追蹤，跳過第三層六大模組。</div>
+                <div className="text-sm text-gray-500 mt-1">僅看必看底線 + 歷程追蹤，跳過第三層。</div>
               </div>
             </label>
-            <label className={`border-2 p-4 rounded-xl flex items-center gap-3 cursor-pointer transition-all ${auditMode === 'B' ? 'bg-blue-50 border-blue-500 shadow-xs' : 'bg-white border-gray-200 hover:border-blue-200'}`}>
+            <label className={`border-2 p-4 rounded-xl flex items-center gap-3 cursor-pointer transition-all ${auditMode === 'B' ? 'bg-blue-50 border-blue-500 shadow-sm' : 'bg-white border-gray-200 hover:border-blue-200'}`}>
               <input type="radio" name="mode" checked={auditMode === 'B'} onChange={() => setAuditMode('B')} className="w-5 h-5 text-blue-600" />
               <div>
                 <div className="font-bold text-gray-800 text-base">【模式 B】主題巡店</div>
-                <div className="text-sm text-gray-500 mt-0.5">針對特定的大項進行深度抽查。</div>
+                <div className="text-sm text-gray-500 mt-1">針對特定的大項進行深度抽查。</div>
               </div>
             </label>
-            <label className={`border-2 p-4 rounded-xl flex items-center gap-3 cursor-pointer transition-all ${auditMode === 'C' ? 'bg-blue-50 border-blue-500 shadow-xs' : 'bg-white border-gray-200 hover:border-blue-200'}`}>
+            <label className={`border-2 p-4 rounded-xl flex items-center gap-3 cursor-pointer transition-all ${auditMode === 'C' ? 'bg-blue-50 border-blue-500 shadow-sm' : 'bg-white border-gray-200 hover:border-blue-200'}`}>
               <input type="radio" name="mode" checked={auditMode === 'C'} onChange={() => setAuditMode('C')} className="w-5 h-5 text-blue-600" />
               <div>
                 <div className="font-bold text-gray-800 text-base">【模式 C】全店完整輔導</div>
-                <div className="text-sm text-gray-500 mt-0.5">完整檢視六大模組，適合月度常規輔導。</div>
+                <div className="text-sm text-gray-500 mt-1">完整檢視六大模組，適合月度常規輔導。</div>
               </div>
             </label>
           </div>
@@ -925,21 +594,12 @@ export const AuditApp = () => {
 
         {auditMode === 'B' && (
           <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-semibold text-blue-800">請選擇本次查核主題 (可複選)</label>
-              <button
-                type="button"
-                onClick={() => setSelectedTopics(selectedTopics.length === 6 ? [] : [1, 2, 3, 4, 5, 6])}
-                className="text-xs text-blue-600 font-bold hover:underline"
-              >
-                {selectedTopics.length === 6 ? '取消全選' : '全選主題'}
-              </button>
-            </div>
+            <label className="block text-sm font-semibold text-blue-800 mb-2">請選擇本次查核主題 (可複選)</label>
             <div className="grid grid-cols-2 gap-2">
               {['行銷檔期', '陳列損耗', '寵物專業', '人員服務', '環境設備', '經營數據'].map((topic, idx) => (
-                <label key={idx} className="flex items-center gap-2 text-sm text-gray-700 bg-white p-2.5 rounded-lg border cursor-pointer hover:border-blue-300">
-                  <input
-                    type="checkbox"
+                <label key={idx} className="flex items-center gap-2 text-sm text-gray-700 bg-white p-2 rounded-lg border">
+                  <input 
+                    type="checkbox" 
                     checked={selectedTopics.includes(idx + 1)}
                     onChange={(e) => {
                       if (e.target.checked) setSelectedTopics([...selectedTopics, idx + 1]);
@@ -959,27 +619,12 @@ export const AuditApp = () => {
 
   const renderStep2 = () => (
     <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-500">
-      <div className="flex items-center justify-between border-b pb-3 mb-2">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">2</span>
-          必看核心底線
-        </h2>
-        <button
-          type="button"
-          onClick={() => {
-            setCoreChecks({
-              'core-1': '正常',
-              'core-2': '正常',
-              'core-3': '正常'
-            });
-          }}
-          className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg font-bold hover:bg-emerald-100 transition-colors flex items-center gap-1"
-        >
-          <CheckCheck size={14} /> 一鍵全選正常
-        </button>
-      </div>
+      <h2 className="text-xl font-bold text-gray-800 mb-2 border-b pb-3 flex items-center gap-2">
+        <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">2</span>
+        必看核心底線
+      </h2>
       <p className="text-sm text-gray-500 mb-6">不論停留時間長短，進店必須立刻檢核的重點。</p>
-
+      
       <div className="space-y-4">
         {[
           { id: 'core-1', label: '環境異味與清潔', desc: '門口/賣場無明顯排泄物或寵物異味，地板乾淨。' },
@@ -990,40 +635,20 @@ export const AuditApp = () => {
             <div className="font-semibold text-gray-800 mb-1">{item.label}</div>
             <div className="text-xs text-gray-500 mb-3">{item.desc}</div>
             <div className="flex gap-2 mt-3">
-              <button
-                type="button"
-                onClick={() => setCoreChecks({ ...coreChecks, [item.id]: '正常' })}
-                className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${
-                  coreChecks[item.id] === '正常'
-                    ? 'bg-green-600 text-white border-green-600 shadow-xs'
-                    : 'bg-white text-gray-600 border-gray-200 hover:bg-green-50'
-                }`}
-              >
-                ✅ 正常
-              </button>
-              <button
-                type="button"
-                onClick={() => setCoreChecks({ ...coreChecks, [item.id]: '缺失' })}
-                className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${
-                  coreChecks[item.id] === '缺失'
-                    ? 'bg-red-600 text-white border-red-600 shadow-xs'
-                    : 'bg-white text-gray-600 border-gray-200 hover:bg-red-50'
-                }`}
-              >
-                ❌ 缺失
-              </button>
+              <button onClick={() => setCoreChecks({ ...coreChecks, [item.id]: '正常' })} className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${coreChecks[item.id] === '正常' ? 'bg-green-600 text-white border-green-600 shadow-sm' : 'bg-white text-gray-600 border-gray-200 hover:bg-green-50'}`}>✅ 正常</button>
+              <button onClick={() => setCoreChecks({ ...coreChecks, [item.id]: '缺失' })} className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${coreChecks[item.id] === '缺失' ? 'bg-red-600 text-white border-red-600 shadow-sm' : 'bg-white text-gray-600 border-gray-200 hover:bg-red-50'}`}>❌ 缺失</button>
             </div>
             {coreChecks[item.id] === '缺失' && (
               <div className="mt-3 animate-in slide-in-from-top-1 fade-in duration-200">
-                <input
-                  type="text"
-                  placeholder="請輸入缺失詳細說明 (必填，將自動轉入 PDCA 追蹤)"
+                <input 
+                  type="text" 
+                  placeholder="請輸入缺失詳細說明 (必填)"
                   required
                   value={categoryRemarks[item.id] || ''}
                   onChange={(e) => setCategoryRemarks({ ...categoryRemarks, [item.id]: e.target.value })}
                   className="w-full border-red-300 bg-red-50 focus:ring-red-500 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 border transition-colors"
                 />
-                {renderInlineBeforeAfterBox(item.id, item.label)}
+                {renderDefectPhotoPair(item.id)}
               </div>
             )}
           </div>
@@ -1033,123 +658,27 @@ export const AuditApp = () => {
   );
 
   const renderCategory = (index: number, title: string, items: string[]) => {
-    if (auditMode === 'B' && !selectedTopics.includes(index)) return null;
-
-    const moduleKeys = items.map((_, i) => `${index}-${i + 1}`);
-    const checkedCount = moduleKeys.filter(k => Boolean(categoryChecks[k])).length;
-
-    const handleMarkModulePass = () => {
-      const next = { ...categoryChecks };
-      moduleKeys.forEach(k => {
-        // 若尚未勾選，或原本不是缺失/待改善，一鍵設為合格
-        if (!next[k] || next[k] === '合格') {
-          next[k] = '合格';
-        }
-      });
-      setCategoryChecks(next);
-    };
-
+    if (auditMode === 'B' && !selectedTopics.includes(index)) return null; 
+    
     return (
       <div className="bg-white rounded-xl shadow-sm p-6 mb-6 border border-gray-100">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-0.5 rounded-lg text-xs font-bold">
-              大項 {index}
-            </span>
-            <span>{title}</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-              checkedCount === items.length ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'
-            }`}>
-              {checkedCount}/{items.length}
-            </span>
-          </h3>
-          <button
-            type="button"
-            onClick={handleMarkModulePass}
-            className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg font-bold hover:bg-emerald-100 transition-colors flex items-center gap-1"
-          >
-            <CheckCheck size={13} /> 本大項未填項一鍵合格
-          </button>
-        </div>
-
+        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-sm">大項 {index}</span>
+          {title}
+        </h3>
         {items.map((item, i) => {
-          const key = `${index}-${i + 1}`;
-          const shortTitle = item.split('：')[0] || item;
+          const key = `${index}-${i+1}`;
           return (
             <div key={key} className="mb-4 border-b pb-4 last:border-b-0">
-              <p className="text-sm text-gray-700 font-medium mb-3 leading-relaxed">{index}-{i + 1}. {item}</p>
+              <p className="text-sm text-gray-700 font-medium mb-3 leading-relaxed">{index}-{i+1}. {item}</p>
               <div className="grid grid-cols-4 gap-2">
                 {['N/A', '合格', '待改善', '缺失'].map(opt => (
                   <button
                     key={opt}
-                    type="button"
                     onClick={() => setCategoryChecks({ ...categoryChecks, [key]: opt })}
-                    className={`py-2.5 rounded-lg text-sm font-semibold border transition-all ${
-                      categoryChecks[key] === opt
-                        ? (opt === '缺失'
-                            ? 'bg-red-600 text-white border-red-600 shadow-xs'
-                            : opt === '待改善'
-                              ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
-                              : opt === '合格'
-                                ? 'bg-green-600 text-white border-green-600 shadow-xs'
-                                : 'bg-gray-600 text-white border-gray-600')
-                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                    }`}
-                  >
-                    {opt}
-                  </button>
-                ))}
-              </div>
-              {(categoryChecks[key] === '缺失' || categoryChecks[key] === '待改善') && (
-                <div className="mt-3 animate-in slide-in-from-top-1 fade-in duration-200">
-                  <textarea
-                    placeholder={`請輸入${categoryChecks[key]}詳細說明與改善要求 (必填)`}
-                    required
-                    rows={2}
-                    value={categoryRemarks[key] || ''}
-                    onChange={(e) => setCategoryRemarks({ ...categoryRemarks, [key]: e.target.value })}
-                    className="w-full border-red-300 bg-red-50 focus:ring-red-500 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 border transition-colors resize-none"
-                  />
-                  {renderInlineBeforeAfterBox(key, `${key} ${shortTitle}`)}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {(customItems[index] || []).map((item, i) => {
-          const key = item;
-          return (
-            <div key={key} className="mb-4 border-b pb-4 last:border-b-0">
-              <div className="flex justify-between items-center mb-3">
-                <p className="text-sm text-gray-700 font-medium leading-relaxed">⭐ 自訂: {item}</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCustomItems(prev => ({ ...prev, [index]: prev[index].filter((_, idx) => idx !== i) }));
-                    const newChecks = { ...categoryChecks };
-                    delete newChecks[key];
-                    setCategoryChecks(newChecks);
-                  }}
-                  className="text-gray-400 hover:text-red-500"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                {['N/A', '合格', '待改善', '缺失'].map(opt => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setCategoryChecks({ ...categoryChecks, [key]: opt })}
-                    className={`py-2.5 rounded-lg text-sm font-semibold border transition-all ${
-                      categoryChecks[key] === opt
-                        ? (opt === '缺失'
-                            ? 'bg-red-600 text-white border-red-600'
-                            : opt === '待改善'
-                              ? 'bg-amber-500 text-white border-amber-500'
-                              : opt === '合格'
-                                ? 'bg-green-600 text-white border-green-600'
-                                : 'bg-gray-600 text-white border-gray-600')
+                    className={`py-2 rounded-lg text-sm font-semibold border transition-all ${
+                      categoryChecks[key] === opt 
+                        ? (opt === '缺失' || opt === '待改善' ? 'bg-red-600 text-white border-red-600' : opt === '合格' ? 'bg-green-600 text-white border-green-600' : 'bg-gray-600 text-white border-gray-600')
                         : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
                     }`}
                   >
@@ -1167,35 +696,75 @@ export const AuditApp = () => {
                     onChange={(e) => setCategoryRemarks({ ...categoryRemarks, [key]: e.target.value })}
                     className="w-full border-red-300 bg-red-50 focus:ring-red-500 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 border transition-colors resize-none"
                   />
-                  {renderInlineBeforeAfterBox(key, `自訂：${item}`)}
+                  {renderDefectPhotoPair(key)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {(customItems[index] || []).map((item, i) => {
+          const key = item;
+          return (
+            <div key={key} className="mb-4 border-b pb-4 last:border-b-0">
+              <div className="flex justify-between items-center mb-3">
+                <p className="text-sm text-gray-700 font-medium leading-relaxed">⭐ 自訂: {item}</p>
+                <button 
+                  onClick={() => {
+                    setCustomItems(prev => ({ ...prev, [index]: prev[index].filter((_, idx) => idx !== i) }));
+                    const newChecks = { ...categoryChecks };
+                    delete newChecks[key];
+                    setCategoryChecks(newChecks);
+                  }}
+                  className="text-gray-400 hover:text-red-500"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {['N/A', '合格', '待改善', '缺失'].map(opt => (
+                  <button
+                    key={opt}
+                    onClick={() => setCategoryChecks({ ...categoryChecks, [key]: opt })}
+                    className={`py-2 rounded-lg text-sm font-semibold border transition-all ${
+                      categoryChecks[key] === opt 
+                        ? (opt === '缺失' || opt === '待改善' ? 'bg-red-600 text-white border-red-600' : opt === '合格' ? 'bg-green-600 text-white border-green-600' : 'bg-gray-600 text-white border-gray-600')
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              {(categoryChecks[key] === '缺失' || categoryChecks[key] === '待改善') && (
+                <div className="mt-3 animate-in slide-in-from-top-1 fade-in duration-200">
+                  <textarea
+                    placeholder="請輸入缺失/待改善詳細說明 (必填)"
+                    required
+                    rows={2}
+                    value={categoryRemarks[key] || ''}
+                    onChange={(e) => setCategoryRemarks({ ...categoryRemarks, [key]: e.target.value })}
+                    className="w-full border-red-300 bg-red-50 focus:ring-red-500 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 border transition-colors resize-none"
+                  />
+                  {renderDefectPhotoPair(key)}
                 </div>
               )}
             </div>
           );
         })}
         <div className="mt-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-          <p className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1">➕ 自訂新增檢核項目 <Mic size={12} /></p>
+          <p className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1">➕ 自訂新增項目 <Mic size={12}/></p>
           <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="輸入自訂檢核項目名稱，按 Enter 新增..."
+            <input 
+              type="text" 
+              placeholder="輸入自訂缺失或狀況..." 
               value={customInputValues[index] || ''}
               onChange={(e) => setCustomInputValues(prev => ({ ...prev, [index]: e.target.value }))}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleAddCustomItem(index);
-                }
+                if (e.key === 'Enter') handleAddCustomItem(index);
               }}
-              className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              className="flex-1 border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
             />
-            <button
-              type="button"
-              onClick={() => handleAddCustomItem(index)}
-              className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors shrink-0"
-            >
-              新增
-            </button>
+            <button onClick={() => handleAddCustomItem(index)} className="bg-white border p-2 rounded-lg text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"><Mic size={18} /></button>
           </div>
         </div>
       </div>
@@ -1204,16 +773,11 @@ export const AuditApp = () => {
 
   const renderStep3 = () => (
     <section className="animate-in fade-in slide-in-from-right-8 duration-500">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">3</span>
-          <h2 className="text-xl font-bold text-gray-800">六大模組檢核</h2>
-        </div>
-        <span className="text-xs text-gray-500">
-          💡 點選「缺失 / 待改善」即可直接拍攝改善前/改善後照片
-        </span>
+      <div className="flex items-center gap-2 mb-4">
+        <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">3</span>
+        <h2 className="text-xl font-bold text-gray-800">六大模組檢核</h2>
       </div>
-
+      
       {renderCategory(1, '行銷與檔期執行', [
         '檔期 POP 與宣傳物：海報、端架 POP、價格標卡齊全無破損。',
         '主題陳列與佈置 (VMD)：端架與焦點區依總部指引陳列，商品量感充足。',
@@ -1252,97 +816,200 @@ export const AuditApp = () => {
     </section>
   );
 
-  const renderStep4 = () => (
-    <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-500">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3 flex items-center gap-2">
-        <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">4</span>
-        現場拍照對比 (Before & After) 與交辦
-      </h2>
+  const renderStep4 = () => {
+    const activePhotoPairs = Array.isArray(photoPairs) && photoPairs.length > 0
+      ? photoPairs
+      : [{ beforeUrl: '', afterUrl: '' }];
 
-      <div className="space-y-8">
-        {/* 優先展示：現場拍照存證 (改善前 Before & 改善後 After) */}
-        {renderBeforeAfterGallerySection()}
-
-        <div className="h-px bg-gray-100" />
-
-        {/* 自動轉入之缺失提示 */}
-        {(inspectionStats.coreDefectCount + inspectionStats.catDefectCount + inspectionStats.catImproveCount) > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-800 leading-relaxed">
-            <p className="font-bold text-sm mb-1 flex items-center gap-1.5">
-              <ClipboardList size={16} className="text-blue-600" />
-              系統已自動將前步驟勾選的 {inspectionStats.coreDefectCount + inspectionStats.catDefectCount + inspectionStats.catImproveCount} 項缺失/待改善納入 PDCA 追蹤！
+    return (
+      <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-500">
+        <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3 flex items-center gap-2">
+          <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">4</span>
+          管理閉環與新交辦
+        </h2>
+        
+        <div className="space-y-8">
+          {/* 本次新增交辦 */}
+          <div>
+            <p className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <CheckCircle2 size={18} className="text-blue-500" /> 本次新增交辦事項 (Action Items)
             </p>
-            <p className="text-blue-600">
-              送出表單後將自動為該門市建立待改善追蹤項目。若您有其他額外交辦事項，可於下方補充：
-            </p>
-          </div>
-        )}
-
-        {/* 本次新增交辦 */}
-        <div>
-          <p className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
-            <CheckCircle2 size={18} className="text-blue-500" /> 本次新增交辦事項 (Action Items)
-          </p>
-          <div className="space-y-3">
-            {newActionItems.map((item, idx) => (
-              <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col gap-3 relative">
-                {newActionItems.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => setNewActionItems(newActionItems.filter((_, i) => i !== idx))}
-                    className="absolute top-3 right-3 text-gray-400 hover:text-red-500"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
-                <input
-                  type="text"
-                  placeholder="輸入缺失事項或具體改善建議..."
-                  value={item.desc}
-                  onChange={(e) => {
-                    const newArr = [...newActionItems];
-                    newArr[idx].desc = e.target.value;
-                    setNewActionItems(newArr);
-                  }}
-                  className="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                />
-                <div className="flex gap-3">
-                  <input
-                    type="text"
-                    placeholder="負責人 (預設：店長)"
-                    value={item.assignee}
+            <div className="space-y-3">
+              {newActionItems.map((item, idx) => (
+                <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col gap-3 relative">
+                  {newActionItems.length > 1 && (
+                    <button onClick={() => setNewActionItems(newActionItems.filter((_, i) => i !== idx))} className="absolute top-3 right-3 text-gray-400 hover:text-red-500">
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                  <input 
+                    type="text" placeholder="輸入缺失事項或改善建議..." 
+                    value={item.desc}
                     onChange={(e) => {
                       const newArr = [...newActionItems];
-                      newArr[idx].assignee = e.target.value;
+                      newArr[idx].desc = e.target.value;
                       setNewActionItems(newArr);
                     }}
-                    className="w-1/2 border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    className="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
                   />
-                  <input
-                    type="date"
-                    value={item.dueDate}
-                    onChange={(e) => {
-                      const newArr = [...newActionItems];
-                      newArr[idx].dueDate = e.target.value;
-                      setNewActionItems(newArr);
-                    }}
-                    className="w-1/2 border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-gray-600 bg-white"
-                  />
+                  <div className="flex gap-3">
+                    <input 
+                      type="text" placeholder="負責人" 
+                      value={item.assignee}
+                      onChange={(e) => {
+                        const newArr = [...newActionItems];
+                        newArr[idx].assignee = e.target.value;
+                        setNewActionItems(newArr);
+                      }}
+                      className="w-1/2 border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
+                    />
+                    <input 
+                      type="date" 
+                      value={item.dueDate}
+                      onChange={(e) => {
+                        const newArr = [...newActionItems];
+                        newArr[idx].dueDate = e.target.value;
+                        setNewActionItems(newArr);
+                      }}
+                      className="w-1/2 border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-gray-600" 
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => setNewActionItems([...newActionItems, { desc: '', assignee: '', dueDate: '' }])}
-              className="text-blue-600 text-sm font-bold mt-2 w-full py-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-            >
-              + 新增一筆交辦
-            </button>
+              ))}
+              <button 
+                onClick={() => setNewActionItems([...newActionItems, { desc: '', assignee: '', dueDate: '' }])}
+                className="text-blue-600 text-sm font-bold mt-2 w-full py-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                + 新增一筆交辦
+              </button>
+            </div>
+          </div>
+
+          <div className="h-px bg-gray-100" />
+
+          {/* 照片上傳 (Before & After) */}
+          <div>
+            <p className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <Camera size={18} className="text-purple-500" /> 現場拍照存證 (Before & After)
+            </p>
+            <div className="space-y-4">
+              {activePhotoPairs.map((pair, idx) => (
+                <div key={idx} className="bg-white p-4 rounded-xl border border-gray-200 relative shadow-sm">
+                  {activePhotoPairs.length > 1 && (
+                    <button onClick={() => setPhotoPairs(activePhotoPairs.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-gray-400 hover:text-red-500 z-10 bg-white rounded-full p-1 shadow-sm">
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Before */}
+                    <div className="relative">
+                      <p className="text-xs font-bold text-gray-500 mb-2 text-center">改善前 (Before)</p>
+                      {pair.beforeUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newPairs = [...activePhotoPairs];
+                            newPairs[idx] = { ...newPairs[idx], beforeUrl: '' };
+                            setPhotoPairs(newPairs);
+                          }}
+                          className="absolute top-8 right-2 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
+                          title="移除重拍"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                      <label className="w-full aspect-square border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-gray-50">
+                        {pair.beforeUrl ? (
+                          <img src={pair.beforeUrl} alt="Before" className="w-full h-full object-cover" />
+                        ) : (
+                          <>
+                            <Camera size={24} className="mb-1" />
+                            <span className="text-xs font-medium">拍照 / 上傳</span>
+                          </>
+                        )}
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                          onChange={async (e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              try {
+                                const base64Url = await compressImageToBase64(e.target.files[0]);
+                                const newPairs = [...activePhotoPairs];
+                                newPairs[idx] = { ...newPairs[idx], beforeUrl: base64Url };
+                                setPhotoPairs(newPairs);
+                              } catch (err) {
+                                console.error('照片讀取失敗', err);
+                                alert('照片讀取失敗，請重新拍攝');
+                              }
+                            }
+                          }} 
+                        />
+                      </label>
+                    </div>
+                    {/* After */}
+                    <div className="relative">
+                      <p className="text-xs font-bold text-gray-500 mb-2 text-center">改善後 (After)</p>
+                      {pair.afterUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newPairs = [...activePhotoPairs];
+                            newPairs[idx] = { ...newPairs[idx], afterUrl: '' };
+                            setPhotoPairs(newPairs);
+                          }}
+                          className="absolute top-8 right-2 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
+                          title="移除重拍"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                      <label className="w-full aspect-square border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-gray-50">
+                        {pair.afterUrl ? (
+                          <img src={pair.afterUrl} alt="After" className="w-full h-full object-cover" />
+                        ) : (
+                          <>
+                            <Camera size={24} className="mb-1" />
+                            <span className="text-xs font-medium">拍照 / 上傳</span>
+                          </>
+                        )}
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                          onChange={async (e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              try {
+                                const base64Url = await compressImageToBase64(e.target.files[0]);
+                                const newPairs = [...activePhotoPairs];
+                                newPairs[idx] = { ...newPairs[idx], afterUrl: base64Url };
+                                setPhotoPairs(newPairs);
+                              } catch (err) {
+                                console.error('照片讀取失敗', err);
+                                alert('照片讀取失敗，請重新拍攝');
+                              }
+                            }
+                          }} 
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <button 
+                onClick={() => setPhotoPairs([...activePhotoPairs, { beforeUrl: '', afterUrl: '' }])}
+                className="text-purple-600 text-sm font-bold mt-2 w-full py-3 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors border border-purple-100"
+              >
+                + 新增一組對比照片
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    </section>
-  );
+      </section>
+    );
+  };
 
   const renderStep5 = () => (
     <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-500">
@@ -1350,113 +1017,33 @@ export const AuditApp = () => {
         <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">5</span>
         總結與簽名
       </h2>
-
+      
       <div className="space-y-6">
-        {/* 本次巡店結果預覽摘要 */}
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-            📊 本次巡店檢核統計預覽
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-500">巡視門市</div>
-              <div className="text-sm font-bold text-slate-900 mt-1 truncate">{storeName || '未選擇'}</div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-500">合格細項</div>
-              <div className="text-lg font-extrabold text-emerald-600 mt-0.5">{inspectionStats.catPassCount} 項</div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-500">缺失 / 待改善</div>
-              <div className="text-lg font-extrabold text-rose-600 mt-0.5">
-                {inspectionStats.coreDefectCount + inspectionStats.catDefectCount + inspectionStats.catImproveCount} 項
-              </div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-500">轉入 PDCA 追蹤</div>
-              <div className="text-lg font-extrabold text-blue-600 mt-0.5">{inspectionStats.totalAutoPdca} 筆</div>
-            </div>
-          </div>
-        </div>
-
-        {/* 優良表現與門市亮點分享 */}
-        <div>
-          <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-1.5">
-            <Sparkles size={16} className="text-amber-500" />
-            門市優良表現 / 好人好事表揚 (選填)
-          </label>
-          <textarea
-            rows={2}
-            placeholder="例如：店員主動協助顧客搬運重物、陳列排面極具巧思、美容師服務獲顧客稱讚..."
-            value={highlightDescription}
-            onChange={(e) => setHighlightDescription(e.target.value)}
-            className="w-full border border-amber-200 bg-amber-50/40 focus:bg-white focus:border-amber-400 rounded-xl px-4 py-3 text-sm outline-none transition-all resize-none"
-          />
-        </div>
-
         {/* 綜合評價 */}
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-bold text-gray-700">
-              巡店綜合評價 <span className="text-red-500">*</span>
-            </p>
-            <span className="text-xs text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full font-semibold">
-              系統建議評級：{inspectionStats.recommendedRating}
-            </span>
-          </div>
+          <p className="text-sm font-bold text-gray-700 mb-3">巡店綜合評價 <span className="text-red-500">*</span></p>
           <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => setOverallRating('良好')}
-              className={`flex-1 py-3.5 rounded-xl text-sm font-bold border-2 transition-all ${
-                overallRating === '良好'
-                  ? 'bg-green-600 text-white border-green-600 shadow-md transform scale-[1.02]'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-green-200'
-              }`}
-            >
-              🟢 良好
-            </button>
-            <button
-              type="button"
-              onClick={() => setOverallRating('需追蹤')}
-              className={`flex-1 py-3.5 rounded-xl text-sm font-bold border-2 transition-all ${
-                overallRating === '需追蹤'
-                  ? 'bg-yellow-500 text-white border-yellow-500 shadow-md transform scale-[1.02]'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-yellow-200'
-              }`}
-            >
-              🟡 需追蹤
-            </button>
-            <button
-              type="button"
-              onClick={() => setOverallRating('需重點輔導')}
-              className={`flex-1 py-3.5 rounded-xl text-sm font-bold border-2 transition-all ${
-                overallRating === '需重點輔導'
-                  ? 'bg-red-600 text-white border-red-600 shadow-md transform scale-[1.02]'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-red-200'
-              }`}
-            >
-              🔴 需重點輔導
-            </button>
+            <button onClick={() => setOverallRating('良好')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '良好' ? 'bg-green-600 text-white border-green-600 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-green-200'}`}>🟢 良好</button>
+            <button onClick={() => setOverallRating('需追蹤')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '需追蹤' ? 'bg-yellow-500 text-white border-yellow-500 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-yellow-200'}`}>🟡 需追蹤</button>
+            <button onClick={() => setOverallRating('需重點輔導')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '需重點輔導' ? 'bg-red-600 text-white border-red-600 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-red-200'}`}>🔴 需重點輔導</button>
           </div>
         </div>
 
         {/* 區主管簽名 */}
         <div>
           <div className="flex justify-between items-end mb-3">
-            <p className="text-sm font-bold text-gray-700">門市端 / 區主管簽名確認</p>
-            <button
-              type="button"
-              onClick={() => sigCanvas.current?.clear()}
+            <p className="text-sm font-bold text-gray-700">門市端 / 區主管簽名</p>
+            <button 
+              onClick={() => sigCanvas.current?.clear()} 
               className="text-xs text-blue-600 font-semibold bg-blue-50 px-3 py-1 rounded-full hover:bg-blue-100"
             >
               清除重簽
             </button>
           </div>
           <div className="border-2 border-dashed border-gray-300 rounded-xl bg-gray-50 h-48 relative overflow-hidden">
-            <SignatureCanvas
+            <SignatureCanvas 
               ref={sigCanvas}
-              canvasProps={{ className: 'w-full h-full cursor-crosshair' }}
+              canvasProps={{className: 'w-full h-full cursor-crosshair'}} 
             />
           </div>
         </div>
@@ -1481,15 +1068,14 @@ export const AuditApp = () => {
           background: 'linear-gradient(90deg, #3b82f6, #6366f1, #14b8a6)',
         }} />
         <button
-          onClick={() => navigate('/dashboard')}
-          title="返回戰情牆"
+          onClick={() => navigate(user?.role === 'admin' ? '/dashboard' : '/')}
           className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-gray-700"
         >
           <ArrowLeft size={18} />
         </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-base font-bold text-gray-900 leading-tight truncate">
-            現場巡店作業 {storeName ? `· ${storeName}` : ''}
+        <div className="flex-1">
+          <h1 className="text-base font-bold text-gray-900 leading-tight">
+            現場巡店作業
           </h1>
           <div className="text-xs text-gray-500 tracking-wider">
             {mgrName} · {new Date().toLocaleDateString('zh-TW')}
@@ -1578,50 +1164,21 @@ export const AuditApp = () => {
           </div>
         )}
 
-        {/* Interactive Stepper Progress */}
-        <div className="mb-6">
-          <div className="grid grid-cols-5 gap-1.5 mb-2">
-            {[
-              { step: 1, label: '1. 基本資訊' },
-              { step: 2, label: '2. 必看核心' },
-              { step: 3, label: '3. 六大模組', disabled: auditMode === 'A' },
-              { step: 4, label: '4. 拍照/交辦' },
-              { step: 5, label: '5. 總結簽名' }
-            ].map(s => {
-              const isCurrent = currentStep === s.step;
-              const isDone = currentStep > s.step;
-              return (
-                <button
-                  key={s.step}
-                  type="button"
-                  disabled={s.disabled}
-                  onClick={() => {
-                    if (s.disabled) return;
-                    if (s.step > 1 && !storeName) {
-                      alert('請先選擇巡店門市');
-                      return;
-                    }
-                    setCurrentStep(s.step);
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                  className={`py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all truncate border ${
-                    s.disabled
-                      ? 'bg-gray-100 text-gray-300 border-gray-100 cursor-not-allowed line-through'
-                      : isCurrent
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                        : isDone
-                          ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                          : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
+        {/* Stepper Progress */}
+        <div className="mb-8">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Step {currentStep} of {totalSteps}</span>
+            <span className="text-xs font-semibold text-gray-500">
+              {currentStep === 1 && '基本資訊'}
+              {currentStep === 2 && '必看核心'}
+              {currentStep === 3 && '模組細項'}
+              {currentStep === 4 && '追蹤交辦'}
+              {currentStep === 5 && '總結簽名'}
+            </span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-1.5">
-            <div
-              className="bg-blue-600 h-1.5 rounded-full transition-all duration-500 ease-out"
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div 
+              className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out" 
               style={{ width: `${(currentStep / totalSteps) * 100}%` }}
             />
           </div>
@@ -1635,21 +1192,19 @@ export const AuditApp = () => {
         {currentStep === 5 && renderStep5()}
 
         {/* Navigation Buttons */}
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-gray-200 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
           <div className="md:max-w-4xl max-w-2xl mx-auto flex gap-3">
             {currentStep > 1 && (
               <button
-                type="button"
                 onClick={handlePrev}
                 className="flex-1 py-3 px-4 bg-gray-100 text-gray-700 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors"
               >
                 <ArrowLeft size={16} /> 上一步
               </button>
             )}
-
+            
             {currentStep < totalSteps ? (
               <button
-                type="button"
                 onClick={handleNext}
                 className="flex-[2] py-3 px-4 bg-blue-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-md shadow-blue-500/30"
               >
@@ -1657,7 +1212,6 @@ export const AuditApp = () => {
               </button>
             ) : (
               <button
-                type="button"
                 onClick={submitForm}
                 disabled={submitting}
                 className={`flex-[2] py-3 px-4 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg ${
@@ -1680,6 +1234,7 @@ export const AuditApp = () => {
             )}
           </div>
         </div>
+
       </div>
     </div>
   );

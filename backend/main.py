@@ -150,8 +150,8 @@ def init_db():
                 cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin';")
                 
                 # 自動清理測試殘留資料 (例如文心秀泰)
-                cur.execute("DELETE FROM visit_records WHERE data->>'storeName' LIKE '%文心秀泰%';")
-                cur.execute("DELETE FROM action_items WHERE store_name LIKE '%文心秀泰%' OR data->>'storeName' LIKE '%文心秀泰%';")
+                # (保留所有歷史巡店與待辦資料)
+                pass
 
                 # 建立異動紀錄表
                 cur.execute("""
@@ -421,7 +421,7 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
             # 建立基本的查詢語句
             query = "SELECT data FROM visit_records"
             params = []
-            conditions = ["(data->>'storeName' NOT LIKE '%測試%' AND data->>'storeName' NOT LIKE '%文心秀泰%')"]
+            conditions = []
             
             # 加入時間區間過濾
             if time_range == "all":
@@ -1034,8 +1034,8 @@ def clean_db_2026():
             """, (Json(new_managers),))
 
             # 清除測試假資料 (例如文心秀泰)
-            cur.execute("DELETE FROM visit_records WHERE data->>'storeName' LIKE '%文心秀泰%';")
-            cur.execute("DELETE FROM action_items WHERE store_name LIKE '%文心秀泰%' OR data->>'storeName' LIKE '%文心秀泰%';")
+            # (保留所有歷史巡店與待辦資料)
+            pass
             conn.commit()
             
             return {
@@ -1122,7 +1122,7 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             # 2. Get Activities
             query = "SELECT data FROM visit_records"
             params = []
-            conditions = ["(data->>'storeName' NOT LIKE '%測試%' AND data->>'storeName' NOT LIKE '%文心秀泰%')"]
+            conditions = []
             
             if time_range == "all":
                 pass
