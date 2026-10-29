@@ -55,10 +55,12 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        height: '60px',
+        flexWrap: 'wrap',
+        gap: '10px',
+        minHeight: '60px',
         maxWidth: '1440px',
         margin: '0 auto',
-        padding: '0 24px',
+        padding: '10px 24px',
       }}>
         {/* Left: Brand */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -89,7 +91,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
         </div>
 
         {/* Right: Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           {/* Time Range Select */}
           <div style={{ position: 'relative' }}>
             <select

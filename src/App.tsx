@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Login } from './pages/Login';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const AuditApp = lazy(() => import('./pages/AuditApp').then(m => ({ default: m.AuditApp })));
@@ -16,6 +17,18 @@ const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode,
   
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     return <Navigate to="/" replace />;
+  }
+
+  // 登入後若標記為必須修改密碼，強制攔截並彈出修改密碼視窗，無法略過
+  if (user.role === 'manager' && user.must_change_password) {
+    return (
+      <div className="relative">
+        <div className="pointer-events-none select-none blur-xs">
+          {children}
+        </div>
+        <ChangePasswordModal open={true} forceMode={true} onClose={() => {}} />
+      </div>
+    );
   }
   
   return <>{children}</>;

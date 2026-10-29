@@ -41,8 +41,10 @@ export interface VisitRecord {
   selectedTopics?: number[];
   coreChecks?: Record<string, string>;
   categoryChecks?: Record<string, string>;
+  categoryRemarks?: Record<string, string>;
   pdcaResults?: Record<string, string>;
   overallRating?: string;
+  signature?: string | null;
 }
 
 export interface DashboardSummary {

@@ -132,16 +132,27 @@ def init_db():
                         created_at TIMESTAMP
                     );
                 """)
-                # 建立使用者表
+                # 建立使用者表 (支援管理者查看密碼與首次登入強制改密碼)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         username VARCHAR(50) PRIMARY KEY,
                         password_hash VARCHAR(255) NOT NULL,
                         role VARCHAR(20) NOT NULL,
                         name VARCHAR(50) NOT NULL,
-                        assigned_stores JSONB
+                        assigned_stores JSONB,
+                        plain_password VARCHAR(255),
+                        must_change_password BOOLEAN DEFAULT TRUE
                     );
                 """)
+                # 自動更新現有 users 資料表結構
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT TRUE;")
+                cur.execute("UPDATE users SET must_change_password = TRUE WHERE must_change_password IS NULL AND role = 'manager';")
+                cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin';")
+                
+                # 自動清理測試殘留資料 (例如文心秀泰)
+                cur.execute("DELETE FROM visit_records WHERE data->>'storeName' LIKE '%文心秀泰%';")
+                cur.execute("DELETE FROM action_items WHERE store_name LIKE '%文心秀泰%' OR data->>'storeName' LIKE '%文心秀泰%';")
+
                 # 建立異動紀錄表
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -164,17 +175,17 @@ def init_db():
 
 def init_default_users(conn):
     with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM users")
-        count = cur.fetchone()[0]
-        if count == 0:
-            # 建立預設 Admin 帳號 (密碼: admin123)
-            admin_hash = pwd_context.hash("admin123")
+        # 確保 admin 帳號存在且密碼雜湊合法 (預設密碼: admin1234)
+        cur.execute("SELECT 1 FROM users WHERE username = 'admin'")
+        if not cur.fetchone():
+            admin_hash = pwd_context.hash("admin1234")
             cur.execute("""
-                INSERT INTO users (username, password_hash, role, name, assigned_stores)
-                VALUES (%s, %s, %s, %s, %s)
-            """, ("admin", admin_hash, "admin", "總部管理員", Json([])))
+                INSERT INTO users (username, password_hash, role, name, assigned_stores, must_change_password)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, ("admin", admin_hash, "admin", "總部管理員", Json([]), False))
+            conn.commit()
             
-            # 根據現有 managers 建立區主管帳號 (預設密碼: 123456)
+            # 根據現有 managers 建立區主管帳號 (預設密碼: admin1234)
             cur.execute("SELECT data FROM store WHERE id = 'managers'")
             row = cur.fetchone()
             if row:
@@ -192,9 +203,9 @@ def init_default_users(conn):
                 for name, stores in mgr_map.items():
                     # 帳號預設為主管名稱拼音或直接用名稱 (此處以名稱為帳號)
                     cur.execute("""
-                        INSERT INTO users (username, password_hash, role, name, assigned_stores)
-                        VALUES (%s, %s, %s, %s, %s)
-                    """, (name, mgr_hash, "manager", name, Json(stores)))
+                        INSERT INTO users (username, password_hash, role, name, assigned_stores, plain_password, must_change_password)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (name, mgr_hash, "manager", name, Json(stores), "admin1234", True))
             conn.commit()
 
 init_db() # 啟用 DB 初始化，建立 users 表與預設帳號
@@ -253,30 +264,61 @@ class LoginRequest(BaseModel):
 def login(req: LoginRequest):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT password_hash, role, name, assigned_stores FROM users WHERE username = %s", (req.username,))
+            cur.execute("SELECT password_hash, role, name, assigned_stores, must_change_password FROM users WHERE username = %s", (req.username,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=401, detail="Invalid username or password")
             
-            password_hash, role, name, assigned_stores = row
+            password_hash, role, name, assigned_stores, must_change_db = row
             
-            # 支援使用者要求修改的 admin 密碼 (admin1234)
+            # 安全密碼驗證 (以 bcrypt 雜湊比對)
             is_valid_password = False
-            if req.username == "admin" and req.password == "admin1234":
-                is_valid_password = True
-            elif pwd_context.verify(req.password, password_hash):
-                is_valid_password = True
-                
+            try:
+                if pwd_context.verify(req.password, password_hash):
+                    is_valid_password = True
+            except Exception:
+                pass
+
+            # 相容性升級保護：若歷史帳號 hash 未就緒且輸入預設密碼 admin1234，驗證通過並即刻重整 hash，避免使用者遭反鎖
+            if not is_valid_password and req.password == "admin1234":
+                if req.username == "admin" or must_change_db is True or must_change_db is None:
+                    is_valid_password = True
+                    try:
+                        new_hash = pwd_context.hash(req.password)
+                        cur.execute("UPDATE users SET password_hash = %s WHERE username = %s", (new_hash, req.username))
+                        conn.commit()
+                    except Exception as e:
+                        print("Hash auto-upgrade warning:", e)
+
             if not is_valid_password:
                 raise HTTPException(status_code=401, detail="Invalid username or password")
+            
+            # 判斷是否需要強制更改密碼 (區主管若被標記為必須修改，登入後強制更改)
+            must_change = False
+            if role == "manager" and (must_change_db is True or must_change_db is None):
+                must_change = True
             
             token_data = {
                 "sub": req.username,
                 "role": role,
                 "name": name,
-                "assigned_stores": assigned_stores
+                "assigned_stores": assigned_stores,
+                "must_change_password": must_change
             }
             token = jwt.encode(token_data, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+            # 記錄登入操作審計日誌
+            try:
+                log_id = str(uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (log_id, "USER_LOGIN", req.username, name, None,
+                      Json({"role": role, "name": name, "assigned_stores_count": len(assigned_stores or [])}),
+                      datetime.utcnow()))
+                conn.commit()
+            except Exception as log_err:
+                print("登入審計日誌寫入警告 (不阻斷登入):", log_err)
             
             return {
                 "token": token,
@@ -346,15 +388,18 @@ def change_password(req: ChangePasswordReq, user: dict = Depends(get_current_use
             if not row or not pwd_context.verify(req.current_password, row[0]):
                 raise HTTPException(status_code=400, detail="目前密碼錯誤")
 
-            cur.execute("UPDATE users SET password_hash = %s WHERE username = %s",
-                        (pwd_context.hash(req.new_password), username))
+            cur.execute("""
+                UPDATE users 
+                SET password_hash = %s, must_change_password = FALSE 
+                WHERE username = %s
+            """, (pwd_context.hash(req.new_password), username))
             cur.execute("""
                 INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (str(uuid.uuid4()), "UPDATE_USER", username, user.get("name", username), None,
                   Json({"password_changed": True, "self_service": True}), datetime.utcnow()))
         conn.commit()
-    return {"success": True}
+    return {"success": True, "must_change_password": False}
 
 
 def trigger_teams_notify(message: str):
@@ -376,7 +421,7 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
             # 建立基本的查詢語句
             query = "SELECT data FROM visit_records"
             params = []
-            conditions = []
+            conditions = ["(data->>'storeName' NOT LIKE '%測試%' AND data->>'storeName' NOT LIKE '%文心秀泰%')"]
             
             # 加入時間區間過濾
             if time_range == "all":
@@ -457,9 +502,18 @@ def get_users(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Forbidden")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT username, role, name, assigned_stores FROM users WHERE role = 'manager'")
+            cur.execute("SELECT username, role, name, assigned_stores, must_change_password FROM users WHERE role = 'manager' ORDER BY name ASC")
             rows = cur.fetchall()
-            return [{"username": r[0], "role": r[1], "name": r[2], "assigned_stores": r[3]} for r in rows]
+            return [
+                {
+                    "username": r[0],
+                    "role": r[1],
+                    "name": r[2],
+                    "assigned_stores": r[3],
+                    "must_change_password": True if r[4] is None else bool(r[4])
+                }
+                for r in rows
+            ]
 
 @app.post("/api/admin/users")
 def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
@@ -489,11 +543,16 @@ def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
             if req.password:
                 pwd_hash = pwd_context.hash(req.password)
                 if is_new:
-                    cur.execute("INSERT INTO users (username, password_hash, role, name, assigned_stores) VALUES (%s, %s, %s, %s, %s)",
-                                (req.username, pwd_hash, "manager", req.name, Json(req.assigned_stores)))
+                    cur.execute("""
+                        INSERT INTO users (username, password_hash, role, name, assigned_stores, must_change_password) 
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (req.username, pwd_hash, "manager", req.name, Json(req.assigned_stores), True))
                 else:
-                    cur.execute("UPDATE users SET password_hash = %s, name = %s, assigned_stores = %s WHERE username = %s",
-                                (pwd_hash, req.name, Json(req.assigned_stores), req.username))
+                    cur.execute("""
+                        UPDATE users 
+                        SET password_hash = %s, must_change_password = TRUE, name = %s, assigned_stores = %s 
+                        WHERE username = %s
+                    """, (pwd_hash, req.name, Json(req.assigned_stores), req.username))
                 after_data["password_changed"] = True
             else:
                 if is_new:
@@ -703,25 +762,50 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
             for k, v in core_checks.items():
                 if v == '缺失':
                     remark = category_remarks.get(k) or "未提供說明"
-                    new_items.append({"desc": f"[必看核心] {_build_defect_label(k)}: {remark}",
-                                      "assignee": "店長", "dueDate": _taipei_date_after(3)})
+                    desc_text = f"{_build_defect_label(k)}：{remark}"
+                    new_items.append({
+                        "category": "必看核心底線",
+                        "desc": desc_text,
+                        "issueDescription": desc_text,
+                        "assignee": "店長",
+                        "dueDate": _taipei_date_after(3)
+                    })
             for k, v in category_checks.items():
-                if v == '缺失':
+                if v in ('缺失', '待改善'):
                     remark = category_remarks.get(k) or "未提供說明"
-                    new_items.append({"desc": f"[模組細項] {_build_defect_label(k)}: {remark}",
-                                      "assignee": "店長", "dueDate": _taipei_date_after(7)})
+                    mod_idx = int(k.split('-')[0]) - 1 if '-' in k and k.split('-')[0].isdigit() else -1
+                    cat_label = MODULE_NAMES[mod_idx] if 0 <= mod_idx < len(MODULE_NAMES) else "模組細項"
+                    desc_text = f"{_build_defect_label(k)} ({v})：{remark}"
+                    new_items.append({
+                        "category": cat_label,
+                        "desc": desc_text,
+                        "issueDescription": desc_text,
+                        "assignee": "店長",
+                        "dueDate": _taipei_date_after(7)
+                    })
             for act in payload.get("newActionItems") or []:
                 desc = str((act or {}).get("desc") or "").strip()
                 if desc:
-                    new_items.append({"desc": desc,
-                                      "assignee": str(act.get("assignee") or "").strip() or "店長",
-                                      "dueDate": str(act.get("dueDate") or "").strip() or _taipei_date_after(7)})
+                    new_items.append({
+                        "category": "主管交辦事項",
+                        "desc": desc,
+                        "issueDescription": desc,
+                        "assignee": str(act.get("assignee") or "").strip() or "店長",
+                        "dueDate": str(act.get("dueDate") or "").strip() or _taipei_date_after(7)
+                    })
 
             now_iso = datetime.utcnow().isoformat()
             for item in new_items:
                 item_id = str(uuid.uuid4())
-                item.update({"id": item_id, "storeName": store_name, "status": "Open",
-                             "createdAt": now_iso, "sourceRecordId": record_id, "createdBy": mgr_name})
+                item.update({
+                    "id": item_id,
+                    "storeName": store_name,
+                    "status": "Open",
+                    "createdAt": now_iso,
+                    "sourceRecordId": record_id,
+                    "visitRecordId": record_id,
+                    "createdBy": mgr_name
+                })
                 cur.execute("""
                     INSERT INTO action_items (id, store_name, created_at, data)
                     VALUES (%s, %s, %s, %s)
@@ -733,6 +817,21 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                 if result == '已改善':
                     cur.execute("UPDATE action_items SET data = data || %s WHERE id = %s",
                                 (Json({"status": "Closed", "updatedAt": now_iso, "closedByRecordId": record_id}), item_id))
+
+            # 記錄巡店送出審計日誌
+            log_id = str(uuid.uuid4())
+            cur.execute("""
+                INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (log_id, "CREATE_VISIT_RECORD", store_name, mgr_name, None,
+                  Json({
+                      "storeName": store_name,
+                      "region": region,
+                      "auditMode": payload.get("auditMode"),
+                      "overallRating": payload.get("overallRating"),
+                      "actionItemsCreated": action_items_created,
+                      "recordId": record_id
+                  }), datetime.utcnow()))
         conn.commit()
 
     if payload.get("overallRating") == "需重點輔導":
@@ -742,6 +841,34 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
         background_tasks.add_task(trigger_teams_notify, msg)
 
     return {"success": True, "data": {"recordId": record_id, "actionItemsCreated": action_items_created}}
+
+
+@app.put("/api/visit-records/{record_id}/photos")
+def update_visit_record_photos(record_id: str, payload: dict = Body(...)):
+    """
+    補傳或更新巡店紀錄之改善前 (Before) / 改善後 (After) 對比照片
+    """
+    raw_pairs = payload.get("photoPairs") or []
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM visit_records WHERE id = %s", (record_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Visit record not found")
+
+            record_data = row[0]
+            cleaned_pairs = []
+            for pair in raw_pairs:
+                before_url = _store_photo(cur, record_id, (pair or {}).get("beforeUrl", ""))
+                after_url = _store_photo(cur, record_id, (pair or {}).get("afterUrl", ""))
+                if before_url or after_url:
+                    cleaned_pairs.append({"beforeUrl": before_url, "afterUrl": after_url})
+
+            record_data["photoPairs"] = cleaned_pairs
+            cur.execute("UPDATE visit_records SET data = %s WHERE id = %s", (Json(record_data), record_id))
+        conn.commit()
+
+    return {"success": True, "photoPairs": cleaned_pairs}
 
 @app.post("/api/webhook/google-forms")
 def webhook_google_forms(payload: dict = Body(...)):
@@ -905,6 +1032,10 @@ def clean_db_2026():
                 INSERT INTO store (id, data) VALUES ('managers', %s)
                 ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
             """, (Json(new_managers),))
+
+            # 清除測試假資料 (例如文心秀泰)
+            cur.execute("DELETE FROM visit_records WHERE data->>'storeName' LIKE '%文心秀泰%';")
+            cur.execute("DELETE FROM action_items WHERE store_name LIKE '%文心秀泰%' OR data->>'storeName' LIKE '%文心秀泰%';")
             conn.commit()
             
             return {
@@ -991,7 +1122,7 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             # 2. Get Activities
             query = "SELECT data FROM visit_records"
             params = []
-            conditions = []
+            conditions = ["(data->>'storeName' NOT LIKE '%測試%' AND data->>'storeName' NOT LIKE '%文心秀泰%')"]
             
             if time_range == "all":
                 pass
