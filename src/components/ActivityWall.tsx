@@ -19,6 +19,7 @@ const ITEM_NAMES: Record<string, string> = {
 
 export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) => {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [lightboxPair, setLightboxPair] = useState<{ beforeUrl: string; afterUrl: string; mode: 'before' | 'after' | 'compare' } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const toggleExpand = (id: string) => {
@@ -386,7 +387,7 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '10px' }}>
                         <Camera size={14} color="#6b7280" />
-                        <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#111827' }}>現場對比（點擊放大）</span>
+                        <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#111827' }}>現場對比（點擊放大／對比）</span>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {validPhotoPairs.map((pair, pIdx) => (
@@ -398,7 +399,13 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
                                   src={pair.beforeUrl}
                                   alt="改善前"
                                   style={{ width: '76px', height: '76px', objectFit: 'cover', borderRadius: '7px', border: '1px solid #fecdd3', cursor: 'pointer' }}
-                                  onClick={() => setLightboxImage(pair.beforeUrl)}
+                                  onClick={() => {
+                                    if (pair.beforeUrl && pair.afterUrl) {
+                                      setLightboxPair({ beforeUrl: pair.beforeUrl, afterUrl: pair.afterUrl, mode: 'compare' });
+                                    } else {
+                                      setLightboxImage(pair.beforeUrl);
+                                    }
+                                  }}
                                 />
                               ) : (
                                 <div style={{ width: '76px', height: '76px', borderRadius: '7px', border: '1px dashed #d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.68rem', color: '#9ca3af', background: '#f9fafb' }}>
@@ -414,7 +421,13 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
                                   src={pair.afterUrl}
                                   alt="改善後"
                                   style={{ width: '76px', height: '76px', objectFit: 'cover', borderRadius: '7px', border: '1px solid #bbf7d0', cursor: 'pointer' }}
-                                  onClick={() => setLightboxImage(pair.afterUrl)}
+                                  onClick={() => {
+                                    if (pair.beforeUrl && pair.afterUrl) {
+                                      setLightboxPair({ beforeUrl: pair.beforeUrl, afterUrl: pair.afterUrl, mode: 'compare' });
+                                    } else {
+                                      setLightboxImage(pair.afterUrl);
+                                    }
+                                  }}
                                 />
                               ) : (
                                 <div style={{ width: '76px', height: '76px', borderRadius: '7px', border: '1px dashed #bbf7d0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.68rem', color: '#9ca3af', background: '#f0fdf4' }}>
@@ -495,16 +508,20 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
         )}
       </div>
 
-      {/* Lightbox Modal */}
-      {lightboxImage && (
+      {/* Lightbox Modal (改善前後對比 / 單張放大) */}
+      {(lightboxImage || lightboxPair) && (
         <div
           style={{
             position: 'fixed', inset: 0, zIndex: 9999,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(0,0,0,0.75)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.82)',
             padding: '20px',
+            gap: '16px',
           }}
-          onClick={() => setLightboxImage(null)}
+          onClick={() => {
+            setLightboxImage(null);
+            setLightboxPair(null);
+          }}
         >
           <button
             style={{
@@ -516,16 +533,104 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
               cursor: 'pointer', color: '#374151',
               boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
             }}
-            onClick={() => setLightboxImage(null)}
+            onClick={() => {
+              setLightboxImage(null);
+              setLightboxPair(null);
+            }}
           >
             <X size={18} />
           </button>
-          <img
-            src={lightboxImage}
-            alt="放大圖片"
-            style={{ maxWidth: '90%', maxHeight: '85vh', objectFit: 'contain', borderRadius: '12px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
-            onClick={e => e.stopPropagation()}
-          />
+
+          {lightboxPair ? (
+            <>
+              <div
+                style={{
+                  display: 'flex', gap: '8px', background: 'rgba(255,255,255,0.12)',
+                  padding: '4px', borderRadius: '99px', backdropFilter: 'blur(8px)',
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                <button
+                  onClick={() => setLightboxPair({ ...lightboxPair, mode: 'compare' })}
+                  style={{
+                    padding: '6px 14px', borderRadius: '99px', border: 'none', cursor: 'pointer',
+                    fontSize: '0.78rem', fontWeight: 700,
+                    background: lightboxPair.mode === 'compare' ? '#ffffff' : 'transparent',
+                    color: lightboxPair.mode === 'compare' ? '#111827' : '#e5e7eb',
+                  }}
+                >
+                  並列對比 (Before & After)
+                </button>
+                <button
+                  onClick={() => setLightboxPair({ ...lightboxPair, mode: 'before' })}
+                  style={{
+                    padding: '6px 14px', borderRadius: '99px', border: 'none', cursor: 'pointer',
+                    fontSize: '0.78rem', fontWeight: 700,
+                    background: lightboxPair.mode === 'before' ? '#e11d48' : 'transparent',
+                    color: '#ffffff',
+                  }}
+                >
+                  改善前 (Before)
+                </button>
+                <button
+                  onClick={() => setLightboxPair({ ...lightboxPair, mode: 'after' })}
+                  style={{
+                    padding: '6px 14px', borderRadius: '99px', border: 'none', cursor: 'pointer',
+                    fontSize: '0.78rem', fontWeight: 700,
+                    background: lightboxPair.mode === 'after' ? '#16a34a' : 'transparent',
+                    color: '#ffffff',
+                  }}
+                >
+                  改善後 (After)
+                </button>
+              </div>
+
+              {lightboxPair.mode === 'compare' ? (
+                <div
+                  style={{
+                    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                    gap: '16px', width: '100%', maxWidth: '1100px', alignItems: 'center',
+                  }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ background: '#e11d48', color: '#fff', fontSize: '0.78rem', fontWeight: 700, padding: '4px 12px', borderRadius: '99px' }}>
+                      改善前 (Before)
+                    </span>
+                    <img
+                      src={lightboxPair.beforeUrl}
+                      alt="改善前"
+                      style={{ width: '100%', maxHeight: '72vh', objectFit: 'contain', borderRadius: '12px', border: '2px solid #fecdd3', background: '#111827' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ background: '#16a34a', color: '#fff', fontSize: '0.78rem', fontWeight: 700, padding: '4px 12px', borderRadius: '99px' }}>
+                      改善後 (After)
+                    </span>
+                    <img
+                      src={lightboxPair.afterUrl}
+                      alt="改善後"
+                      style={{ width: '100%', maxHeight: '72vh', objectFit: 'contain', borderRadius: '12px', border: '2px solid #bbf7d0', background: '#111827' }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <img
+                  src={lightboxPair.mode === 'before' ? lightboxPair.beforeUrl : lightboxPair.afterUrl}
+                  alt={lightboxPair.mode === 'before' ? '改善前' : '改善後'}
+                  style={{ maxWidth: '90%', maxHeight: '80vh', objectFit: 'contain', borderRadius: '12px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+                  onClick={e => e.stopPropagation()}
+                />
+              )}
+            </>
+          ) : (
+            <img
+              src={lightboxImage!}
+              alt="放大圖片"
+              style={{ maxWidth: '90%', maxHeight: '85vh', objectFit: 'contain', borderRadius: '12px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+              onClick={e => e.stopPropagation()}
+            />
+          )}
         </div>
       )}
     </div>

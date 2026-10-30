@@ -45,6 +45,7 @@ export const AuditApp = () => {
   const [draftWarning, setDraftWarning] = useState<string>('');
   const [hasRestoredBanner, setHasRestoredBanner] = useState<boolean>(false);
   const [saveToast, setSaveToast] = useState<boolean>(false);
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
 
   // 安全存入 LocalStorage，防禦 QuotaExceededError 確保文字資料 100% 永不遺失
   const saveDraftSafe = () => {
@@ -114,6 +115,9 @@ export const AuditApp = () => {
 
         if (hasContent) {
           setStoreName(draft.storeName || '');
+          if (draft.storeName) {
+            fetchActionItems(draft.storeName);
+          }
           setMgrName(user?.name || draft.mgrName || '區主管');
           setAuditMode(draft.auditMode || 'C');
           setSelectedTopics(draft.selectedTopics || []);
@@ -240,72 +244,113 @@ export const AuditApp = () => {
 
     return (
       <div className="mt-3 pt-3 border-t border-red-200/70">
-        <p className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5">
-          <Camera size={14} className="text-purple-600" />
-          現場拍照存證 (Before & After)
+        <p className="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <Camera size={14} className="text-purple-600" />
+            現場拍照存證 (Before & After)
+          </span>
+          {(pair.beforeUrl || pair.afterUrl) && (
+            <span className="text-[11px] font-medium text-purple-600">點擊照片可放大檢視</span>
+          )}
         </p>
         <div className="grid grid-cols-2 gap-3">
           {/* Before */}
           <div className="relative">
-            <p className="text-xs font-bold text-gray-500 mb-1.5 text-center">改善前 (Before)</p>
-            {pair.beforeUrl && (
-              <button
-                type="button"
-                onClick={() => handleClear('beforeUrl')}
-                className="absolute top-7 right-1.5 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
-                title="移除重拍"
-              >
-                <Trash2 size={13} />
-              </button>
+            <p className="text-xs font-bold text-rose-700 mb-1.5 text-center">改善前 (Before)</p>
+            {pair.beforeUrl ? (
+              <div className="relative w-full h-28 rounded-xl overflow-hidden border border-rose-200 bg-white group">
+                <img
+                  src={pair.beforeUrl}
+                  alt="Before"
+                  className="w-full h-full object-cover cursor-zoom-in"
+                  onClick={() => setPreviewPhotoUrl(pair.beforeUrl)}
+                />
+                <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
+                  <label
+                    className="bg-white/95 text-gray-700 hover:text-blue-600 rounded-md px-2 py-0.5 text-[11px] font-bold shadow-xs cursor-pointer border border-gray-200"
+                    title="重拍或更換照片"
+                  >
+                    重拍
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                      onChange={(e) => handleUpload('beforeUrl', e.target.files?.[0])}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => handleClear('beforeUrl')}
+                    className="bg-white/95 text-gray-500 hover:text-red-600 rounded-md p-1 shadow-xs border border-gray-200"
+                    title="移除照片"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <label className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-white">
+                <Camera size={20} className="mb-1 text-rose-500" />
+                <span className="text-xs font-medium text-gray-600">拍照 / 上傳</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                  onChange={(e) => handleUpload('beforeUrl', e.target.files?.[0])}
+                />
+              </label>
             )}
-            <label className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-white">
-              {pair.beforeUrl ? (
-                <img src={pair.beforeUrl} alt="Before" className="w-full h-full object-cover" />
-              ) : (
-                <>
-                  <Camera size={20} className="mb-1" />
-                  <span className="text-xs font-medium">拍照 / 上傳</span>
-                </>
-              )}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
-                onChange={(e) => handleUpload('beforeUrl', e.target.files?.[0])}
-              />
-            </label>
           </div>
           {/* After */}
           <div className="relative">
-            <p className="text-xs font-bold text-gray-500 mb-1.5 text-center">改善後 (After)</p>
-            {pair.afterUrl && (
-              <button
-                type="button"
-                onClick={() => handleClear('afterUrl')}
-                className="absolute top-7 right-1.5 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
-                title="移除重拍"
-              >
-                <Trash2 size={13} />
-              </button>
+            <p className="text-xs font-bold text-emerald-700 mb-1.5 text-center">改善後 (After)</p>
+            {pair.afterUrl ? (
+              <div className="relative w-full h-28 rounded-xl overflow-hidden border border-emerald-200 bg-white group">
+                <img
+                  src={pair.afterUrl}
+                  alt="After"
+                  className="w-full h-full object-cover cursor-zoom-in"
+                  onClick={() => setPreviewPhotoUrl(pair.afterUrl)}
+                />
+                <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
+                  <label
+                    className="bg-white/95 text-gray-700 hover:text-blue-600 rounded-md px-2 py-0.5 text-[11px] font-bold shadow-xs cursor-pointer border border-gray-200"
+                    title="重拍或更換照片"
+                  >
+                    重拍
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                      onChange={(e) => handleUpload('afterUrl', e.target.files?.[0])}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => handleClear('afterUrl')}
+                    className="bg-white/95 text-gray-500 hover:text-red-600 rounded-md p-1 shadow-xs border border-gray-200"
+                    title="移除照片"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <label className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-white">
+                <Camera size={20} className="mb-1 text-emerald-500" />
+                <span className="text-xs font-medium text-gray-600">拍照 / 上傳</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                  onChange={(e) => handleUpload('afterUrl', e.target.files?.[0])}
+                />
+              </label>
             )}
-            <label className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-white">
-              {pair.afterUrl ? (
-                <img src={pair.afterUrl} alt="After" className="w-full h-full object-cover" />
-              ) : (
-                <>
-                  <Camera size={20} className="mb-1" />
-                  <span className="text-xs font-medium">拍照 / 上傳</span>
-                </>
-              )}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
-                onChange={(e) => handleUpload('afterUrl', e.target.files?.[0])}
-              />
-            </label>
           </div>
         </div>
       </div>
@@ -558,6 +603,7 @@ export const AuditApp = () => {
                     <button onClick={() => setPdcaResults({ ...pdcaResults, [item.id]: '已改善' })} className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${pdcaResults[item.id] === '已改善' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-green-50'}`}>✅ 現場已改善</button>
                     <button onClick={() => setPdcaResults({ ...pdcaResults, [item.id]: '未改善' })} className={`flex-1 py-3 rounded-lg text-sm font-bold border transition-colors ${pdcaResults[item.id] === '未改善' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-red-50'}`}>❌ 依然未改善</button>
                   </div>
+                  {pdcaResults[item.id] && renderDefectPhotoPair(`pdca-${item.id}`)}
                 </div>
               ))
             )}
@@ -889,111 +935,168 @@ export const AuditApp = () => {
 
           {/* 照片上傳 (Before & After) */}
           <div>
-            <p className="text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
-              <Camera size={18} className="text-purple-500" /> 現場拍照存證 (Before & After)
-            </p>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-base font-bold text-gray-800 flex items-center gap-2">
+                <Camera size={18} className="text-purple-500" /> 現場拍照存證 (Before & After)
+              </p>
+              <span className="text-xs font-medium text-purple-600">點擊照片可放大檢視</span>
+            </div>
             <div className="space-y-4">
               {activePhotoPairs.map((pair, idx) => (
                 <div key={idx} className="bg-white p-4 rounded-xl border border-gray-200 relative shadow-sm">
                   {activePhotoPairs.length > 1 && (
-                    <button onClick={() => setPhotoPairs(activePhotoPairs.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-gray-400 hover:text-red-500 z-10 bg-white rounded-full p-1 shadow-sm">
+                    <button onClick={() => setPhotoPairs(activePhotoPairs.filter((_, i) => i !== idx))} className="absolute top-2 right-2 text-gray-400 hover:text-red-500 z-10 bg-white rounded-full p-1 shadow-sm" title="刪除此組對比">
                       <Trash2 size={16} />
                     </button>
                   )}
                   <div className="grid grid-cols-2 gap-4">
                     {/* Before */}
                     <div className="relative">
-                      <p className="text-xs font-bold text-gray-500 mb-2 text-center">改善前 (Before)</p>
-                      {pair.beforeUrl && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newPairs = [...activePhotoPairs];
-                            newPairs[idx] = { ...newPairs[idx], beforeUrl: '' };
-                            setPhotoPairs(newPairs);
-                          }}
-                          className="absolute top-8 right-2 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
-                          title="移除重拍"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                      <label className="w-full aspect-square border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-gray-50">
-                        {pair.beforeUrl ? (
-                          <img src={pair.beforeUrl} alt="Before" className="w-full h-full object-cover" />
-                        ) : (
-                          <>
-                            <Camera size={24} className="mb-1" />
-                            <span className="text-xs font-medium">拍照 / 上傳</span>
-                          </>
-                        )}
-                        <input 
-                          type="file" 
-                          accept="image/*" 
-                          className="hidden" 
-                          onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
-                          onChange={async (e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              try {
-                                const base64Url = await compressImageToBase64(e.target.files[0]);
+                      <p className="text-xs font-bold text-rose-700 mb-2 text-center">改善前 (Before)</p>
+                      {pair.beforeUrl ? (
+                        <div className="relative w-full aspect-square rounded-xl overflow-hidden border border-rose-200 bg-gray-50">
+                          <img
+                            src={pair.beforeUrl}
+                            alt="Before"
+                            className="w-full h-full object-cover cursor-zoom-in"
+                            onClick={() => setPreviewPhotoUrl(pair.beforeUrl)}
+                          />
+                          <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
+                            <label className="bg-white/95 text-gray-700 hover:text-blue-600 rounded-md px-2.5 py-1 text-xs font-bold shadow-xs cursor-pointer border border-gray-200">
+                              重拍
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                                onChange={async (e) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    try {
+                                      const base64Url = await compressImageToBase64(e.target.files[0]);
+                                      const newPairs = [...activePhotoPairs];
+                                      newPairs[idx] = { ...newPairs[idx], beforeUrl: base64Url };
+                                      setPhotoPairs(newPairs);
+                                    } catch (err) {
+                                      console.error('照片讀取失敗', err);
+                                      alert('照片讀取失敗，請重新拍攝');
+                                    }
+                                  }
+                                }}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
                                 const newPairs = [...activePhotoPairs];
-                                newPairs[idx] = { ...newPairs[idx], beforeUrl: base64Url };
+                                newPairs[idx] = { ...newPairs[idx], beforeUrl: '' };
                                 setPhotoPairs(newPairs);
-                              } catch (err) {
-                                console.error('照片讀取失敗', err);
-                                alert('照片讀取失敗，請重新拍攝');
+                              }}
+                              className="bg-white/95 text-gray-500 hover:text-red-600 rounded-md p-1.5 shadow-xs border border-gray-200"
+                              title="移除照片"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <label className="w-full aspect-square border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-gray-50">
+                          <Camera size={24} className="mb-1 text-rose-500" />
+                          <span className="text-xs font-medium text-gray-600">拍照 / 上傳</span>
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                            onChange={async (e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                try {
+                                  const base64Url = await compressImageToBase64(e.target.files[0]);
+                                  const newPairs = [...activePhotoPairs];
+                                  newPairs[idx] = { ...newPairs[idx], beforeUrl: base64Url };
+                                  setPhotoPairs(newPairs);
+                                } catch (err) {
+                                  console.error('照片讀取失敗', err);
+                                  alert('照片讀取失敗，請重新拍攝');
+                                }
                               }
-                            }
-                          }} 
-                        />
-                      </label>
+                            }} 
+                          />
+                        </label>
+                      )}
                     </div>
                     {/* After */}
                     <div className="relative">
-                      <p className="text-xs font-bold text-gray-500 mb-2 text-center">改善後 (After)</p>
-                      {pair.afterUrl && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newPairs = [...activePhotoPairs];
-                            newPairs[idx] = { ...newPairs[idx], afterUrl: '' };
-                            setPhotoPairs(newPairs);
-                          }}
-                          className="absolute top-8 right-2 z-10 bg-white/90 text-gray-500 hover:text-red-600 rounded-full p-1 shadow-xs"
-                          title="移除重拍"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                      <label className="w-full aspect-square border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-gray-50">
-                        {pair.afterUrl ? (
-                          <img src={pair.afterUrl} alt="After" className="w-full h-full object-cover" />
-                        ) : (
-                          <>
-                            <Camera size={24} className="mb-1" />
-                            <span className="text-xs font-medium">拍照 / 上傳</span>
-                          </>
-                        )}
-                        <input 
-                          type="file" 
-                          accept="image/*" 
-                          className="hidden" 
-                          onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
-                          onChange={async (e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              try {
-                                const base64Url = await compressImageToBase64(e.target.files[0]);
+                      <p className="text-xs font-bold text-emerald-700 mb-2 text-center">改善後 (After)</p>
+                      {pair.afterUrl ? (
+                        <div className="relative w-full aspect-square rounded-xl overflow-hidden border border-emerald-200 bg-gray-50">
+                          <img
+                            src={pair.afterUrl}
+                            alt="After"
+                            className="w-full h-full object-cover cursor-zoom-in"
+                            onClick={() => setPreviewPhotoUrl(pair.afterUrl)}
+                          />
+                          <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
+                            <label className="bg-white/95 text-gray-700 hover:text-blue-600 rounded-md px-2.5 py-1 text-xs font-bold shadow-xs cursor-pointer border border-gray-200">
+                              重拍
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                                onChange={async (e) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    try {
+                                      const base64Url = await compressImageToBase64(e.target.files[0]);
+                                      const newPairs = [...activePhotoPairs];
+                                      newPairs[idx] = { ...newPairs[idx], afterUrl: base64Url };
+                                      setPhotoPairs(newPairs);
+                                    } catch (err) {
+                                      console.error('照片讀取失敗', err);
+                                      alert('照片讀取失敗，請重新拍攝');
+                                    }
+                                  }
+                                }}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
                                 const newPairs = [...activePhotoPairs];
-                                newPairs[idx] = { ...newPairs[idx], afterUrl: base64Url };
+                                newPairs[idx] = { ...newPairs[idx], afterUrl: '' };
                                 setPhotoPairs(newPairs);
-                              } catch (err) {
-                                console.error('照片讀取失敗', err);
-                                alert('照片讀取失敗，請重新拍攝');
+                              }}
+                              className="bg-white/95 text-gray-500 hover:text-red-600 rounded-md p-1.5 shadow-xs border border-gray-200"
+                              title="移除照片"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <label className="w-full aspect-square border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-50 hover:border-blue-400 transition-colors overflow-hidden bg-gray-50">
+                          <Camera size={24} className="mb-1 text-emerald-500" />
+                          <span className="text-xs font-medium text-gray-600">拍照 / 上傳</span>
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                            onChange={async (e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                try {
+                                  const base64Url = await compressImageToBase64(e.target.files[0]);
+                                  const newPairs = [...activePhotoPairs];
+                                  newPairs[idx] = { ...newPairs[idx], afterUrl: base64Url };
+                                  setPhotoPairs(newPairs);
+                                } catch (err) {
+                                  console.error('照片讀取失敗', err);
+                                  alert('照片讀取失敗，請重新拍攝');
+                                }
                               }
-                            }
-                          }} 
-                        />
-                      </label>
+                            }} 
+                          />
+                        </label>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1011,45 +1114,77 @@ export const AuditApp = () => {
     );
   };
 
-  const renderStep5 = () => (
-    <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-500">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3 flex items-center gap-2">
-        <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">5</span>
-        總結與簽名
-      </h2>
-      
-      <div className="space-y-6">
-        {/* 綜合評價 */}
-        <div>
-          <p className="text-sm font-bold text-gray-700 mb-3">巡店綜合評價 <span className="text-red-500">*</span></p>
-          <div className="flex gap-3">
-            <button onClick={() => setOverallRating('良好')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '良好' ? 'bg-green-600 text-white border-green-600 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-green-200'}`}>🟢 良好</button>
-            <button onClick={() => setOverallRating('需追蹤')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '需追蹤' ? 'bg-yellow-500 text-white border-yellow-500 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-yellow-200'}`}>🟡 需追蹤</button>
-            <button onClick={() => setOverallRating('需重點輔導')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '需重點輔導' ? 'bg-red-600 text-white border-red-600 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-red-200'}`}>🔴 需重點輔導</button>
-          </div>
-        </div>
+  const renderStep5 = () => {
+    const totalDefectsCount =
+      Object.values(coreChecks).filter(v => v === '缺失').length +
+      Object.values(categoryChecks).filter(v => v === '缺失' || v === '待改善').length;
+    const totalPhotosCount =
+      Object.values(defectPhotos).filter(p => p && (p.beforeUrl || p.afterUrl)).length +
+      photoPairs.filter(p => p && (p.beforeUrl || p.afterUrl)).length;
+    const validActionsCount = newActionItems.filter(i => i.desc?.trim()).length;
 
-        {/* 區主管簽名 */}
-        <div>
-          <div className="flex justify-between items-end mb-3">
-            <p className="text-sm font-bold text-gray-700">門市端 / 區主管簽名</p>
-            <button 
-              onClick={() => sigCanvas.current?.clear()} 
-              className="text-xs text-blue-600 font-semibold bg-blue-50 px-3 py-1 rounded-full hover:bg-blue-100"
-            >
-              清除重簽
-            </button>
+    return (
+      <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-500">
+        <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3 flex items-center gap-2">
+          <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">5</span>
+          總結與簽名
+        </h2>
+        
+        <div className="space-y-6">
+          {/* 本次巡店紀錄摘要卡片 */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div className="bg-white p-2.5 rounded-lg border border-slate-100">
+              <div className="text-[11px] text-gray-500 font-semibold">巡店門市</div>
+              <div className="text-sm font-bold text-gray-900 mt-0.5 truncate">{storeName || '未選擇'}</div>
+            </div>
+            <div className="bg-white p-2.5 rounded-lg border border-slate-100">
+              <div className="text-[11px] text-gray-500 font-semibold">發現異常/待改善</div>
+              <div className={`text-sm font-bold mt-0.5 ${totalDefectsCount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                {totalDefectsCount} 項
+              </div>
+            </div>
+            <div className="bg-white p-2.5 rounded-lg border border-slate-100">
+              <div className="text-[11px] text-gray-500 font-semibold">改善前後照片</div>
+              <div className="text-sm font-bold text-purple-600 mt-0.5">{totalPhotosCount} 組</div>
+            </div>
+            <div className="bg-white p-2.5 rounded-lg border border-slate-100">
+              <div className="text-[11px] text-gray-500 font-semibold">新增交辦事項</div>
+              <div className="text-sm font-bold text-blue-600 mt-0.5">{validActionsCount} 筆</div>
+            </div>
           </div>
-          <div className="border-2 border-dashed border-gray-300 rounded-xl bg-gray-50 h-48 relative overflow-hidden">
-            <SignatureCanvas 
-              ref={sigCanvas}
-              canvasProps={{className: 'w-full h-full cursor-crosshair'}} 
-            />
+
+          {/* 綜合評價 */}
+          <div>
+            <p className="text-sm font-bold text-gray-700 mb-3">巡店綜合評價 <span className="text-red-500">*</span></p>
+            <div className="flex gap-3">
+              <button onClick={() => setOverallRating('良好')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '良好' ? 'bg-green-600 text-white border-green-600 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-green-200'}`}>🟢 良好</button>
+              <button onClick={() => setOverallRating('需追蹤')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '需追蹤' ? 'bg-yellow-500 text-white border-yellow-500 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-yellow-200'}`}>🟡 需追蹤</button>
+              <button onClick={() => setOverallRating('需重點輔導')} className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all ${overallRating === '需重點輔導' ? 'bg-red-600 text-white border-red-600 shadow-md transform scale-[1.02]' : 'bg-white text-gray-600 border-gray-200 hover:border-red-200'}`}>🔴 需重點輔導</button>
+            </div>
+          </div>
+
+          {/* 區主管簽名 */}
+          <div>
+            <div className="flex justify-between items-end mb-3">
+              <p className="text-sm font-bold text-gray-700">門市端 / 區主管簽名</p>
+              <button 
+                onClick={() => sigCanvas.current?.clear()} 
+                className="text-xs text-blue-600 font-semibold bg-blue-50 px-3 py-1 rounded-full hover:bg-blue-100"
+              >
+                清除重簽
+              </button>
+            </div>
+            <div className="border-2 border-dashed border-gray-300 rounded-xl bg-gray-50 h-48 relative overflow-hidden">
+              <SignatureCanvas 
+                ref={sigCanvas}
+                canvasProps={{className: 'w-full h-full cursor-crosshair'}} 
+              />
+            </div>
           </div>
         </div>
-      </div>
-    </section>
-  );
+      </section>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -1236,6 +1371,28 @@ export const AuditApp = () => {
         </div>
 
       </div>
+
+      {/* 照片全螢幕預覽燈箱 */}
+      {previewPhotoUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setPreviewPhotoUrl(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewPhotoUrl(null)}
+            className="absolute top-5 right-5 bg-white text-gray-800 rounded-full px-3.5 py-1.5 text-xs font-bold shadow-lg hover:bg-gray-100"
+          >
+            ✕ 關閉預覽
+          </button>
+          <img
+            src={previewPhotoUrl}
+            alt="照片預覽"
+            className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 };
