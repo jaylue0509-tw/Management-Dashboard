@@ -9,6 +9,7 @@ interface Props {
 }
 
 const ITEM_NAMES: Record<string, string> = {
+  'core-1': '環境異味與清潔', 'core-2': '櫃檯焦點陳列', 'core-3': '人員狀態與迎賓',
   '1-1': '檔期 POP 與宣傳物', '1-2': '主題陳列與佈置', '1-3': '檔期主打商品備貨', '1-4': '結帳區加價購專區',
   '2-1': '排面平整與拉面', '2-2': '效期與先進先出', '2-3': '臨期品與損耗處置', '2-4': '高單價與高損品防竊', '2-5': 'PB 與高毛利商品陳列',
   '3-1': '美容房環境與衛生', '3-2': '美容操作 SOP 與安全', '3-3': '活體照護與環境', '3-4': '保健/醫療專區維護',
@@ -54,9 +55,13 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
           const relatedItems = actionItems.filter(ai => ai.visitRecordId === activity.recordId || ai.sourceRecordId === activity.recordId);
           const validPhotoPairs = (activity.photoPairs || []).filter(p => p && (p.beforeUrl || p.afterUrl));
           
-          const abnormalChecks = (activity as any).categoryChecks 
+          const coreAbnormals = (activity as any).coreChecks
+            ? Object.entries((activity as any).coreChecks).filter(([_, val]) => val === '缺失')
+            : [];
+          const categoryAbnormals = (activity as any).categoryChecks 
             ? Object.entries((activity as any).categoryChecks).filter(([_, val]) => val === '缺失' || val === '待改善')
             : [];
+          const abnormalChecks = [...coreAbnormals, ...categoryAbnormals];
             
           let hasRealDefectInNotes = false;
           if (activity.immediateImprovement) {
@@ -268,11 +273,19 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
                               reasonText = `自訂異常: ${key}`;
                             }
                           }
+                          const remark = (activity as any).categoryRemarks?.[key];
                           return (
-                            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '6px', padding: '8px 12px' }}>
-                              <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#e11d48' }} />
-                              <span style={{ fontSize: '0.8rem', color: '#be123c', fontWeight: 600 }}>{reasonText}</span>
-                              <span style={{ fontSize: '0.7rem', color: '#e11d48', background: '#ffe4e6', padding: '1px 6px', borderRadius: '4px' }}>{status as string}</span>
+                            <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '6px', padding: '8px 12px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#e11d48', flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.8rem', color: '#be123c', fontWeight: 600 }}>{reasonText}</span>
+                                <span style={{ fontSize: '0.7rem', color: '#e11d48', background: '#ffe4e6', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>{status as string}</span>
+                              </div>
+                              {remark && (
+                                <div style={{ fontSize: '0.78rem', color: '#881337', paddingLeft: '14px', lineHeight: 1.5 }}>
+                                  說明：{remark}
+                                </div>
+                              )}
                             </div>
                           );
                         })}

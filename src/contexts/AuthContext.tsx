@@ -24,13 +24,37 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    // 嘗試從 localStorage 恢復登入狀態
+    // 嘗試從 localStorage 恢復登入狀態，並向後端同步最新負責門市與權限設定
     const storedToken = localStorage.getItem('token');
     const storedUser = localStorage.getItem('user');
     
     if (storedToken && storedUser) {
       setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch (e) {
+        console.error('Failed to parse stored user', e);
+      }
+
+      const syncLatestUser = async () => {
+        try {
+          const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
+          const res = await fetch(`${apiBase}/auth/me`, {
+            headers: { Authorization: `Bearer ${storedToken}` }
+          });
+          if (res.ok) {
+            const latestUser = await res.json();
+            if (latestUser && latestUser.sub) {
+              setUser(latestUser);
+              localStorage.setItem('user', JSON.stringify(latestUser));
+            }
+          }
+        } catch (err) {
+          // 網路離線時保留本機快取使用者狀態
+        }
+      };
+
+      syncLatestUser();
     }
   }, []);
 

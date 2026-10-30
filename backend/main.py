@@ -361,6 +361,22 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 @app.get("/api/auth/me")
 def get_me(user: dict = Depends(get_current_user)):
+    username = user.get("sub")
+    if username:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT role, name, assigned_stores, must_change_password FROM users WHERE username = %s", (username,))
+                row = cur.fetchone()
+                if row:
+                    role, name, assigned_stores, must_change_db = row
+                    must_change = bool(role == "manager" and (must_change_db is True or must_change_db is None))
+                    return {
+                        "sub": username,
+                        "role": role,
+                        "name": name,
+                        "assigned_stores": assigned_stores or [],
+                        "must_change_password": must_change
+                    }
     return user
 
 
@@ -561,6 +577,26 @@ def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
                             (req.name, Json(req.assigned_stores), req.username))
                             
             log_id = str(uuid.uuid4())
+            # 同步更新 store ('managers') 中的門市負責區主管姓名，確保系統設定後台與戰情牆組織圖 100% 同步
+            cur.execute("SELECT data FROM store WHERE id = 'managers'")
+            mgr_row = cur.fetchone()
+            if mgr_row and isinstance(mgr_row[0], list):
+                managers_list = mgr_row[0]
+                assigned_norm = {_normalize_store(s) for s in (req.assigned_stores or []) if s}
+                old_name = (before_data or {}).get("name")
+                changed_mgrs = False
+                for m in managers_list:
+                    m_store_norm = _normalize_store(m.get("storeName"))
+                    if m_store_norm in assigned_norm:
+                        if m.get("areaManagerName") != req.name:
+                            m["areaManagerName"] = req.name
+                            changed_mgrs = True
+                    elif old_name and old_name != req.name and m.get("areaManagerName") == old_name:
+                        m["areaManagerName"] = req.name
+                        changed_mgrs = True
+                if changed_mgrs:
+                    cur.execute("UPDATE store SET data = %s WHERE id = 'managers'", (Json(managers_list),))
+
             action = "CREATE_USER" if is_new else "UPDATE_USER"
             cur.execute("""
                 INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
@@ -751,6 +787,25 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                 if before_url or after_url:
                     cleaned_pairs.append({"beforeUrl": before_url, "afterUrl": after_url})
             payload["photoPairs"] = cleaned_pairs
+
+            # 自動彙整異常狀態、標籤與改善說明文字，確保巡店紀錄送出後與戰情牆 100% 即時同步顯示
+            defect_lines = []
+            for k, v in core_checks.items():
+                if v == '缺失':
+                    remark = category_remarks.get(k) or "未提供說明"
+                    defect_lines.append(f"{_build_defect_label(k)}：{remark}")
+            for k, v in category_checks.items():
+                if v in ('缺失', '待改善'):
+                    remark = category_remarks.get(k) or "未提供說明"
+                    defect_lines.append(f"{_build_defect_label(k)} ({v})：{remark}")
+            has_defect = len(defect_lines) > 0 or payload.get("overallRating") == "需重點輔導"
+            payload["abnormalFlag"] = bool(has_defect)
+            if not payload.get("immediateImprovement") and defect_lines:
+                payload["immediateImprovement"] = "\n".join(defect_lines)
+            tags = list(payload.get("tags") or ["實地巡店"])
+            if has_defect and "發現異常" not in tags:
+                tags.append("發現異常")
+            payload["tags"] = tags
 
             cur.execute("""
                 INSERT INTO visit_records (id, region, created_at, data)
@@ -1057,7 +1112,12 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
                 mgr_name = user.get("name")
                 assigned = list(user.get("assigned_stores") or [])
                 if store:
-                    if store not in assigned:
+                    if user.get("sub"):
+                        cur.execute("SELECT assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
+                        u_row = cur.fetchone()
+                        if u_row and u_row[0]:
+                            assigned = list(u_row[0])
+                    if store not in assigned and _normalize_store(store) not in {_normalize_store(s) for s in assigned}:
                         return []
                     cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
                 else:
@@ -1156,7 +1216,12 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
                 print("Failed to fetch action_items:", e)
                 conn.rollback() # Important to rollback the aborted transaction
             
-            # NOTE: 區主管僅能看到自己的門市與活動紀錄
+            # NOTE: 區主管僅能看到自己的門市與活動紀錄（即時同步 users 表最新負責門市）
+            if user and user.get("role") == "manager" and user.get("sub"):
+                cur.execute("SELECT name, assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
+                u_row = cur.fetchone()
+                if u_row:
+                    user = {**user, "name": u_row[0] or user.get("name"), "assigned_stores": u_row[1] or []}
             if user and user.get("role") == "manager":
                 mgr_name = user.get("name")
                 assigned = set(user.get("assigned_stores") or [])

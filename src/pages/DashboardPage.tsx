@@ -203,6 +203,7 @@ export const DashboardPage: React.FC = () => {
 
     const CATEGORY_NAMES = ['行銷與檔期執行', '商品陳列與損耗管理', '寵物專業服務與照護', '人員服務與顧客體驗', '門市環境與設備安全', '經營數據與團隊管理'];
     const ITEM_NAMES: Record<string, string> = {
+      'core-1': '環境異味與清潔', 'core-2': '櫃檯焦點陳列', 'core-3': '人員狀態與迎賓',
       '1-1': '檔期 POP 與宣傳物', '1-2': '主題陳列與佈置', '1-3': '檔期主打商品備貨', '1-4': '結帳區加價購專區',
       '2-1': '排面平整與拉面', '2-2': '效期與先進先出', '2-3': '臨期品與損耗處置', '2-4': '高單價與高損品防竊', '2-5': 'PB 與高毛利商品陳列',
       '3-1': '美容房環境與衛生', '3-2': '美容操作 SOP 與安全', '3-3': '活體照護與環境', '3-4': '保健/醫療專區維護',
@@ -212,9 +213,13 @@ export const DashboardPage: React.FC = () => {
     };
 
     targetActivities.forEach(a => {
-      const abnormalChecks = a.categoryChecks
+      const coreAbnormals = (a as any).coreChecks
+        ? Object.entries((a as any).coreChecks).filter(([_, val]) => val === '缺失')
+        : [];
+      const categoryAbnormals = a.categoryChecks
         ? Object.entries(a.categoryChecks).filter(([_, val]) => val === '缺失' || val === '待改善')
         : [];
+      const abnormalChecks = [...coreAbnormals, ...categoryAbnormals];
 
       let hasRealDefectInNotes = false;
       if (a.immediateImprovement) {

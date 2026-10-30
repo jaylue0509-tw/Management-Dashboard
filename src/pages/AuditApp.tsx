@@ -373,7 +373,11 @@ export const AuditApp = () => {
     if (!store) return;
     setActionItemsLoading(true);
     try {
-      const res = await fetch(`/api/action-items?store=${encodeURIComponent(store)}`);
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
+      const res = await fetch(`${apiBase}/action-items?store=${encodeURIComponent(store)}`, { headers });
       if (res.ok) {
         const data = await res.json();
         setPastActionItems(data.filter((item: any) => item.status === 'Open'));
@@ -493,8 +497,26 @@ export const AuditApp = () => {
     }
 
     if (isSuccess) {
-      // 伺服器確認持久化存檔後，才安全清除本機草稿
+      // 伺服器確認持久化存檔後，才安全清除本機草稿並重置表單狀態
+      setIsDraftRestored(false);
       localStorage.removeItem(LOCAL_STORAGE_KEY);
+      setStoreName('');
+      setSelectedTopics([]);
+      setCoreChecks({});
+      setCategoryChecks({});
+      setCategoryRemarks({});
+      setCustomItems({});
+      setPdcaResults({});
+      setPastActionItems([]);
+      setNewActionItems([{ desc: '', assignee: '', dueDate: '' }]);
+      setPhotoPairs([{ beforeUrl: '', afterUrl: '' }]);
+      setDefectPhotos({});
+      setOverallRating('');
+      setCurrentStep(1);
+      setHasRestoredBanner(false);
+      setDraftSavedAt('');
+      sigCanvas.current?.clear();
+      setTimeout(() => setIsDraftRestored(true), 100);
       alert('🎉 巡店紀錄已成功儲存至雲端系統！');
       navigate(user?.role === 'admin' ? '/dashboard' : '/audit');
     } else {
