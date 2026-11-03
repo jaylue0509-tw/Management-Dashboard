@@ -380,7 +380,7 @@ export const AuditApp = () => {
       const res = await fetch(`${apiBase}/action-items?store=${encodeURIComponent(store)}`, { headers });
       if (res.ok) {
         const data = await res.json();
-        setPastActionItems(data.filter((item: any) => item.status === 'Open'));
+        setPastActionItems(data.filter((item: any) => item.status === 'Open' && !item.desc?.includes('測試') && !item.issueDescription?.includes('測試')));
       }
     } catch (e) {
       console.error(e);

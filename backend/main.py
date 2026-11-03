@@ -148,6 +148,8 @@ def init_db():
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT TRUE;")
                 cur.execute("UPDATE users SET must_change_password = TRUE WHERE must_change_password IS NULL AND role = 'manager';")
                 cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin';")
+                cur.execute("DELETE FROM visit_records WHERE id = '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c';")
+                cur.execute("DELETE FROM action_items WHERE id = '86ed0b29-dc30-4825-808d-9a58d6c5e38f';")
                 
                 # 自動清理測試殘留資料 (例如文心秀泰)
                 # (保留所有歷史巡店與待辦資料)
@@ -687,13 +689,19 @@ def _store_photo(cur, record_id: str, url: str) -> str:
         try:
             content = base64.b64decode(raw_base64.strip(), validate=False)
             photo_id = str(uuid.uuid4())
+            cur.execute("SAVEPOINT sp_photo")
             cur.execute(
                 "INSERT INTO photos (id, record_id, mime_type, content, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (photo_id, record_id, mime_type, psycopg2.Binary(content), datetime.utcnow()),
             )
             return f"/api/photos/{photo_id}"
         except Exception as e:
-            print(f"照片解碼寫入警告 (跳過該照片以確保巡店數據完整存檔): {e}")
+            print(f"照片解碼寫入警告 (降級保留原圖 Base64 以確保照片顯示): {e}")
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_photo")
+            except Exception:
+                pass
+            return url
             return ""
 
     return ""
@@ -1205,13 +1213,28 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
                 
             query += " ORDER BY created_at DESC LIMIT 100"
             cur.execute(query, tuple(params))
-            activities = [r[0] for r in cur.fetchall()]
+            activities = [
+                r[0] for r in cur.fetchall()
+                if r[0]
+                and "測試" not in str(r[0].get("storeName") or "")
+                and "文心秀泰" not in str(r[0].get("storeName") or "")
+                and r[0].get("recordId") != "0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c"
+                and not any("測試" in str((it or {}).get("desc") or "") for it in (r[0].get("newActionItems") or []))
+            ]
             
             # 3. Get Action Items
             action_items = []
             try:
                 cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
-                action_items = [r[0] for r in cur.fetchall()]
+                action_items = [
+                    r[0] for r in cur.fetchall()
+                    if r[0]
+                    and "測試" not in str(r[0].get("storeName") or "")
+                    and "文心秀泰" not in str(r[0].get("storeName") or "")
+                    and "測試" not in str(r[0].get("desc") or "")
+                    and "測試" not in str(r[0].get("issueDescription") or "")
+                    and r[0].get("sourceRecordId") != "0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c"
+                ]
             except Exception as e:
                 print("Failed to fetch action_items:", e)
                 conn.rollback() # Important to rollback the aborted transaction

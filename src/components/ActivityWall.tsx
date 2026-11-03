@@ -18,6 +18,14 @@ const ITEM_NAMES: Record<string, string> = {
   '6-1': '業績與 KPI 指標跟進', '6-2': '人員 1-on-1 面談紀錄', '6-3': '團隊士氣與排班合理性'
 };
 
+const resolvePhotoUrl = (url?: string): string => {
+  if (!url) return '';
+  if (url.startsWith('/api/')) {
+    return import.meta.env.PROD ? url : `https://management-dashboard-rust.vercel.app${url}`;
+  }
+  return url;
+};
+
 export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) => {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxPair, setLightboxPair] = useState<{ beforeUrl: string; afterUrl: string; mode: 'before' | 'after' | 'compare' } | null>(null);
@@ -52,8 +60,18 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {activities.map((activity) => {
           const isExpanded = expandedId === activity.recordId;
-          const relatedItems = actionItems.filter(ai => ai.visitRecordId === activity.recordId || ai.sourceRecordId === activity.recordId);
-          const validPhotoPairs = (activity.photoPairs || []).filter(p => p && (p.beforeUrl || p.afterUrl));
+          const relatedItems = actionItems.filter(
+            ai =>
+              (ai.visitRecordId === activity.recordId || ai.sourceRecordId === activity.recordId) &&
+              !ai.desc?.includes('測試') &&
+              !ai.issueDescription?.includes('測試')
+          );
+          const validPhotoPairs = (activity.photoPairs || [])
+            .filter(p => p && (p.beforeUrl || p.afterUrl))
+            .map(p => ({
+              beforeUrl: resolvePhotoUrl(p.beforeUrl),
+              afterUrl: resolvePhotoUrl(p.afterUrl),
+            }));
           
           const coreAbnormals = (activity as any).coreChecks
             ? Object.entries((activity as any).coreChecks).filter(([_, val]) => val === '缺失')

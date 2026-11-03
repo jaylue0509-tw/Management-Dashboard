@@ -58,9 +58,19 @@ export const DashboardPage: React.FC = () => {
     try {
       const data = await getDashboardData(timeRange, 'all');
       if (data) {
-        let validManagers = (data.managers || []).filter((m: any) => !m.storeName?.includes('測試'));
-        let validActivities = (data.activities || []).filter((a: any) => !a.storeName?.includes('測試'));
-        let validActionItems = (data.actionItems || []).filter((i: any) => !i.storeName?.includes('測試'));
+        let validManagers = (data.managers || []).filter((m: any) => !m.storeName?.includes('測試') && !m.storeName?.includes('文心秀泰'));
+        let validActivities = (data.activities || []).filter((a: any) => {
+          if (a.storeName?.includes('測試') || a.storeName?.includes('文心秀泰')) return false;
+          if (a.recordId === '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c') return false;
+          if (Array.isArray(a.newActionItems) && a.newActionItems.some((item: any) => item?.desc?.includes('測試'))) return false;
+          return true;
+        });
+        let validActionItems = (data.actionItems || []).filter((i: any) => {
+          if (i.storeName?.includes('測試') || i.storeName?.includes('文心秀泰')) return false;
+          if (i.desc?.includes('測試') || i.issueDescription?.includes('測試')) return false;
+          if (i.sourceRecordId === '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c' || i.visitRecordId === '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c') return false;
+          return true;
+        });
 
         if (user?.role === 'manager') {
           const mgrName = user.name;
