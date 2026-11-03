@@ -40,14 +40,44 @@ const groupBy = <T, K extends keyof any>(list: T[], getKey: (item: T) => K) =>
     return previous;
   }, {} as Record<K, T[]>);
 
+const getTaipeiTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+
+const getTaipeiDateStr = (iso?: string) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+};
+
+const shiftDateStr = (dateStr: string, deltaDays: number) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  return dt.toISOString().slice(0, 10);
+};
+
+const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
+  const [y, m, d] = baseDateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + offsetWeeks * 7));
+  const dayOfWeek = dt.getUTCDay(); // 0 (Sun) .. 6 (Sat)
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const mon = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate() + diffToMonday));
+  const sun = new Date(Date.UTC(mon.getUTCFullYear(), mon.getUTCMonth(), mon.getUTCDate() + 6));
+  return {
+    start: mon.toISOString().slice(0, 10),
+    end: sun.toISOString().slice(0, 10),
+  };
+};
+
 export const DashboardPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'map'>('dashboard');
-  const [activities, setActivities] = useState<VisitRecord[]>([]);
+  const [allActivities, setAllActivities] = useState<VisitRecord[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [timeRange, setTimeRange] = useState<string>('all');
+  const [customStartDate, setCustomStartDate] = useState<string>(() => getTaipeiTodayStr());
+  const [customEndDate, setCustomEndDate] = useState<string>(() => getTaipeiTodayStr());
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [resolvingStore, setResolvingStore] = useState<{ store: string; reasons: string[]; reportTime?: string; recordId?: string } | null>(null);
@@ -57,9 +87,61 @@ export const DashboardPage: React.FC = () => {
   const [quickScheduleNote, setQuickScheduleNote] = useState('');
   const [quickScheduleDuration, setQuickScheduleDuration] = useState(240);
   const [quickScheduleManager, setQuickScheduleManager] = useState('');
+  const [quickScheduleDate, setQuickScheduleDate] = useState<string>(() => getTaipeiTodayStr());
   const [isSubmittingSchedule, setIsSubmittingSchedule] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
+
+  const handleTimeRangeChange = (nextRange: string) => {
+    const todayStr = getTaipeiTodayStr();
+    setTimeRange(nextRange);
+    if (nextRange === 'day') {
+      setCustomStartDate(todayStr);
+      setCustomEndDate(todayStr);
+    } else if (nextRange === 'week') {
+      const w = getTaipeiWeekBounds(todayStr, 0);
+      setCustomStartDate(w.start);
+      setCustomEndDate(w.end);
+    } else if (nextRange === 'last_week') {
+      const w = getTaipeiWeekBounds(todayStr, -1);
+      setCustomStartDate(w.start);
+      setCustomEndDate(w.end);
+    } else if (nextRange === 'month') {
+      setCustomStartDate(`${todayStr.slice(0, 7)}-01`);
+      setCustomEndDate(todayStr);
+    }
+  };
+
+  const activities = useMemo(() => {
+    if (timeRange === 'all') return allActivities;
+    const todayStr = getTaipeiTodayStr();
+    let startStr = customStartDate || todayStr;
+    let endStr = customEndDate || startStr;
+    if (timeRange === 'day') {
+      startStr = customStartDate || todayStr;
+      endStr = startStr;
+    } else if (timeRange === 'week') {
+      const w = getTaipeiWeekBounds(customStartDate || todayStr, 0);
+      startStr = w.start;
+      endStr = w.end;
+    } else if (timeRange === 'last_week') {
+      const w = getTaipeiWeekBounds(todayStr, -1);
+      startStr = w.start;
+      endStr = w.end;
+    } else if (timeRange === 'month') {
+      const baseMonth = (customStartDate || todayStr).slice(0, 7);
+      return allActivities.filter(a => getTaipeiDateStr(a.createdAt).startsWith(baseMonth));
+    }
+    if (startStr > endStr) {
+      const tmp = startStr;
+      startStr = endStr;
+      endStr = tmp;
+    }
+    return allActivities.filter(a => {
+      const dStr = getTaipeiDateStr(a.createdAt);
+      return dStr >= startStr && dStr <= endStr;
+    });
+  }, [allActivities, timeRange, customStartDate, customEndDate]);
 
   const handleQuickSubmitSchedule = async () => {
     if (isSubmittingSchedule) return;
@@ -88,7 +170,9 @@ export const DashboardPage: React.FC = () => {
           highlightDescription: noteText,
           abnormalFlag: false,
           photoPairs: [],
-          createdAt: new Date().toISOString()
+          createdAt: quickScheduleDate === getTaipeiTodayStr()
+            ? new Date().toISOString()
+            : new Date(`${quickScheduleDate}T09:00:00+08:00`).toISOString()
         })
       });
       if (res.ok) {
@@ -135,11 +219,11 @@ export const DashboardPage: React.FC = () => {
   };
 
   const fetchData = async (isBackground = false) => {
-    if (!isBackground && managers.length === 0 && activities.length === 0) setLoading(true);
+    if (!isBackground && managers.length === 0 && allActivities.length === 0) setLoading(true);
     else setIsRefreshing(true);
 
     try {
-      const data = await getDashboardData(timeRange, 'all');
+      const data = await getDashboardData('all', 'all');
       if (data) {
         let validManagers = (data.managers || []).filter((m: any) => !m.storeName?.includes('測試') && !m.storeName?.includes('文心秀泰'));
         let validActivities = (data.activities || []).filter((a: any) => {
@@ -164,7 +248,7 @@ export const DashboardPage: React.FC = () => {
         }
 
         setManagers(validManagers);
-        setActivities(validActivities);
+        setAllActivities(validActivities);
         setActionItems(validActionItems);
       }
     } catch (err) {
@@ -184,7 +268,7 @@ export const DashboardPage: React.FC = () => {
     }, 300000);
 
     return () => clearInterval(intervalId);
-  }, [timeRange]);
+  }, []);
 
   const uniqueManagers = useMemo(() => {
     let sourceManagers = managers;
@@ -198,23 +282,15 @@ export const DashboardPage: React.FC = () => {
     }
     const SPECIAL_TYPES = new Set(['總部行程', '會議行程', '特殊行程']);
     return entries.map(([name, stores]) => {
-      // 找出該主管所有動態
-      const managerActivities = activities.filter(a => a.areaManagerName === name);
+      // 找出該主管於目前所選時間區間 / 指定日期內的動態
+      const periodActivities = activities.filter(a => a.areaManagerName === name);
 
-      // 過濾出「今日」的動態
-      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
-      const todayActivities = managerActivities.filter(a => {
-        if (!a.createdAt) return false;
-        const dStr = new Date(a.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
-        return dStr === todayStr;
-      });
+      const periodStoreActivities = periodActivities.filter(a => !SPECIAL_TYPES.has(a.actionType));
+      const periodScheduleActivities = periodActivities.filter(a => SPECIAL_TYPES.has(a.actionType));
 
-      const todayStoreActivities = todayActivities.filter(a => !SPECIAL_TYPES.has(a.actionType));
-      const todayScheduleActivities = todayActivities.filter(a => SPECIAL_TYPES.has(a.actionType));
-
-      // 找出該主管今日填寫了哪些「獨立的門市」
-      const visitedStores = Array.from(new Set(todayStoreActivities.map(a => a.storeName)));
-      const todaySchedules = todayScheduleActivities.map(a => ({
+      // 找出該主管在所選區間內填寫了哪些「獨立的門市」
+      const visitedStores = Array.from(new Set(periodStoreActivities.map(a => a.storeName)));
+      const todaySchedules = periodScheduleActivities.map(a => ({
         type: a.actionType,
         note: a.highlightDescription || a.immediateImprovement || a.storeName || a.actionType,
         duration: a.expectedStayMinutes
@@ -224,7 +300,7 @@ export const DashboardPage: React.FC = () => {
       const assignedStoreCount = stores.length;
       const region = stores[0]?.region || '';
       const expectedStayByStore = new Map<string, number>();
-      todayActivities.forEach(a => {
+      periodActivities.forEach(a => {
         const key = `${a.actionType}-${a.storeName}`;
         const existing = expectedStayByStore.get(key) || 0;
         if ((a.expectedStayMinutes || 0) > existing) {
@@ -234,12 +310,12 @@ export const DashboardPage: React.FC = () => {
       const expectedStayMinutes = Array.from(expectedStayByStore.values()).reduce((acc, curr) => acc + curr, 0);
 
       let visitStatus: '尚未回填' | '巡店中' | '已完成' | '總部行程' | '會議行程' | '特殊行程' = '尚未回填';
-      if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) {
+      if (todaySchedules.length > 0 && todayVisitCount === 0) {
+        visitStatus = todaySchedules[0].type as '總部行程' | '會議行程' | '特殊行程';
+      } else if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) {
         visitStatus = '巡店中';
       } else if (todayVisitCount > 0 && todayVisitCount >= assignedStoreCount) {
         visitStatus = '已完成';
-      } else if (todaySchedules.length > 0) {
-        visitStatus = todaySchedules[0].type as '總部行程' | '會議行程' | '特殊行程';
       }
 
       return {
@@ -254,7 +330,7 @@ export const DashboardPage: React.FC = () => {
         expectedStayMinutes
       };
     });
-  }, [managers, activities]);
+  }, [managers, activities, user]);
 
   const filteredManagers = useMemo(() => {
     // 區主管只看自己，不受處別篩選干擾
@@ -559,13 +635,6 @@ export const DashboardPage: React.FC = () => {
         };
       });
 
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
-    const todayActivitiesList = targetActivities.filter(a => {
-      if (!a.createdAt) return false;
-      const dStr = new Date(a.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
-      return dStr === todayStr;
-    });
-
     // Build store lists
     const redLightStoresList = Array.from(latestRatingByStore.entries())
       .filter(([_, data]) => data.rating === '需重點輔導')
@@ -597,7 +666,10 @@ export const DashboardPage: React.FC = () => {
         return { store, reasons, reportTime };
       });
 
-    const visitStoresList = Array.from(new Set(todayActivitiesList.map(a => a.storeName)));
+    const periodStoreActivities = targetActivities.filter(
+      a => !['總部行程', '會議行程', '特殊行程'].includes(a.actionType || '')
+    );
+    const visitStoresList = Array.from(new Set(periodStoreActivities.map(a => a.storeName)));
 
     // Group abnormal activities by store and take the latest one
     const latestAbnormalByStore = new Map<string, any>();
@@ -683,7 +755,7 @@ export const DashboardPage: React.FC = () => {
 
     return {
       dynamicSummary: {
-        totalVisits: todayActivitiesList.length,
+        totalVisits: periodStoreActivities.length,
         completedManagersCount: 0,
         pendingManagersCount: 0,
         visitedStoresCount: 0,
@@ -716,14 +788,14 @@ export const DashboardPage: React.FC = () => {
         selectedDepartment={selectedDepartment}
         onDepartmentChange={setSelectedDepartment}
         timeRange={timeRange}
-        onTimeRangeChange={setTimeRange}
+        onTimeRangeChange={handleTimeRangeChange}
       />
 
       <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '0 24px' }}>
         {/* Tab Bar */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          marginBottom: '22px',
+          marginBottom: '14px',
           borderBottom: '1px solid #e5e7eb',
         }}>
           <div style={{ display: 'flex', gap: '4px' }}>
@@ -777,6 +849,133 @@ export const DashboardPage: React.FC = () => {
             <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
             {isRefreshing ? '更新中...' : '立即更新'}
           </button>
+        </div>
+
+        {/* 時間區間（今日／本週／上週／本月／全部）與自選日期快速篩選列 */}
+        <div className="mb-4 bg-white border border-gray-200 rounded-2xl p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+          {/* 左側：今日 / 本週 / 上週 / 本月 / 自選日期 / 所有紀錄 快速切換 */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {([
+              { id: 'day', label: '今日' },
+              { id: 'week', label: '本週' },
+              { id: 'last_week', label: '上週' },
+              { id: 'month', label: '本月' },
+              { id: 'custom', label: '📅 自選日期' },
+              { id: 'all', label: '所有紀錄' },
+            ] as const).map(opt => {
+              const active = timeRange === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => handleTimeRangeChange(opt.id)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    active
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 右側：日期選擇器（支援單日快速前後切換、本週前後週切換、或自訂起迄日期） */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                if (timeRange === 'week' || timeRange === 'last_week') {
+                  const prevW = getTaipeiWeekBounds(customStartDate || getTaipeiTodayStr(), -1);
+                  setCustomStartDate(prevW.start);
+                  setCustomEndDate(prevW.end);
+                  setTimeRange('custom');
+                } else {
+                  const prevDay = shiftDateStr(customStartDate || getTaipeiTodayStr(), -1);
+                  setCustomStartDate(prevDay);
+                  setCustomEndDate(prevDay);
+                  setTimeRange('day');
+                }
+              }}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors cursor-pointer"
+              title={timeRange === 'week' || timeRange === 'last_week' ? '切換至前一週' : '切換至前一天'}
+            >
+              ◀ {timeRange === 'week' || timeRange === 'last_week' ? '前一週' : '前一日'}
+            </button>
+
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1">
+              <span className="text-[11px] font-bold text-gray-500">日期：</span>
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (!val) return;
+                  setCustomStartDate(val);
+                  if (timeRange === 'day') {
+                    setCustomEndDate(val);
+                  } else if (timeRange === 'week') {
+                    const w = getTaipeiWeekBounds(val, 0);
+                    setCustomStartDate(w.start);
+                    setCustomEndDate(w.end);
+                  } else {
+                    if (val > customEndDate) setCustomEndDate(val);
+                    setTimeRange('custom');
+                  }
+                }}
+                className="text-xs font-semibold text-gray-800 bg-transparent outline-none cursor-pointer"
+              />
+              {(timeRange === 'week' || timeRange === 'last_week' || timeRange === 'month' || timeRange === 'custom') && (
+                <>
+                  <span className="text-xs text-gray-400 font-bold">～</span>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (!val) return;
+                      setCustomEndDate(val);
+                      if (val < customStartDate) setCustomStartDate(val);
+                      setTimeRange('custom');
+                    }}
+                    className="text-xs font-semibold text-gray-800 bg-transparent outline-none cursor-pointer"
+                  />
+                </>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (timeRange === 'week' || timeRange === 'last_week') {
+                  const nextW = getTaipeiWeekBounds(customStartDate || getTaipeiTodayStr(), 1);
+                  setCustomStartDate(nextW.start);
+                  setCustomEndDate(nextW.end);
+                  setTimeRange('custom');
+                } else {
+                  const nextDay = shiftDateStr(customStartDate || getTaipeiTodayStr(), 1);
+                  setCustomStartDate(nextDay);
+                  setCustomEndDate(nextDay);
+                  setTimeRange('day');
+                }
+              }}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors cursor-pointer"
+              title={timeRange === 'week' || timeRange === 'last_week' ? '切換至下一週' : '切換至後一天'}
+            >
+              {timeRange === 'week' || timeRange === 'last_week' ? '下一週' : '後一日'} ▶
+            </button>
+
+            {customStartDate !== getTaipeiTodayStr() && timeRange === 'day' && (
+              <button
+                type="button"
+                onClick={() => handleTimeRangeChange('day')}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer"
+              >
+                回到今日
+              </button>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -884,6 +1083,16 @@ export const DashboardPage: React.FC = () => {
                       </select>
                     </div>
                   )}
+
+                  <div className="mb-4">
+                    <label className="block text-xs font-bold text-gray-700 mb-1.5">行程日期</label>
+                    <input
+                      type="date"
+                      value={quickScheduleDate}
+                      onChange={e => setQuickScheduleDate(e.target.value || getTaipeiTodayStr())}
+                      className="w-full border border-gray-200 rounded-xl px-3.5 py-2 text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
 
                   <div className="mb-4">
                     <label className="block text-xs font-bold text-gray-700 mb-1.5">行程類型</label>
@@ -1097,9 +1306,24 @@ export const DashboardPage: React.FC = () => {
             {activeTab === 'dashboard' ? (
               <>
                 {(() => {
-                  const timeRangeText = timeRange === 'day' ? '今日' : timeRange === 'week' ? '本週' : timeRange === 'last_week' ? '上週' : timeRange === 'month' ? '本月' : '全部';
+                  const fmtShort = (d: string) => d ? d.slice(5).replace('-', '/') : '';
+                  const todayStr = getTaipeiTodayStr();
+                  let timeRangeText = '全部';
+                  if (timeRange === 'day') {
+                    timeRangeText = customStartDate === todayStr ? '今日' : `${fmtShort(customStartDate)}`;
+                  } else if (timeRange === 'week') {
+                    timeRangeText = `本週 ${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
+                  } else if (timeRange === 'last_week') {
+                    timeRangeText = `上週 ${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
+                  } else if (timeRange === 'month') {
+                    timeRangeText = '本月';
+                  } else if (timeRange === 'custom') {
+                    timeRangeText = customStartDate === customEndDate
+                      ? `${fmtShort(customStartDate)}`
+                      : `${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
+                  }
                   const fullRegionLabel = `${selectedDepartment === 'all' ? '全區' : selectedDepartment} (${timeRangeText})`;
-                  return <SummaryCards summary={dynamicSummary} regionLabel={fullRegionLabel} />;
+                  return <SummaryCards summary={dynamicSummary} regionLabel={fullRegionLabel} periodLabel={timeRangeText} />;
                 })()}
 
                 {/* Charts Row */}
@@ -1126,7 +1350,21 @@ export const DashboardPage: React.FC = () => {
                     managers={filteredManagers}
                     selectedManager={selectedManager}
                     onSelect={setSelectedManager}
-                    timeRangeLabel={timeRange === 'day' ? '今日' : timeRange === 'week' ? '本週' : '本月'}
+                    timeRangeLabel={
+                      timeRange === 'day'
+                        ? (customStartDate === getTaipeiTodayStr() ? '今日' : customStartDate.slice(5).replace('-', '/'))
+                        : timeRange === 'week'
+                        ? '本週'
+                        : timeRange === 'last_week'
+                        ? '上週'
+                        : timeRange === 'month'
+                        ? '本月'
+                        : timeRange === 'custom'
+                        ? (customStartDate === customEndDate
+                            ? customStartDate.slice(5).replace('-', '/')
+                            : `${customStartDate.slice(5).replace('-', '/')}~${customEndDate.slice(5).replace('-', '/')}`)
+                        : '累計'
+                    }
                   />
                   <main style={{ flex: 1, width: '100%', minWidth: 0 }}>
                     <TopIssuesList

@@ -120,7 +120,7 @@ const MetricCard: React.FC<MetricCardProps> = ({
   </div>
 );
 
-export const SummaryCards: React.FC<Props & { regionLabel?: string }> = ({ summary, regionLabel = '全區' }) => {
+export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?: string }> = ({ summary, regionLabel = '全區', periodLabel = '今日' }) => {
   const [activeCard, setActiveCard] = React.useState<MetricCardProps | null>(null);
 
   if (!summary) return null;
@@ -170,13 +170,13 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string }> = ({ summa
     },
     {
       icon: <ClipboardList size={19} color="#7c3aed" />,
-      label: '今日回報次數',
+      label: `${periodLabel}回報次數`,
       value: summary.totalVisits,
       unit: '筆',
       valueColor: '#7c3aed',
       iconBg: '#f5f3ff',
       borderTop: '#8b5cf6',
-      description: '在今日 (00:00~23:59) 系統成功接收到來自前線區主管所送出的「巡店紀錄表單」的總筆數。',
+      description: `在所選區間 (${periodLabel}) 系統成功接收到來自前線區主管所送出的「巡店紀錄表單」總筆數。`,
       storeList: summary.visitStoresList || [],
     },
     {

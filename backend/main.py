@@ -580,7 +580,7 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
                 
-            query += " ORDER BY created_at DESC LIMIT 100"
+            query += " ORDER BY created_at DESC LIMIT 500"
             
             cur.execute(query, tuple(params))
             rows = cur.fetchall()
@@ -1403,7 +1403,7 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
                 
-            query += " ORDER BY created_at DESC LIMIT 100"
+            query += " ORDER BY created_at DESC LIMIT 500"
             cur.execute(query, tuple(params))
             activities = [
                 r[0] for r in cur.fetchall()

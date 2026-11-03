@@ -23,11 +23,12 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
   }, []);
 
   const timeOptions = [
-    { value: 'all', label: '所有紀錄' },
     { value: 'day', label: '今日動態' },
     { value: 'week', label: '本週動態' },
     { value: 'last_week', label: '上週動態' },
     { value: 'month', label: '本月動態' },
+    { value: 'custom', label: '📅 自選日期' },
+    { value: 'all', label: '所有紀錄' },
   ];
 
   const deptOptions = [
