@@ -38,6 +38,10 @@ export const AuditApp = () => {
   const [defectPhotos, setDefectPhotos] = useState<Record<string, { beforeUrl: string; afterUrl: string }>>({});
   
   const [overallRating, setOverallRating] = useState('');
+  const [taskType, setTaskType] = useState<'實地巡店' | '總部行程' | '會議行程' | '特殊行程'>('實地巡店');
+  const [scheduleNote, setScheduleNote] = useState('');
+  const [scheduleLocation, setScheduleLocation] = useState('');
+  const [scheduleDuration, setScheduleDuration] = useState<number>(240);
 
   // --- Local Storage Auto Save & Safe Recovery ---
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -145,6 +149,18 @@ export const AuditApp = () => {
       } catch (e) {
         console.error('Failed to parse draft', e);
       }
+    }
+    const params = new URLSearchParams(window.location.search);
+    const queryStore = params.get('store')?.trim();
+    const querySchedule = params.get('schedule')?.trim();
+    if (queryStore) {
+      setTaskType('實地巡店');
+      setStoreName(queryStore);
+      setCurrentStep(1);
+      fetchActionItems(queryStore);
+    } else if (querySchedule) {
+      setTaskType('總部行程');
+      setCurrentStep(1);
     }
     setIsDraftRestored(true);
   }, [user]);
@@ -392,6 +408,67 @@ export const AuditApp = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitStatusText, setSubmitStatusText] = useState('');
 
+  const submitScheduleForm = async () => {
+    if (submitting) return;
+    if (!scheduleNote.trim()) {
+      return alert('請填寫當日行程／任務內容說明（將顯示於戰情牆）');
+    }
+    setSubmitting(true);
+    setSubmitStatusText(`正在回報當日${taskType}...`);
+
+    let detectedRegion = '';
+    const refStore = (user?.assigned_stores && user.assigned_stores[0]) || '';
+    if (refStore) {
+      for (const [r, stores] of Object.entries(storeRegions)) {
+        if (stores.includes(refStore)) {
+          detectedRegion = r;
+          break;
+        }
+      }
+    }
+
+    const payload = {
+      storeName: scheduleLocation.trim() || taskType,
+      region: detectedRegion,
+      areaManagerName: user?.name || mgrName,
+      jobTitle: '區主管',
+      actionType: taskType,
+      expectedStayMinutes: scheduleDuration || 240,
+      tags: [taskType, '當日行程'],
+      immediateImprovement: '',
+      highlightDescription: scheduleNote.trim(),
+      abnormalFlag: false,
+      photoPairs: [],
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const targetUrl = import.meta.env.PROD
+        ? '/api/visit-records'
+        : 'https://management-dashboard-rust.vercel.app/api/visit-records';
+      const res = await fetch(targetUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        throw new Error(`伺服器回應 ${res.status}`);
+      }
+      setScheduleNote('');
+      setScheduleLocation('');
+      alert(`✅ 已成功回報當日「${taskType}」！戰情牆已即時更新您的行程狀態。`);
+      navigate('/dashboard');
+    } catch (e: any) {
+      alert(`⚠️ 行程回報失敗（${e?.message || '網路異常'}），請稍後再試。`);
+    } finally {
+      setSubmitting(false);
+      setSubmitStatusText('');
+    }
+  };
+
   const submitForm = async () => {
     if (submitting) return;
     if (!storeName) return alert('請選擇門市名稱');
@@ -560,9 +637,123 @@ export const AuditApp = () => {
     <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3 flex items-center gap-2">
         <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">1</span>
-        基本資訊與模式
+        當日作業與行程選擇
       </h2>
       <div className="space-y-5">
+        {/* 當日行程類型選擇：實地巡店 / 總部行程 / 會議行程 / 特殊行程 */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            當日行程類型 <span className="text-red-500">*</span>
+            <span className="text-xs font-normal text-gray-500 ml-2">（若有總部、會議或特殊任務請點選對應行程，將直接顯示於戰情牆）</span>
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {([
+              { key: '實地巡店', icon: '🏪', label: '門市實地巡店', sub: '常規門市查核' },
+              { key: '總部行程', icon: '🏢', label: '總部行程', sub: '總部辦公/公務' },
+              { key: '會議行程', icon: '📅', label: '會議行程', sub: '月會/專案會議' },
+              { key: '特殊行程', icon: '⭐', label: '特殊行程', sub: '支援/教育訓練' },
+            ] as const).map(opt => {
+              const active = taskType === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setTaskType(opt.key)}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${
+                    active
+                      ? 'bg-indigo-50 border-indigo-600 shadow-sm ring-1 ring-indigo-500'
+                      : 'bg-white border-gray-200 hover:border-indigo-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="text-base font-bold text-gray-900 flex items-center gap-1.5">
+                    <span>{opt.icon}</span>
+                    <span>{opt.label}</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">{opt.sub}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {taskType !== '實地巡店' ? (
+          <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-indigo-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-indigo-950">
+                  {taskType === '總部行程' ? '🏢' : taskType === '會議行程' ? '📅' : '⭐'} 登記當日「{taskType}」
+                </h3>
+                <p className="text-xs text-indigo-700 mt-0.5">
+                  送出後，戰情牆上方與左側主管進度將同步顯示您的「{taskType}」與任務內容，不會顯示為尚未巡店。
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-gray-800 mb-1.5">
+                任務／行程內容說明 <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                rows={3}
+                value={scheduleNote}
+                onChange={e => setScheduleNote(e.target.value)}
+                placeholder={`例如：參加總部營運月會、教育訓練課程、跨區支援專案...`}
+                className="w-full border border-indigo-200 rounded-xl px-4 py-3 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-1.5">
+                  行程地點／對象 <span className="text-gray-400 font-normal text-xs">（選填）</span>
+                </label>
+                <input
+                  type="text"
+                  value={scheduleLocation}
+                  onChange={e => setScheduleLocation(e.target.value)}
+                  placeholder={`預設顯示「${taskType}」，可填總部或地點`}
+                  className="w-full border border-indigo-200 rounded-xl px-4 py-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-1.5">
+                  預計行程時數（分鐘）
+                </label>
+                <div className="flex gap-2">
+                  {[
+                    { mins: 120, label: '2小時' },
+                    { mins: 240, label: '半天(4h)' },
+                    { mins: 480, label: '全天(8h)' },
+                  ].map(d => (
+                    <button
+                      key={d.mins}
+                      type="button"
+                      onClick={() => setScheduleDuration(d.mins)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-colors ${
+                        scheduleDuration === d.mins
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white text-gray-700 border-gray-200 hover:bg-indigo-50'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={submitScheduleForm}
+              disabled={submitting}
+              className="w-full py-3.5 px-5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <CheckCircle2 size={18} />
+              {submitting ? '正在送出行程...' : `立即回報當日「${taskType}」並顯示於戰情牆`}
+            </button>
+          </div>
+        ) : (
+          <>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-1">巡店門市 <span className="text-red-500">*</span></label>
             <select
@@ -680,6 +871,8 @@ export const AuditApp = () => {
               ))}
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
     </section>
@@ -1360,7 +1553,15 @@ export const AuditApp = () => {
               </button>
             )}
             
-            {currentStep < totalSteps ? (
+            {currentStep === 1 && taskType !== '實地巡店' ? (
+              <button
+                onClick={submitScheduleForm}
+                disabled={submitting}
+                className="flex-[2] py-3 px-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:from-indigo-700 hover:to-blue-700 transition-colors shadow-md shadow-indigo-500/30"
+              >
+                <Save size={16} /> {submitting ? '正在送出行程...' : `送出當日「${taskType}」`}
+              </button>
+            ) : currentStep < totalSteps ? (
               <button
                 onClick={handleNext}
                 className="flex-[2] py-3 px-4 bg-blue-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-md shadow-blue-500/30"

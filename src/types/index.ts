@@ -12,8 +12,9 @@ export interface Manager {
   todayVisitCount?: number;
   assignedStoreCount?: number;
   hasAbnormal?: boolean;
-  visitStatus?: '尚未回填' | '巡店中' | '已完成';
+  visitStatus?: '尚未回填' | '巡店中' | '已完成' | '總部行程' | '會議行程' | '特殊行程';
   visitedStores?: string[];
+  todaySchedules?: { type: string; note: string; duration?: number }[];
   expectedStayMinutes?: number;
 }
 

@@ -101,10 +101,11 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
               }
             }
           }
-          const isAbnormal = abnormalChecks.length > 0 || hasRealDefectInNotes;
+          const isSpecialSchedule = ['總部行程', '會議行程', '特殊行程'].includes(activity.actionType || '');
+          const isAbnormal = !isSpecialSchedule && (abnormalChecks.length > 0 || hasRealDefectInNotes);
             
           const hasDetail = !!(activity.immediateImprovement || activity.highlightDescription || relatedItems.length > 0 || abnormalChecks.length > 0 || validPhotoPairs.length > 0);
-          const accentColor = isAbnormal ? '#e11d48' : '#3b82f6';
+          const accentColor = isSpecialSchedule ? '#6366f1' : isAbnormal ? '#e11d48' : '#3b82f6';
 
           return (
             <div
@@ -194,6 +195,21 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
                         </span>
                       )}
                     </div>
+
+                    {isSpecialSchedule && activity.highlightDescription && (
+                      <div style={{
+                        marginTop: '8px',
+                        padding: '7px 11px',
+                        background: '#eef2ff',
+                        border: '1px solid #c7d2fe',
+                        borderRadius: '8px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        color: '#3730a3',
+                      }}>
+                        📋 任務說明：{activity.highlightDescription}
+                      </div>
+                    )}
 
                     {/* Tags */}
                     {(activity.tags?.length > 0 || isAbnormal || validPhotoPairs.length > 0) && (

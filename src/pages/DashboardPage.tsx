@@ -13,7 +13,8 @@ import { IssuePieChart } from '../components/charts/IssuePieChart';
 import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
 import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardSignature, Search, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -49,7 +50,89 @@ export const DashboardPage: React.FC = () => {
   const [timeRange, setTimeRange] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [resolvingStore, setResolvingStore] = useState<{ store: string; reasons: string[]; reportTime?: string; recordId?: string } | null>(null);
+  const [isSubmittingResolve, setIsSubmittingResolve] = useState(false);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [quickScheduleType, setQuickScheduleType] = useState<'總部行程' | '會議行程' | '特殊行程'>('總部行程');
+  const [quickScheduleNote, setQuickScheduleNote] = useState('');
+  const [quickScheduleDuration, setQuickScheduleDuration] = useState(240);
+  const [quickScheduleManager, setQuickScheduleManager] = useState('');
+  const [isSubmittingSchedule, setIsSubmittingSchedule] = useState(false);
   const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const handleQuickSubmitSchedule = async () => {
+    if (isSubmittingSchedule) return;
+    const targetMgr = user?.role === 'manager' ? user.name : (quickScheduleManager || user?.name || '區主管');
+    const noteText = quickScheduleNote.trim() || `執行當日${quickScheduleType}`;
+    setIsSubmittingSchedule(true);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
+      const mgrRecord = managers.find(m => m.areaManagerName === targetMgr);
+      const res = await fetch(`${apiBase}/visit-records`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          storeName: quickScheduleType,
+          region: mgrRecord?.region || '',
+          department: mgrRecord?.department || '',
+          areaManagerName: targetMgr,
+          jobTitle: '區主管',
+          actionType: quickScheduleType,
+          expectedStayMinutes: quickScheduleDuration || 240,
+          tags: [quickScheduleType, '當日行程'],
+          immediateImprovement: '',
+          highlightDescription: noteText,
+          abnormalFlag: false,
+          photoPairs: [],
+          createdAt: new Date().toISOString()
+        })
+      });
+      if (res.ok) {
+        setScheduleModalOpen(false);
+        setQuickScheduleNote('');
+        await fetchData(true);
+      } else {
+        alert('行程登記失敗，請稍後再試');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('網路連線異常，請稍後再試');
+    } finally {
+      setIsSubmittingSchedule(false);
+    }
+  };
+
+  const handleResolveStorePdca = async (storeName: string) => {
+    if (isSubmittingResolve) return;
+    setIsSubmittingResolve(true);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
+      const res = await fetch(`${apiBase}/pdca/resolve-store`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ storeName, resolvedBy: user?.name || '區主管' })
+      });
+      if (res.ok) {
+        setResolvingStore(null);
+        await fetchData(true);
+        alert(`✅ 已將「${storeName}」標記為改善完成結案！`);
+      } else {
+        alert('結案儲存失敗，請稍後再試');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('網路連線異常，請稍後再試');
+    } finally {
+      setIsSubmittingResolve(false);
+    }
+  };
 
   const fetchData = async (isBackground = false) => {
     if (!isBackground && managers.length === 0 && activities.length === 0) setLoading(true);
@@ -113,6 +196,7 @@ export const DashboardPage: React.FC = () => {
     if (user?.role === 'manager') {
       entries = entries.filter(([name]) => name === user.name);
     }
+    const SPECIAL_TYPES = new Set(['總部行程', '會議行程', '特殊行程']);
     return entries.map(([name, stores]) => {
       // 找出該主管所有動態
       const managerActivities = activities.filter(a => a.areaManagerName === name);
@@ -125,24 +209,38 @@ export const DashboardPage: React.FC = () => {
         return dStr === todayStr;
       });
 
+      const todayStoreActivities = todayActivities.filter(a => !SPECIAL_TYPES.has(a.actionType));
+      const todayScheduleActivities = todayActivities.filter(a => SPECIAL_TYPES.has(a.actionType));
+
       // 找出該主管今日填寫了哪些「獨立的門市」
-      const visitedStores = Array.from(new Set(todayActivities.map(a => a.storeName)));
+      const visitedStores = Array.from(new Set(todayStoreActivities.map(a => a.storeName)));
+      const todaySchedules = todayScheduleActivities.map(a => ({
+        type: a.actionType,
+        note: a.highlightDescription || a.immediateImprovement || a.storeName || a.actionType,
+        duration: a.expectedStayMinutes
+      }));
 
       const todayVisitCount = visitedStores.length;
       const assignedStoreCount = stores.length;
       const region = stores[0]?.region || '';
       const expectedStayByStore = new Map<string, number>();
       todayActivities.forEach(a => {
-        const existing = expectedStayByStore.get(a.storeName) || 0;
+        const key = `${a.actionType}-${a.storeName}`;
+        const existing = expectedStayByStore.get(key) || 0;
         if ((a.expectedStayMinutes || 0) > existing) {
-          expectedStayByStore.set(a.storeName, a.expectedStayMinutes || 0);
+          expectedStayByStore.set(key, a.expectedStayMinutes || 0);
         }
       });
       const expectedStayMinutes = Array.from(expectedStayByStore.values()).reduce((acc, curr) => acc + curr, 0);
 
-      let visitStatus: '尚未回填' | '巡店中' | '已完成' = '尚未回填';
-      if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) visitStatus = '巡店中';
-      if (todayVisitCount > 0 && todayVisitCount >= assignedStoreCount) visitStatus = '已完成';
+      let visitStatus: '尚未回填' | '巡店中' | '已完成' | '總部行程' | '會議行程' | '特殊行程' = '尚未回填';
+      if (todayVisitCount > 0 && todayVisitCount < assignedStoreCount) {
+        visitStatus = '巡店中';
+      } else if (todayVisitCount > 0 && todayVisitCount >= assignedStoreCount) {
+        visitStatus = '已完成';
+      } else if (todaySchedules.length > 0) {
+        visitStatus = todaySchedules[0].type as '總部行程' | '會議行程' | '特殊行程';
+      }
 
       return {
         ...stores[0],
@@ -152,6 +250,7 @@ export const DashboardPage: React.FC = () => {
         todayVisitCount,
         visitStatus,
         visitedStores,
+        todaySchedules,
         expectedStayMinutes
       };
     });
@@ -223,6 +322,10 @@ export const DashboardPage: React.FC = () => {
     };
 
     targetActivities.forEach(a => {
+      if (a.actionType === '總部行程' || a.actionType === '會議行程' || a.actionType === '特殊行程') {
+        a.abnormalFlag = false;
+        return;
+      }
       const coreAbnormals = (a as any).coreChecks
         ? Object.entries((a as any).coreChecks).filter(([_, val]) => val === '缺失')
         : [];
@@ -508,16 +611,39 @@ export const DashboardPage: React.FC = () => {
 
     const abnormalStoresList = Array.from(latestAbnormalByStore.entries()).map(([store, activity]) => {
       const reasons: string[] = [];
+      if ((activity as any).coreChecks) {
+        Object.entries((activity as any).coreChecks).forEach(([key, val]) => {
+          if (val === '缺失' && ITEM_NAMES[key]) {
+            reasons.push(`${ITEM_NAMES[key]} (${val})`);
+          }
+        });
+      }
       if (activity.categoryChecks) {
         Object.entries(activity.categoryChecks).forEach(([key, val]) => {
           if (val === '缺失' || val === '待改善') {
             if (ITEM_NAMES[key]) {
               reasons.push(`${ITEM_NAMES[key]} (${val})`);
+            } else {
+              reasons.push(`${key} (${val})`);
             }
           }
         });
       }
-      if (reasons.length === 0) reasons.push('有異常事項');
+      if (reasons.length === 0 && activity.immediateImprovement) {
+        const lines = activity.immediateImprovement.split('\n').filter((line: string) => line.trim() && !line.includes('紀錄缺失項目'));
+        for (const line of lines) {
+          const sepIdx = line.indexOf('：') !== -1 ? line.indexOf('：') : line.indexOf(':');
+          const hasSep = sepIdx !== -1;
+          const title = hasSep ? line.substring(0, sepIdx).trim() : line;
+          const content = hasSep ? line.substring(sepIdx + 1).trim() : '';
+          const isNeutral = title.includes('姓名') || title.includes('簽名') || title.includes('反饋') || title.includes('店名');
+          const isOk = hasSep ? (!content || content === '無' || content === '無缺失' || content === '正常') : (title === '無' || title === '無缺失' || title === '正常');
+          if (!isNeutral && !isOk) {
+            reasons.push(hasSep ? `${title}：${content}` : title);
+          }
+        }
+      }
+      if (reasons.length === 0) reasons.push('有異常事項待複查');
 
       let reportTime = '';
       if (activity.createdAt) {
@@ -528,14 +654,32 @@ export const DashboardPage: React.FC = () => {
         const mm = d.getMinutes().toString().padStart(2, '0');
         reportTime = `${m}/${dd} ${hh}:${mm}`;
       }
-      return { store, reasons, reportTime };
+      return {
+        store,
+        reasons,
+        reportTime,
+        recordId: activity.recordId,
+        pdcaResolved: !!(activity as any).pdcaResolved
+      };
     });
 
     const visitedStoresList = Array.from(visitedStoresSet);
     const unvisitedStoresList = allAssignedStoresList.filter(s => !visitedStoresSet.has(s));
 
-    const closedPdcaStores = Array.from(new Set(validActionItems.filter(ai => ai.status === 'Closed').map(ai => ai.storeName)));
-    const openPdcaStores = Array.from(new Set(validActionItems.filter(ai => ai.status !== 'Closed').map(ai => ai.storeName)));
+    const resolvedAbnormalStores = abnormalStoresList.filter(s => s.pdcaResolved).map(s => s.store);
+    const closedPdcaStores = Array.from(new Set([
+      ...validActionItems.filter(ai => ai.status === 'Closed').map(ai => ai.storeName),
+      ...resolvedAbnormalStores
+    ]));
+    const unresolvedList = abnormalStoresList.filter(s => !s.pdcaResolved && !closedPdcaStores.includes(s.store));
+    const openPdcaStores = Array.from(new Set([
+      ...validActionItems.filter(ai => ai.status !== 'Closed').map(ai => ai.storeName),
+      ...unresolvedList.map(s => s.store)
+    ]));
+    const totalPdcaStoresCount = closedPdcaStores.length + openPdcaStores.length;
+    const computedPdcaRate = totalPdcaStoresCount > 0
+      ? Math.round((closedPdcaStores.length / totalPdcaStoresCount) * 100)
+      : pdcaRate;
 
     return {
       dynamicSummary: {
@@ -548,7 +692,7 @@ export const DashboardPage: React.FC = () => {
         totalExpectedStayMinutes: expectedStay,
         highlightCount: highlightCount,
         coverageRate,
-        pdcaRate,
+        pdcaRate: computedPdcaRate,
         redLightStores: redLightStoresCount,
         assignedStoresCount: totalAssignedStores,
         uniqueVisitedStoresCount: uniqueVisitedStoresInPeriod,
@@ -562,7 +706,7 @@ export const DashboardPage: React.FC = () => {
       pieData: pData,
       riskData,
       topIssues,
-      unresolvedStores: abnormalStoresList.filter(s => !closedPdcaStores.includes(s.store))
+      unresolvedStores: unresolvedList
     };
   }, [targetActivities, actionItems]);
 
@@ -639,26 +783,312 @@ export const DashboardPage: React.FC = () => {
           <DashboardSkeleton />
         ) : (
           <>
+            {/* 當日總部行程／會議行程／特殊行程 狀態與快速登記列 */}
+            <div className="mb-5 bg-white border border-indigo-100 rounded-2xl p-4 shadow-xs flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1 rounded-full text-xs font-extrabold">
+                    📅 當日行程／其他任務
+                  </span>
+                  <span className="text-xs text-gray-500 font-medium">
+                    若有總部、會議或特殊任務，請點選右側按鈕登記，系統將自動顯示於上方與主管進度中
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(['總部行程', '會議行程', '特殊行程'] as const).map(sType => (
+                    <button
+                      key={sType}
+                      type="button"
+                      onClick={() => {
+                        setQuickScheduleType(sType);
+                        if (!quickScheduleManager && uniqueManagers.length > 0) {
+                          setQuickScheduleManager(user?.role === 'manager' ? user.name : uniqueManagers[0].areaManagerName);
+                        }
+                        setScheduleModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                    >
+                      <span>{sType === '總部行程' ? '🏢' : sType === '會議行程' ? '📅' : '⭐'}</span>
+                      <span>+ {sType}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 顯示今日已登記特殊行程之區主管清單 */}
+              {filteredManagers.some(m => m.todaySchedules && m.todaySchedules.length > 0) && (
+                <div className="pt-2.5 border-t border-gray-100 flex flex-wrap gap-2">
+                  {filteredManagers
+                    .filter(m => m.todaySchedules && m.todaySchedules.length > 0)
+                    .map(m =>
+                      (m.todaySchedules || []).map((sch, sIdx) => (
+                        <div
+                          key={`${m.areaManagerName}-${sIdx}`}
+                          className="inline-flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs"
+                        >
+                          <span className="font-extrabold text-indigo-900">
+                            {sch.type === '總部行程' ? '🏢' : sch.type === '會議行程' ? '📅' : '⭐'} {m.areaManagerName}（{m.region}）
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-white font-bold text-[11px]">
+                            {sch.type}
+                          </span>
+                          <span className="text-gray-700 font-semibold">
+                            {sch.note}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                </div>
+              )}
+            </div>
+
+            {/* 當日行程快速登記彈窗 */}
+            {scheduleModalOpen && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200"
+                onClick={() => setScheduleModalOpen(false)}
+              >
+                <div
+                  className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 relative"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setScheduleModalOpen(false)}
+                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100"
+                  >
+                    <X size={20} />
+                  </button>
+
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">
+                    登記當日行程／其他任務
+                  </h3>
+                  <p className="text-xs text-gray-500 mb-4">
+                    登記後將顯示於戰情牆上方與左側區主管狀態中，避免顯示為「尚未回填」
+                  </p>
+
+                  {user?.role === 'admin' && (
+                    <div className="mb-4">
+                      <label className="block text-xs font-bold text-gray-700 mb-1.5">選擇區主管</label>
+                      <select
+                        value={quickScheduleManager}
+                        onChange={e => setQuickScheduleManager(e.target.value)}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        {uniqueManagers.map(m => (
+                          <option key={m.areaManagerName} value={m.areaManagerName}>
+                            {m.areaManagerName}（{m.region}）
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="mb-4">
+                    <label className="block text-xs font-bold text-gray-700 mb-1.5">行程類型</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['總部行程', '會議行程', '特殊行程'] as const).map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setQuickScheduleType(t)}
+                          className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            quickScheduleType === t
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                              : 'bg-white text-gray-700 border-gray-200 hover:bg-indigo-50'
+                          }`}
+                        >
+                          {t === '總部行程' ? '🏢 ' : t === '會議行程' ? '📅 ' : '⭐ '}
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                      任務說明（選填，可點選下方快速標籤）
+                    </label>
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {['總部營運會議', '教育訓練課程', '跨區專案支援', '盤點／展店籌備', '部門主管會議'].map(preset => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setQuickScheduleNote(preset)}
+                          className="text-[11px] px-2.5 py-1 rounded-full bg-gray-100 hover:bg-indigo-100 text-gray-700 hover:text-indigo-700 font-semibold transition-colors cursor-pointer"
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      value={quickScheduleNote}
+                      onChange={e => setQuickScheduleNote(e.target.value)}
+                      placeholder={`例如：參加${quickScheduleType}、總部月會...`}
+                      className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div className="mb-5">
+                    <label className="block text-xs font-bold text-gray-700 mb-1.5">預計行程時數</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { mins: 120, label: '2 小時 (120分)' },
+                        { mins: 240, label: '半天 (240分)' },
+                        { mins: 480, label: '全天 (480分)' },
+                      ].map(d => (
+                        <button
+                          key={d.mins}
+                          type="button"
+                          onClick={() => setQuickScheduleDuration(d.mins)}
+                          className={`py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                            quickScheduleDuration === d.mins
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-500'
+                              : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          {d.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isSubmittingSchedule}
+                    onClick={handleQuickSubmitSchedule}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white font-bold rounded-xl text-sm shadow-md transition-colors cursor-pointer"
+                  >
+                    {isSubmittingSchedule ? '正在儲存行程...' : `✅ 確認登記「${quickScheduleType}」`}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Unresolved Issues Reminder Banner */}
             {unresolvedStores.length > 0 && (
               <div className="mb-6 bg-gradient-to-r from-red-500 to-rose-500 rounded-2xl p-1 shadow-lg animate-in slide-in-from-top-4 fade-in duration-500">
                 <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 sm:p-5 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="flex items-start gap-3">
-                    <div className="bg-white/20 p-2 rounded-lg mt-0.5 sm:mt-0">
+                  <div className="flex items-start gap-3 w-full">
+                    <div className="bg-white/20 p-2 rounded-lg mt-0.5 sm:mt-0 shrink-0">
                       <AlertTriangle size={24} className="text-white animate-pulse" />
                     </div>
-                    <div>
-                      <h3 className="font-bold text-lg mb-1 flex items-center gap-2">
+                    <div className="flex-1">
+                      <h3 className="font-bold text-lg mb-1 flex items-center gap-2 flex-wrap">
                         未結案提醒
                         <span className="bg-red-600/50 px-2 py-0.5 rounded-full text-xs font-semibold border border-red-400/30">
                           {unresolvedStores.length} 間門市
                         </span>
                       </h3>
-                      <p className="text-red-50 text-sm font-medium opacity-90 leading-relaxed max-w-2xl">
-                        以下門市巡檢發現缺失，且尚未完成 PDCA 結案，請持續追蹤改善進度直到結案為止：
-                        {unresolvedStores.map(s => s.store).join('、')}
+                      <p className="text-red-50 text-sm font-medium opacity-95 leading-relaxed mb-3">
+                        以下門市巡檢發現缺失，且尚未完成 PDCA 結案，請直接點選下方門市進行複查或結案：
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {unresolvedStores.map(s => (
+                          <button
+                            key={s.store}
+                            type="button"
+                            onClick={() => setResolvingStore(s)}
+                            className="bg-white text-rose-700 hover:bg-rose-50 active:scale-95 transition-all px-3.5 py-2 rounded-xl text-sm font-bold shadow-md flex items-center gap-1.5 cursor-pointer border border-white/80"
+                          >
+                            <span>📍 {s.store}</span>
+                            <span className="text-xs bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-extrabold">
+                              點選處理 ➔
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 未結案門市追蹤與結案彈窗 */}
+            {resolvingStore && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200"
+                onClick={() => setResolvingStore(null)}
+              >
+                <div
+                  className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 relative"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setResolvingStore(null)}
+                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100"
+                  >
+                    <X size={20} />
+                  </button>
+                  <div className="flex items-center gap-2.5 mb-3">
+                    <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                      <AlertTriangle size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">{resolvingStore.store}</h3>
+                      <p className="text-xs text-gray-500">
+                        未結案缺失追蹤 {resolvingStore.reportTime ? `· 回報時間：${resolvingStore.reportTime}` : ''}
                       </p>
                     </div>
+                  </div>
+
+                  <div className="bg-rose-50/70 border border-rose-200 rounded-xl p-3.5 mb-5 max-h-48 overflow-y-auto">
+                    <div className="text-xs font-bold text-rose-800 mb-2">待改善 / 異常原因：</div>
+                    <ul className="space-y-1.5">
+                      {resolvingStore.reasons.map((r, i) => (
+                        <li key={i} className="text-sm text-rose-900 font-medium flex items-start gap-2">
+                          <span className="text-rose-500 mt-0.5">•</span>
+                          <span>{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/audit?store=${encodeURIComponent(resolvingStore.store)}`)}
+                      className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20 transition-colors cursor-pointer"
+                    >
+                      <ClipboardSignature size={17} />
+                      前往巡店複查 / 拍照存證
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isSubmittingResolve}
+                      onClick={() => handleResolveStorePdca(resolvingStore.store)}
+                      className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20 transition-colors cursor-pointer"
+                    >
+                      <CheckCircle2 size={17} />
+                      {isSubmittingResolve ? '正在結案處理中...' : '確認現場已改善（直接結案）'}
+                    </button>
+
+                    {resolvingStore.recordId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetId = resolvingStore.recordId;
+                          setResolvingStore(null);
+                          setActiveTab('dashboard');
+                          setTimeout(() => {
+                            const el = document.getElementById(`activity-${targetId}`);
+                            if (el) {
+                              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              el.classList.add('highlight-pulse');
+                              setTimeout(() => el.classList.remove('highlight-pulse'), 2500);
+                            }
+                          }, 100);
+                        }}
+                        className="w-full py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Search size={14} />
+                        定位查看下方原始巡店紀錄
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

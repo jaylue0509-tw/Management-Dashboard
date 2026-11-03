@@ -171,6 +171,7 @@ def init_db():
             
             # 初始化預設帳號
             init_default_users(conn)
+            sync_region_reorg_2026(conn)
 
     except Exception as e:
         print("DB Init Error:", e)
@@ -209,6 +210,115 @@ def init_default_users(conn):
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (name, mgr_hash, "manager", name, Json(stores), "admin1234", True))
             conn.commit()
+
+def sync_region_reorg_2026(conn):
+    """
+    同步 2026 最新區域與門市組織異動：
+    1. 新增「嘉南區」（區經理：葉信宏）：嘉義北港店、嘉義友愛店、嘉義吳鳳南店、嘉義朴子店、新營民生店、新市中正店、佳里新生店、善化光復店、麻豆興中店
+    2. 「彰雲嘉區」改為「彰雲區」（區經理：林晟豐），並移除上述 4 間嘉義門市
+    3. 「台南區」（區經理：李景傑）移除上述 5 間移入嘉南區之門市
+    4. 「高雄區」之大寮鳳林店、高雄林園東店移至「高屏區」（區經理：鍾宜玲）
+    """
+    jianan_stores = [
+        "嘉義北港店", "嘉義友愛店", "嘉義吳鳳南店", "嘉義朴子店",
+        "新營民生店", "新市中正店", "佳里新生店", "善化光復店", "麻豆興中店"
+    ]
+    jianan_set = set(jianan_stores)
+    gaoping_moved = {"大寮鳳林店", "高雄林園東店", "高雄林園店"}
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT data FROM store WHERE id = 'managers'")
+        row = cur.fetchone()
+        if not row or not isinstance(row[0], list):
+            return
+
+        managers = row[0]
+        changed = False
+        seen_stores = set()
+        updated_managers = []
+        sample_dept = ""
+        sample_director = ""
+
+        for m in managers:
+            s_name = str(m.get("storeName") or "").strip()
+            if not s_name:
+                continue
+            if s_name == "高雄林園店":
+                s_name = "高雄林園東店"
+                m["storeName"] = s_name
+                changed = True
+
+            if m.get("region") in ("彰雲嘉區", "彰雲區", "台南區") and not sample_dept:
+                sample_dept = m.get("department", "")
+                sample_director = m.get("directorName", "")
+
+            if s_name in jianan_set:
+                if m.get("region") != "嘉南區" or m.get("areaManagerName") != "葉信宏":
+                    m["region"] = "嘉南區"
+                    m["areaManagerName"] = "葉信宏"
+                    changed = True
+            elif s_name in gaoping_moved:
+                if m.get("region") != "高屏區" or m.get("areaManagerName") != "鍾宜玲":
+                    m["region"] = "高屏區"
+                    m["areaManagerName"] = "鍾宜玲"
+                    changed = True
+            elif m.get("region") in ("彰雲嘉區", "彰嘉雲區"):
+                m["region"] = "彰雲區"
+                changed = True
+
+            if s_name not in seen_stores:
+                seen_stores.add(s_name)
+                updated_managers.append(m)
+            else:
+                changed = True
+
+        for js in jianan_stores:
+            if js not in seen_stores:
+                updated_managers.append({
+                    "department": sample_dept,
+                    "directorName": sample_director,
+                    "region": "嘉南區",
+                    "areaManagerName": "葉信宏",
+                    "deputyManagerName": "",
+                    "storeName": js,
+                    "beautyLeader": "",
+                    "todayVisitCount": 0,
+                    "assignedStoreCount": 0,
+                    "hasAbnormal": False,
+                    "visitStatus": "尚未回填"
+                })
+                seen_stores.add(js)
+                changed = True
+
+        if changed:
+            cur.execute("UPDATE store SET data = %s WHERE id = 'managers'", (Json(updated_managers),))
+
+        # 同步區主管帳號與負責門市清單 (葉信宏、林晟豐、李景傑、涂綺恬、鍾宜玲)
+        target_mgrs = {"葉信宏", "林晟豐", "李景傑", "涂綺恬", "鍾宜玲"}
+        mgr_stores_map = {name: [] for name in target_mgrs}
+        for m in updated_managers:
+            mgr_name = str(m.get("areaManagerName") or "").strip()
+            s_name = str(m.get("storeName") or "").strip()
+            if mgr_name in mgr_stores_map and s_name:
+                mgr_stores_map[mgr_name].append(s_name)
+
+        for mgr_name, stores_list in mgr_stores_map.items():
+            cur.execute("SELECT assigned_stores FROM users WHERE username = %s", (mgr_name,))
+            u_row = cur.fetchone()
+            if not u_row:
+                mgr_hash = pwd_context.hash("admin1234")
+                cur.execute("""
+                    INSERT INTO users (username, password_hash, role, name, assigned_stores, plain_password, must_change_password)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (mgr_name, mgr_hash, "manager", mgr_name, Json(stores_list), "admin1234", True))
+            else:
+                current_stores = u_row[0] or []
+                if current_stores != stores_list:
+                    cur.execute(
+                        "UPDATE users SET assigned_stores = %s, name = %s WHERE username = %s",
+                        (Json(stores_list), mgr_name, mgr_name)
+                    )
+    conn.commit()
 
 init_db() # 啟用 DB 初始化，建立 users 表與預設帳號
 # === Pydantic Schema 定義 ===
@@ -785,6 +895,13 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                         if not payload.get("department"):
                             payload["department"] = m.get("department", "")
                         break
+                if not payload.get("region") and row and row[0]:
+                    for m in row[0]:
+                        if str(m.get("areaManagerName") or "").strip() == str(mgr_name).strip():
+                            payload["region"] = m.get("region", "")
+                            if not payload.get("department"):
+                                payload["department"] = m.get("department", "")
+                            break
             region = payload.get("region") or ""
 
             # 照片：data URL 轉存 photos 表，紀錄內只保留參照網址
@@ -875,7 +992,23 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                 """, (item_id, store_name, datetime.utcnow(), Json(item)))
             action_items_created = len(new_items)
 
-            # PDCA：上次交辦事項本次確認已改善者結案
+            # PDCA：上次交辦事項本次確認已改善者結案（同步更新 action_items 與歷史異常 visit_records）
+            resolved_any_pdca = False
+            for item_id, result in (payload.get("pdcaResults") or {}).items():
+                if result == '已改善':
+                    resolved_any_pdca = True
+                    if str(item_id).startswith("vr-"):
+                        vr_id = str(item_id)[3:]
+                        cur.execute("UPDATE visit_records SET data = data || %s WHERE id = %s",
+                                    (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso, "pdcaResolvedByRecordId": record_id}), vr_id))
+                    else:
+                        cur.execute("UPDATE action_items SET data = data || %s WHERE id = %s",
+                                    (Json({"status": "Closed", "updatedAt": now_iso, "closedByRecordId": record_id}), item_id))
+            if resolved_any_pdca or not has_defect:
+                cur.execute(
+                    "UPDATE visit_records SET data = data || %s WHERE id != %s AND replace(data->>'storeName', '店', '') = %s",
+                    (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso}), record_id, _normalize_store(store_name))
+                )
             for item_id, result in (payload.get("pdcaResults") or {}).items():
                 if result == '已改善':
                     cur.execute("UPDATE action_items SET data = data || %s WHERE id = %s",
@@ -1112,6 +1245,27 @@ def clean_db_2026():
 
 # === PDCA Action Items ===
 
+@app.post("/api/pdca/resolve-store")
+def resolve_store_pdca(payload: dict = Body(...), user: Optional[dict] = Depends(get_optional_user)):
+    store_name = str(payload.get("storeName") or "").strip()
+    if not store_name:
+        raise HTTPException(status_code=400, detail="缺少門市名稱")
+    norm_store = _normalize_store(store_name)
+    now_iso = datetime.utcnow().isoformat()
+    resolved_by = (user or {}).get("name") or payload.get("resolvedBy") or "區主管"
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE action_items SET data = data || %s WHERE replace(store_name, '店', '') = %s",
+                (Json({"status": "Closed", "updatedAt": now_iso, "resolvedBy": resolved_by}), norm_store)
+            )
+            cur.execute(
+                "UPDATE visit_records SET data = data || %s WHERE replace(data->>'storeName', '店', '') = %s",
+                (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso, "pdcaResolvedBy": resolved_by}), norm_store)
+            )
+        conn.commit()
+    return {"success": True, "storeName": store_name}
+
 @app.get("/api/action-items", response_model=List[dict])
 def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optional_user)):
     with get_db_connection() as conn:
@@ -1138,6 +1292,44 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
                     cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
                 else:
                     cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
+            rows = cur.fetchall()
+            items = [
+                row[0] for row in rows
+                if row[0] and "測試" not in str(row[0].get("desc") or "") and "測試" not in str(row[0].get("issueDescription") or "")
+            ]
+            # 若指定門市查詢且尚無 Open 之 action_items，自動從該門市未結案之異常巡店紀錄合成待複查項目，確保區主管於巡店 Step 1 可點選結案
+            if store and not any(i.get("status") == "Open" for i in items):
+                cur.execute(
+                    "SELECT id, created_at, data FROM visit_records WHERE replace(data->>'storeName', '店', '') = %s ORDER BY created_at DESC LIMIT 5",
+                    (_normalize_store(store),)
+                )
+                for vr_id, vr_created, vr_data in cur.fetchall():
+                    if not vr_data or vr_data.get("pdcaResolved") is True:
+                        continue
+                    cat_checks = vr_data.get("categoryChecks") or {}
+                    core_checks_vr = vr_data.get("coreChecks") or {}
+                    remarks_vr = vr_data.get("categoryRemarks") or {}
+                    defects_found = []
+                    for ck, cv in {**core_checks_vr, **cat_checks}.items():
+                        if cv in ("缺失", "待改善"):
+                            label = _build_defect_label(ck)
+                            rmk = remarks_vr.get(ck)
+                            defects_found.append(f"{label} ({cv})" + (f"：{rmk}" if rmk else ""))
+                    if not defects_found and vr_data.get("abnormalFlag"):
+                        defects_found.append("前次巡檢發現異常待複查確認")
+                    if defects_found:
+                        items.append({
+                            "id": f"vr-{vr_id}",
+                            "storeName": store,
+                            "desc": "；".join(defects_found),
+                            "issueDescription": "；".join(defects_found),
+                            "assignee": "店長",
+                            "dueDate": (vr_created.date().isoformat() if vr_created else _taipei_date_after(0)),
+                            "status": "Open",
+                            "sourceRecordId": vr_id
+                        })
+                        break
+            return items
             rows = cur.fetchall()
             return [row[0] for row in rows]
 

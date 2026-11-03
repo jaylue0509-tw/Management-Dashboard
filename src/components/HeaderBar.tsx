@@ -55,10 +55,12 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        height: '60px',
+        flexWrap: 'wrap',
+        gap: '10px',
+        minHeight: '60px',
         maxWidth: '1440px',
         margin: '0 auto',
-        padding: '0 24px',
+        padding: '10px 16px',
       }}>
         {/* Left: Brand */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -89,7 +91,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
         </div>
 
         {/* Right: Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
           {/* Time Range Select */}
           <div style={{ position: 'relative' }}>
             <select
@@ -117,15 +119,16 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
           {user?.role === 'manager' ? (
             <div style={{
               display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '6px 12px',
+              padding: '6px 10px',
               background: '#eff6ff',
               border: '1px solid #bfdbfe',
               borderRadius: '8px',
               color: '#1d4ed8',
-              fontSize: '0.8rem',
+              fontSize: '0.78rem',
               fontWeight: 700,
+              whiteSpace: 'nowrap',
             }}>
-              <UserCheck size={14} color="#2563eb" />
+              <UserCheck size={14} color="#2563eb" style={{ flexShrink: 0 }} />
               <span>區主管：{user.name}</span>
               <span style={{ color: '#93c5fd', fontWeight: 400 }}>|</span>
               <span style={{ fontSize: '0.75rem', color: '#2563eb', fontWeight: 500 }}>

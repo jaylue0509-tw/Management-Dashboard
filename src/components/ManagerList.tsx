@@ -19,6 +19,9 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
   const statusConfig = {
     '已完成': { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', dot: '#22c55e' },
     '巡店中': { color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe', dot: '#3b82f6' },
+    '總部行程': { color: '#4f46e5', bg: '#eef2ff', border: '#c7d2fe', dot: '#6366f1' },
+    '會議行程': { color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe', dot: '#8b5cf6' },
+    '特殊行程': { color: '#d97706', bg: '#fffbeb', border: '#fde68a', dot: '#f59e0b' },
     '尚未回填': { color: '#9ca3af', bg: '#f9fafb', border: '#e5e7eb', dot: '#d1d5db' },
   };
 
@@ -62,20 +65,21 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
 
       {/* Stats Row */}
       {!selectedManager && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
           {[
             { label: '已完成', count: managers.filter(m => m.visitStatus === '已完成').length, color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
             { label: '巡店中', count: managers.filter(m => m.visitStatus === '巡店中').length, color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+            { label: '公務行程', count: managers.filter(m => ['總部行程', '會議行程', '特殊行程'].includes(m.visitStatus || '') || (m.todaySchedules && m.todaySchedules.length > 0)).length, color: '#4f46e5', bg: '#eef2ff', border: '#c7d2fe' },
           ].map(stat => (
             <div key={stat.label} style={{
               background: stat.bg,
               border: `1px solid ${stat.border}`,
               borderRadius: '8px',
-              padding: '10px 12px',
+              padding: '8px 6px',
               textAlign: 'center',
             }}>
-              <div style={{ fontSize: '1.5rem', fontWeight: 800, color: stat.color, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{stat.count}</div>
-              <div style={{ fontSize: '0.68rem', color: stat.color, marginTop: '3px', fontWeight: 500, opacity: 0.8 }}>{stat.label}</div>
+              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: stat.color, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{stat.count}</div>
+              <div style={{ fontSize: '0.66rem', color: stat.color, marginTop: '3px', fontWeight: 600, opacity: 0.9 }}>{stat.label}</div>
             </div>
           ))}
         </div>
@@ -87,7 +91,10 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
           const isSelected = selectedManager?.areaManagerName === manager.areaManagerName;
           const status = manager.visitStatus || '尚未回填';
           const cfg = statusConfig[status as keyof typeof statusConfig] || statusConfig['尚未回填'];
-          const progressPct = manager.assignedStoreCount
+          const hasSchedule = !!(manager.todaySchedules && manager.todaySchedules.length > 0);
+          const progressPct = hasSchedule && (manager.todayVisitCount || 0) === 0
+            ? 100
+            : manager.assignedStoreCount
             ? Math.min(100, Math.round(((manager.todayVisitCount || 0) / manager.assignedStoreCount) * 100))
             : 0;
 
@@ -134,7 +141,7 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
                     {manager.areaManagerName}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>
-                    {manager.directorName} · {manager.region}
+                    {manager.directorName ? `${manager.directorName} · ` : ''}{manager.region}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -163,6 +170,26 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
                 </div>
                 <TrendingUp size={12} color={isSelected ? '#2563eb' : '#d1d5db'} />
               </div>
+
+              {manager.todaySchedules && manager.todaySchedules.length > 0 && (
+                <div style={{
+                  marginTop: '7px',
+                  fontSize: '0.7rem',
+                  color: '#4338ca',
+                  background: '#eef2ff',
+                  border: '1px solid #c7d2fe',
+                  borderRadius: '6px',
+                  padding: '5px 8px',
+                  lineHeight: 1.5,
+                  fontWeight: 600,
+                }}>
+                  {manager.todaySchedules.map((sch, sIdx) => (
+                    <div key={sIdx}>
+                      {sch.type === '總部行程' ? '🏢' : sch.type === '會議行程' ? '📅' : '⭐'} {sch.type}：{sch.note}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {manager.visitedStores && manager.visitedStores.length > 0 && (
                 <div style={{
