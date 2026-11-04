@@ -15,6 +15,7 @@ import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertTriangle, CheckCircle2, ClipboardSignature, Search, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { normalizeUtcIso, getTaipeiDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -42,13 +43,6 @@ const groupBy = <T, K extends keyof any>(list: T[], getKey: (item: T) => K) =>
 
 const getTaipeiTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
 
-const getTaipeiDateStr = (iso?: string) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
-};
-
 const shiftDateStr = (dateStr: string, deltaDays: number) => {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
@@ -75,12 +69,19 @@ export const DashboardPage: React.FC = () => {
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
-  const [timeRange, setTimeRange] = useState<string>('all');
+  const [timeRange, setTimeRange] = useState<string>('day');
   const [customStartDate, setCustomStartDate] = useState<string>(() => getTaipeiTodayStr());
   const [customEndDate, setCustomEndDate] = useState<string>(() => getTaipeiTodayStr());
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [resolvingStore, setResolvingStore] = useState<{ store: string; reasons: string[]; reportTime?: string; recordId?: string } | null>(null);
+  const [resolvingStore, setResolvingStore] = useState<{
+    store: string;
+    reasons: string[];
+    reportTime?: string;
+    recordId?: string;
+    region?: string;
+    areaManagerName?: string;
+  } | null>(null);
   const [isSubmittingResolve, setIsSubmittingResolve] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [quickScheduleType, setQuickScheduleType] = useState<'總部行程' | '會議行程' | '特殊行程'>('總部行程');
@@ -231,6 +232,10 @@ export const DashboardPage: React.FC = () => {
           if (a.recordId === '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c') return false;
           if (Array.isArray(a.newActionItems) && a.newActionItems.some((item: any) => item?.desc?.includes('測試'))) return false;
           return true;
+        }).map((a: any) => {
+          // NOTE: 統一轉為帶 Z 的 UTC 字串，並即時計算距今分鐘數，避免今日篩選與回報時間偏移 8 小時
+          const createdAt = normalizeUtcIso(a.createdAt);
+          return { ...a, createdAt, timeAgoMinutes: getMinutesAgo(createdAt) };
         });
         let validActionItems = (data.actionItems || []).filter((i: any) => {
           if (i.storeName?.includes('測試') || i.storeName?.includes('文心秀泰')) return false;
@@ -452,15 +457,7 @@ export const DashboardPage: React.FC = () => {
         expectedStayByStore.set(storeKey, a.expectedStayMinutes || 0);
       }
 
-      let reportTime = '';
-      if (a.createdAt) {
-        const d = new Date(a.createdAt);
-        const m = d.getMonth() + 1;
-        const dd = d.getDate();
-        const hh = d.getHours().toString().padStart(2, '0');
-        const mm = d.getMinutes().toString().padStart(2, '0');
-        reportTime = `${m}/${dd} ${hh}:${mm}`;
-      }
+      const reportTime = formatTaipeiReportTime(a.createdAt);
 
       // Compute Module Scores from categoryChecks
       if (a.categoryChecks) {
@@ -586,15 +583,7 @@ export const DashboardPage: React.FC = () => {
         else if (rating === '需追蹤' || rating === '待追蹤') score = 75;
         else if (rating === '需重點輔導') score = 50;
       }
-      let reportTime = '';
-      if (activity.createdAt) {
-        const d = new Date(activity.createdAt);
-        const m = d.getMonth() + 1;
-        const dd = d.getDate();
-        const hh = d.getHours().toString().padStart(2, '0');
-        const mm = d.getMinutes().toString().padStart(2, '0');
-        reportTime = `${m}/${dd} ${hh}:${mm}`;
-      }
+      const reportTime = formatTaipeiReportTime(activity.createdAt);
 
       const reasons: string[] = [];
       if (activity.categoryChecks) {
@@ -654,15 +643,7 @@ export const DashboardPage: React.FC = () => {
         }
         if (reasons.length === 0) reasons.push('綜合評估紅燈');
 
-        let reportTime = '';
-        if (data.activity.createdAt) {
-          const d = new Date(data.activity.createdAt);
-          const m = d.getMonth() + 1;
-          const dd = d.getDate();
-          const hh = d.getHours().toString().padStart(2, '0');
-          const mm = d.getMinutes().toString().padStart(2, '0');
-          reportTime = `${m}/${dd} ${hh}:${mm}`;
-        }
+        const reportTime = formatTaipeiReportTime(data.activity.createdAt);
         return { store, reasons, reportTime };
       });
 
@@ -717,17 +698,16 @@ export const DashboardPage: React.FC = () => {
       }
       if (reasons.length === 0) reasons.push('有異常事項待複查');
 
-      let reportTime = '';
-      if (activity.createdAt) {
-        const d = new Date(activity.createdAt);
-        const m = d.getMonth() + 1;
-        const dd = d.getDate();
-        const hh = d.getHours().toString().padStart(2, '0');
-        const mm = d.getMinutes().toString().padStart(2, '0');
-        reportTime = `${m}/${dd} ${hh}:${mm}`;
-      }
+      const reportTime = formatTaipeiReportTime(activity.createdAt);
+      const normStore = normalizeStore(store);
+      const matchedMgr = managers.find(m => normalizeStore(m.storeName) === normStore);
+      const region = activity.region || matchedMgr?.region || '未分區';
+      const areaManagerName = activity.areaManagerName || matchedMgr?.areaManagerName || '';
+
       return {
         store,
+        region,
+        areaManagerName,
         reasons,
         reportTime,
         recordId: activity.recordId,
@@ -781,6 +761,27 @@ export const DashboardPage: React.FC = () => {
       unresolvedStores: unresolvedList
     };
   }, [targetActivities, actionItems]);
+
+  // NOTE: 將未結案門市依「區域」分組，提供各區主管與督導一眼掌握轄區數量與門市
+  const groupedUnresolvedStores = useMemo(() => {
+    const map = new Map<string, { region: string; areaManagerName: string; stores: typeof unresolvedStores }>();
+    unresolvedStores.forEach(s => {
+      const reg = s.region || '未分區';
+      if (!map.has(reg)) {
+        map.set(reg, {
+          region: reg,
+          areaManagerName: s.areaManagerName || '',
+          stores: []
+        });
+      }
+      const grp = map.get(reg)!;
+      grp.stores.push(s);
+      if (!grp.areaManagerName && s.areaManagerName) {
+        grp.areaManagerName = s.areaManagerName;
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.stores.length - a.stores.length);
+  }, [unresolvedStores]);
 
   return (
     <div style={{ minHeight: '100vh', paddingBottom: '40px', background: '#f4f6f9' }}>
@@ -1176,40 +1177,91 @@ export const DashboardPage: React.FC = () => {
               </div>
             )}
 
-            {/* Unresolved Issues Reminder Banner */}
+            {/* Unresolved Issues Reminder Banner (依區域清晰劃分數量與門市) */}
             {unresolvedStores.length > 0 && (
-              <div className="mb-6 bg-gradient-to-r from-red-500 to-rose-500 rounded-2xl p-1 shadow-lg animate-in slide-in-from-top-4 fade-in duration-500">
-                <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 sm:p-5 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="flex items-start gap-3 w-full">
-                    <div className="bg-white/20 p-2 rounded-lg mt-0.5 sm:mt-0 shrink-0">
-                      <AlertTriangle size={24} className="text-white animate-pulse" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-bold text-lg mb-1 flex items-center gap-2 flex-wrap">
-                        未結案提醒
-                        <span className="bg-red-600/50 px-2 py-0.5 rounded-full text-xs font-semibold border border-red-400/30">
-                          {unresolvedStores.length} 間門市
-                        </span>
-                      </h3>
-                      <p className="text-red-50 text-sm font-medium opacity-95 leading-relaxed mb-3">
-                        以下門市巡檢發現缺失，且尚未完成 PDCA 結案，請直接點選下方門市進行複查或結案：
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {unresolvedStores.map(s => (
-                          <button
-                            key={s.store}
-                            type="button"
-                            onClick={() => setResolvingStore(s)}
-                            className="bg-white text-rose-700 hover:bg-rose-50 active:scale-95 transition-all px-3.5 py-2 rounded-xl text-sm font-bold shadow-md flex items-center gap-1.5 cursor-pointer border border-white/80"
-                          >
-                            <span>📍 {s.store}</span>
-                            <span className="text-xs bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-extrabold">
-                              點選處理 ➔
-                            </span>
-                          </button>
-                        ))}
+              <div className="mb-6 bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-2xl p-1 shadow-lg animate-in slide-in-from-top-4 fade-in duration-500">
+                <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 sm:p-5 text-white flex flex-col gap-4">
+                  {/* 頂部標題與統計列 */}
+                  <div className="flex items-start sm:items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-white/20 p-2 rounded-xl shrink-0 shadow-sm">
+                        <AlertTriangle size={22} className="text-white animate-pulse" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-extrabold text-lg tracking-wide text-white">未結案提醒</h3>
+                          <span className="bg-white text-rose-700 px-2.5 py-0.5 rounded-full text-xs font-black shadow-sm">
+                            共 {unresolvedStores.length} 間門市待追蹤
+                          </span>
+                          <span className="bg-black/20 text-white/95 px-2.5 py-0.5 rounded-full text-xs font-semibold border border-white/20">
+                            涵蓋 {groupedUnresolvedStores.length} 個區域
+                          </span>
+                        </div>
+                        <p className="text-red-50 text-xs sm:text-sm font-medium opacity-90 mt-0.5">
+                          以下門市巡檢發現缺失且尚未完成 PDCA 結案，已依區域劃分如下，請點選門市進行複查或結案：
+                        </p>
                       </div>
                     </div>
+
+                    {/* 區域數量快速摘要膠囊列 */}
+                    <div className="flex items-center flex-wrap gap-1.5">
+                      {groupedUnresolvedStores.map(g => (
+                        <span
+                          key={g.region}
+                          className="text-xs bg-black/25 text-white px-2.5 py-1 rounded-lg border border-white/25 font-bold flex items-center gap-1 shadow-sm"
+                        >
+                          <span className="text-amber-300">●</span> {g.region}：{g.stores.length} 店
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 依區域分組卡片 (清楚劃分各區、數量、負責主管與待處理門市) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 mt-1">
+                    {groupedUnresolvedStores.map(group => (
+                      <div
+                        key={group.region}
+                        className="bg-white/15 hover:bg-white/20 border border-white/25 rounded-xl p-3.5 flex flex-col justify-between gap-3 transition-all shadow-sm"
+                      >
+                        {/* 區域標題與負責主管 */}
+                        <div className="flex items-center justify-between pb-2 border-b border-white/20">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-300 shadow-sm" />
+                            <span className="font-extrabold text-sm sm:text-base text-white tracking-wide">
+                              {group.region}
+                            </span>
+                            {group.areaManagerName && (
+                              <span className="text-xs bg-white/25 text-white px-2 py-0.5 rounded-md font-semibold">
+                                主管：{group.areaManagerName}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs bg-red-600/80 text-white px-2 py-0.5 rounded-full font-bold border border-red-300/40">
+                            {group.stores.length} 間待結案
+                          </span>
+                        </div>
+
+                        {/* 該區域待結案門市按鈕 */}
+                        <div className="flex flex-wrap gap-2">
+                          {group.stores.map(s => (
+                            <button
+                              key={s.store}
+                              type="button"
+                              onClick={() => setResolvingStore(s)}
+                              className="w-full sm:w-auto bg-white hover:bg-rose-50 text-rose-700 active:scale-95 transition-all px-3 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-md flex items-center justify-between sm:justify-start gap-2 cursor-pointer border border-white/90 hover:shadow-lg"
+                            >
+                              <span className="flex items-center gap-1">
+                                <span className="text-rose-500">📍</span>
+                                <span>{s.store}</span>
+                              </span>
+                              <span className="text-[11px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-black">
+                                點選處理 ➔
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1237,8 +1289,20 @@ export const DashboardPage: React.FC = () => {
                       <AlertTriangle size={20} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-bold text-gray-900">{resolvingStore.store}</h3>
-                      <p className="text-xs text-gray-500">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-lg font-bold text-gray-900">{resolvingStore.store}</h3>
+                        {resolvingStore.region && (
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
+                            {resolvingStore.region}
+                          </span>
+                        )}
+                        {resolvingStore.areaManagerName && (
+                          <span className="text-xs font-semibold text-gray-500">
+                            (主管：{resolvingStore.areaManagerName})
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
                         未結案缺失追蹤 {resolvingStore.reportTime ? `· 回報時間：${resolvingStore.reportTime}` : ''}
                       </p>
                     </div>

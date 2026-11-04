@@ -547,7 +547,7 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             # 建立基本的查詢語句
-            query = "SELECT data FROM visit_records"
+            query = "SELECT data, created_at FROM visit_records"
             params = []
             conditions = []
             
@@ -555,15 +555,15 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
             if time_range == "all":
                 pass # 查詢全部歷史與即時資料
             elif time_range == "week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
             elif time_range == "last_week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') - interval '1 week'")
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')) - interval '1 week'")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
             elif time_range == "month":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
             else:
                 # 預設過濾今日 (day)
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))::date")
             
             # 加入區域過濾
             if region != "all":
@@ -584,7 +584,7 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
             
             cur.execute(query, tuple(params))
             rows = cur.fetchall()
-            return [row[0] for row in rows]
+            return [_normalize_activity_time(row[0], row[1]) for row in rows if row[0]]
 
 @app.get("/api/managers", response_model=List[Manager])
 def get_managers(user: Optional[dict] = Depends(get_optional_user)):
@@ -766,6 +766,26 @@ def _taipei_date_after(days: int) -> str:
     return (datetime.utcnow() + TAIPEI_OFFSET + timedelta(days=days)).date().isoformat()
 
 
+def _normalize_activity_time(record: dict, db_created_at: Optional[datetime]) -> dict:
+    """
+    以資料庫 created_at 欄位 (UTC) 為準統一輸出 createdAt，並補上 'Z' 時區標記。
+    NOTE: 舊資料的 createdAt 為無時區 ISO 字串，前端會誤判為本地時間造成日期偏移 8 小時；
+    同時即時計算 timeAgoMinutes，避免永遠顯示建立當下寫入的 0 分鐘。
+    """
+    if not isinstance(record, dict):
+        return record
+    item = dict(record)
+    if isinstance(db_created_at, datetime):
+        utc_dt = db_created_at.replace(tzinfo=None)
+        item["createdAt"] = utc_dt.isoformat() + "Z"
+        item["timeAgoMinutes"] = max(0, int((datetime.utcnow() - utc_dt).total_seconds() // 60))
+    else:
+        raw = str(item.get("createdAt") or "")
+        if raw and not raw.endswith("Z") and not re.search(r"[+-]\d{2}:?\d{2}$", raw):
+            item["createdAt"] = raw + "Z"
+    return item
+
+
 def _normalize_store(name: str) -> str:
     """門市名稱正規化：去空白與「店」字，避免表單與主檔寫法不一致而對不上"""
     return str(name or "").strip().replace("店", "")
@@ -863,7 +883,7 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
         # NOTE: 區主管送出時以登入身分為準，避免共用裝置草稿殘留造成紀錄掛錯人；時間以伺服器為準避免手機時鐘誤差
         payload["areaManagerName"] = user.get("name") or payload.get("areaManagerName")
         created_at = datetime.utcnow()
-        payload["createdAt"] = created_at.isoformat()
+        payload["createdAt"] = created_at.isoformat() + "Z"
     else:
         # 相容外部匯入：允許帶入歷史 createdAt
         created_at = datetime.utcnow()
@@ -873,7 +893,7 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                 created_at = datetime.fromisoformat(str(created_at_str).replace("Z", "+00:00")).replace(tzinfo=None)
             except (ValueError, TypeError):
                 created_at = datetime.utcnow()
-        payload["createdAt"] = created_at.isoformat()
+        payload["createdAt"] = created_at.isoformat() + "Z"
 
     mgr_name = payload.get("areaManagerName") or "未知主管"
     core_checks = payload.get("coreChecks") or {}
@@ -1380,21 +1400,21 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             managers = row[0] if row else []
             
             # 2. Get Activities
-            query = "SELECT data FROM visit_records"
+            query = "SELECT data, created_at FROM visit_records"
             params = []
             conditions = []
             
             if time_range == "all":
                 pass
             elif time_range == "week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
             elif time_range == "last_week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') - interval '1 week'")
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')) - interval '1 week'")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
             elif time_range == "month":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
             else:
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date")
+                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))::date")
             
             if region != "all":
                 conditions.append("region = %s")
@@ -1406,7 +1426,7 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             query += " ORDER BY created_at DESC LIMIT 500"
             cur.execute(query, tuple(params))
             activities = [
-                r[0] for r in cur.fetchall()
+                _normalize_activity_time(r[0], r[1]) for r in cur.fetchall()
                 if r[0]
                 and "測試" not in str(r[0].get("storeName") or "")
                 and "文心秀泰" not in str(r[0].get("storeName") or "")

@@ -2,6 +2,7 @@ import React from 'react';
 import type { VisitRecord } from '../types';
 import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck } from 'lucide-react';
 import { useState } from 'react';
+import { formatTaipeiReportTime, formatTimeAgo, getMinutesAgo } from '../utils/time-utils';
 
 interface Props {
   activities: VisitRecord[];
@@ -261,12 +262,12 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0 }}>
                     <div style={{ fontSize: '0.72rem', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '3px' }}>
                       <Clock size={10} />
-                      {activity.timeAgoMinutes} 分前
+                      {formatTimeAgo(activity.timeAgoMinutes ?? getMinutesAgo(activity.createdAt))}
                     </div>
                     {activity.createdAt && (
-                      <div style={{ fontSize: '0.68rem', color: '#d1d5db', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <div style={{ fontSize: '0.68rem', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '3px' }}>
                         <Calendar size={9} />
-                        {new Date(activity.createdAt).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {formatTaipeiReportTime(activity.createdAt)}
                       </div>
                     )}
                     {hasDetail && (
