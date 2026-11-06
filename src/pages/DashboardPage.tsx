@@ -850,14 +850,10 @@ export const DashboardPage: React.FC = () => {
         onTimeRangeChange={handleTimeRangeChange}
       />
 
-      <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '0 24px' }}>
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6">
         {/* Tab Bar */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          marginBottom: '14px',
-          borderBottom: '1px solid #e5e7eb',
-        }}>
-          <div style={{ display: 'flex', gap: '4px' }}>
+        <div className="flex items-center justify-between mb-3.5 border-b border-gray-200 gap-2">
+          <div className="flex gap-1 min-w-0">
             {[
               { id: 'dashboard', label: '即時動態牆' },
               { id: 'map', label: '區主管門店配置' },
@@ -865,9 +861,8 @@ export const DashboardPage: React.FC = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as 'dashboard' | 'map')}
+                className="px-3 py-2.5 sm:px-4 sm:py-2.5 text-xs sm:text-[0.88rem] whitespace-nowrap cursor-pointer transition-all"
                 style={{
-                  padding: '10px 18px',
-                  fontSize: '0.88rem',
                   fontWeight: activeTab === tab.id ? 700 : 500,
                   background: 'none',
                   border: 'none',
@@ -877,8 +872,6 @@ export const DashboardPage: React.FC = () => {
                   color: activeTab === tab.id
                     ? '#2563eb'
                     : '#9ca3af',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
                   marginBottom: '-1px',
                 }}
               >
@@ -891,18 +884,13 @@ export const DashboardPage: React.FC = () => {
           <button
             onClick={() => fetchData(true)}
             disabled={isRefreshing}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-lg text-xs font-semibold mb-1.5 shrink-0 whitespace-nowrap"
             style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '7px 14px',
               background: '#f9fafb',
               color: isRefreshing ? '#d1d5db' : '#6b7280',
               border: '1px solid #e5e7eb',
-              borderRadius: '8px',
-              fontSize: '0.78rem',
-              fontWeight: 600,
               cursor: isRefreshing ? 'not-allowed' : 'pointer',
               transition: 'all 0.15s',
-              marginBottom: '8px',
             }}
           >
             <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
@@ -911,9 +899,9 @@ export const DashboardPage: React.FC = () => {
         </div>
 
         {/* 時間區間（今日／本週／上週／本月／全部）與自選日期快速篩選列 */}
-        <div className="mb-4 bg-white border border-gray-200 rounded-2xl p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-3.5 sm:mb-4 bg-white border border-gray-200 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
           {/* 左側：今日 / 本週 / 上週 / 本月 / 自選日期 / 所有紀錄 快速切換 */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap w-full sm:w-auto">
             {([
               { id: 'day', label: '今日' },
               { id: 'week', label: '本週' },
@@ -928,7 +916,7 @@ export const DashboardPage: React.FC = () => {
                   key={opt.id}
                   type="button"
                   onClick={() => handleTimeRangeChange(opt.id)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                  className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
                     active
                       ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                       : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
@@ -941,7 +929,7 @@ export const DashboardPage: React.FC = () => {
           </div>
 
           {/* 右側：日期選擇器（支援單日快速前後切換、本週前後週切換、或自訂起迄日期） */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
             <button
               type="button"
               onClick={() => {
@@ -1042,18 +1030,18 @@ export const DashboardPage: React.FC = () => {
         ) : (
           <>
             {/* 當日總部行程／會議行程／特殊行程 狀態與快速登記列 */}
-            <div className="mb-5 bg-white border border-indigo-100 rounded-2xl p-4 shadow-xs flex flex-col gap-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="mb-4 sm:mb-5 bg-white border border-indigo-100 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col gap-2.5 sm:gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1 rounded-full text-xs font-extrabold">
                     📅 當日行程／其他任務
                   </span>
-                  <span className="text-xs text-gray-500 font-medium">
+                  <span className="text-xs text-gray-500 font-medium hidden sm:inline">
                     若有總部、會議或特殊任務，請點選右側按鈕登記，系統將自動顯示於上方與主管進度中
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="grid grid-cols-3 sm:flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
                   {(['總部行程', '會議行程', '特殊行程'] as const).map(sType => (
                     <button
                       key={sType}
@@ -1065,7 +1053,7 @@ export const DashboardPage: React.FC = () => {
                         }
                         setScheduleModalOpen(true);
                       }}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                      className="px-2 sm:px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all cursor-pointer flex items-center justify-center gap-1 shadow-2xs whitespace-nowrap"
                     >
                       <span>{sType === '總部行程' ? '🏢' : sType === '會議行程' ? '📅' : '⭐'}</span>
                       <span>+ {sType}</span>

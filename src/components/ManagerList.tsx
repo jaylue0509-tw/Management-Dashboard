@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
-import { Users, TrendingUp, ArrowLeft } from 'lucide-react';
+import { Users, TrendingUp, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface Props {
   managers: Manager[];
@@ -13,9 +13,19 @@ interface Props {
 
 export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect, timeRangeLabel = '今日', onStoreSelect }) => {
   const { user } = useAuth();
-  const displayList = selectedManager
-    ? managers.filter(m => m.areaManagerName === selectedManager.areaManagerName)
-    : managers;
+  const [isMobileExpanded, setIsMobileExpanded] = useState(false);
+
+  const displayList = useMemo(() => {
+    const base = selectedManager
+      ? managers.filter(m => m.areaManagerName === selectedManager.areaManagerName)
+      : managers;
+    return [...base].sort((a, b) => {
+      const aActive = (a.todayVisitCount || 0) > 0 || (a.todaySchedules?.length || 0) > 0 ? 1 : 0;
+      const bActive = (b.todayVisitCount || 0) > 0 || (b.todaySchedules?.length || 0) > 0 ? 1 : 0;
+      if (bActive !== aActive) return bActive - aActive;
+      return (b.todayVisitCount || 0) - (a.todayVisitCount || 0);
+    });
+  }, [managers, selectedManager]);
 
   const statusConfig = {
     '已完成': { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', dot: '#22c55e' },
@@ -27,7 +37,7 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
   };
 
   return (
-    <aside className="w-full md:w-[260px] lg:w-[290px] shrink-0 bg-white rounded-xl border border-gray-200 p-[18px] flex flex-col gap-[14px] h-fit max-h-[80vh] shadow-sm">
+    <aside className={`w-full md:w-[260px] lg:w-[290px] shrink-0 bg-white rounded-xl border border-gray-200 p-3.5 sm:p-[18px] flex flex-col gap-3 sm:gap-[14px] h-fit ${isMobileExpanded ? 'max-h-[75vh]' : 'max-h-[310px]'} md:max-h-[80vh] shadow-sm transition-all`}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -44,24 +54,36 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
             {user?.role === 'manager' ? '我的巡店進度' : '區主管進度'}
           </span>
         </div>
-        {selectedManager && (
-          <button
-            onClick={() => onSelect(null)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '4px',
-              fontSize: '0.75rem', fontWeight: 600,
-              color: '#2563eb',
-              background: '#eff6ff',
-              border: '1px solid #bfdbfe',
-              borderRadius: '6px',
-              padding: '3px 9px',
-              cursor: 'pointer',
-            }}
-          >
-            <ArrowLeft size={11} />
-            返回
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {!selectedManager && displayList.length > 2 && (
+            <button
+              type="button"
+              onClick={() => setIsMobileExpanded(prev => !prev)}
+              className="md:hidden flex items-center gap-1 text-xs font-semibold text-gray-600 bg-gray-100 border border-gray-200 rounded-md px-2 py-1 cursor-pointer"
+            >
+              <span>{isMobileExpanded ? '收合列表' : `展開 (${displayList.length})`}</span>
+              {isMobileExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+          )}
+          {selectedManager && (
+            <button
+              onClick={() => onSelect(null)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                fontSize: '0.75rem', fontWeight: 600,
+                color: '#2563eb',
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                borderRadius: '6px',
+                padding: '3px 9px',
+                cursor: 'pointer',
+              }}
+            >
+              <ArrowLeft size={11} />
+              返回
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats Row */}

@@ -38,263 +38,188 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
   ];
 
   return (
-    <header style={{
-      background: '#ffffff',
-      borderBottom: '1px solid #e5e7eb',
-      position: 'sticky',
-      top: 0,
-      zIndex: 100,
-      boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-    }}>
+    <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-2xs">
       {/* Top accent line */}
-      <div style={{
-        height: '3px',
-        background: 'linear-gradient(90deg, #3b82f6 0%, #6366f1 50%, #14b8a6 100%)',
-      }} />
+      <div
+        style={{
+          height: '3px',
+          background: 'linear-gradient(90deg, #3b82f6 0%, #6366f1 50%, #14b8a6 100%)',
+        }}
+      />
 
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '10px',
-        minHeight: '60px',
-        maxWidth: '1440px',
-        margin: '0 auto',
-        padding: '10px 16px',
-      }}>
-        {/* Left: Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{
-            width: '34px', height: '34px',
-            background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
-            borderRadius: '9px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 2px 8px rgba(59,130,246,0.3)',
-            flexShrink: 0,
-          }}>
-            <LayoutDashboard size={18} color="white" />
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-2 sm:py-2.5 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        {/* 第一列：品牌標題 + 主要操作按鈕 (手機與電腦皆保持單行俐落不擠壓) */}
+        <div className="flex items-center justify-between gap-2 w-full lg:w-auto">
+          {/* Left: Brand */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shrink-0"
+              style={{
+                background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
+                boxShadow: '0 2px 8px rgba(59,130,246,0.3)',
+              }}
+            >
+              <LayoutDashboard size={17} color="white" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm sm:text-[0.95rem] font-bold text-gray-900 leading-tight truncate">
+                東寵門市營運改善與輔導戰情牆
+              </h1>
+              <p className="hidden sm:block text-[0.68rem] text-gray-400 tracking-wider mt-0.5 truncate">
+                Operations Management Dashboard
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 style={{
-              fontSize: '0.95rem',
-              fontWeight: 700,
-              color: '#111827',
-              letterSpacing: '0.01em',
-              lineHeight: 1.2,
-            }}>
-              東寵門市營運改善與輔導戰情牆
-            </h1>
-            <p style={{ fontSize: '0.68rem', color: '#9ca3af', letterSpacing: '0.04em', marginTop: '1px' }}>
-              Operations Management Dashboard
-            </p>
+
+          {/* Mobile Quick CTA & Auth Buttons (僅在 < lg 顯示於第一列右側) */}
+          <div className="flex lg:hidden items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('/audit')}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer whitespace-nowrap"
+              style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
+            >
+              <ClipboardSignature size={13} />
+              <span>巡店作業</span>
+            </button>
+
+            {user?.role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => navigate('/admin/settings')}
+                className="p-1.5 rounded-lg bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 cursor-pointer"
+                title="系統設定"
+              >
+                <Settings size={14} />
+              </button>
+            )}
+
+            {user?.role === 'manager' && (
+              <button
+                type="button"
+                onClick={() => setIsChangePasswordOpen(true)}
+                className="p-1.5 rounded-lg bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 cursor-pointer"
+                title="修改密碼"
+              >
+                <KeyRound size={14} />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('確定要安全登出系統嗎？')) {
+                  logout();
+                  navigate('/login');
+                }
+              }}
+              className="p-1.5 rounded-lg bg-white text-gray-500 border border-gray-200 hover:text-red-600 hover:border-red-200 cursor-pointer"
+              title="登出"
+            >
+              <LogOut size={14} />
+            </button>
           </div>
         </div>
 
-        {/* Right: Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-          {/* Time Range Select */}
-          <div style={{ position: 'relative' }}>
-            <select
-              value={timeRange}
-              onChange={(e) => onTimeRangeChange(e.target.value)}
-              style={{
-                appearance: 'none',
-                padding: '7px 30px 7px 12px',
-                fontSize: '0.82rem',
-                fontWeight: 500,
-                background: '#f9fafb',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                color: '#374151',
-                cursor: 'pointer',
-                outline: 'none',
-              }}
-            >
-              {timeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <ChevronDown size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
-          </div>
-
-          {/* Dept Select or Manager Identity Badge */}
-          {user?.role === 'manager' ? (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '6px 10px',
-              background: '#eff6ff',
-              border: '1px solid #bfdbfe',
-              borderRadius: '8px',
-              color: '#1d4ed8',
-              fontSize: '0.78rem',
-              fontWeight: 700,
-              whiteSpace: 'nowrap',
-            }}>
-              <UserCheck size={14} color="#2563eb" style={{ flexShrink: 0 }} />
-              <span>區主管：{user.name}</span>
-              <span style={{ color: '#93c5fd', fontWeight: 400 }}>|</span>
-              <span style={{ fontSize: '0.75rem', color: '#2563eb', fontWeight: 500 }}>
-                轄屬 {user.assigned_stores?.length || 0} 間門市
-              </span>
-            </div>
-          ) : (
-            <div style={{ position: 'relative' }}>
+        {/* 第二列 (手機) / 右側控制列 (電腦)：篩選器、主管身分徽章與桌面版按鈕 */}
+        <div className="flex items-center justify-between lg:justify-end flex-wrap gap-2 w-full lg:w-auto">
+          <div className="flex items-center gap-2 flex-1 sm:flex-initial min-w-0">
+            {/* Time Range Select */}
+            <div className="relative shrink-0">
               <select
-                value={selectedDepartment}
-                onChange={(e) => onDepartmentChange(e.target.value)}
-                style={{
-                  appearance: 'none',
-                  padding: '7px 30px 7px 12px',
-                  fontSize: '0.82rem',
-                  fontWeight: 500,
-                  background: '#f9fafb',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  color: '#374151',
-                  cursor: 'pointer',
-                  outline: 'none',
-                }}
+                value={timeRange}
+                onChange={(e) => onTimeRangeChange(e.target.value)}
+                className="appearance-none py-1.5 pl-2.5 pr-7 text-xs sm:text-[0.82rem] font-semibold bg-gray-50 border border-gray-200 rounded-lg text-gray-700 cursor-pointer outline-none"
               >
-                {deptOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {timeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
-              <ChevronDown size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
+              <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             </div>
-          )}
 
-          {/* Divider */}
-          <div style={{ width: '1px', height: '24px', background: '#e5e7eb' }} />
-
-          {/* Clock */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '5px',
-            color: '#6b7280',
-            fontSize: '0.8rem',
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: '0.04em',
-            fontWeight: 500,
-          }}>
-            <Clock size={13} color="#9ca3af" />
-            {time.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            {/* Dept Select or Manager Identity Badge */}
+            {user?.role === 'manager' ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-xs font-bold min-w-0 truncate">
+                <UserCheck size={13} className="text-blue-600 shrink-0" />
+                <span className="truncate">區主管：{user.name}</span>
+                <span className="text-blue-300 font-normal shrink-0">|</span>
+                <span className="text-[11px] text-blue-600 font-semibold shrink-0">
+                  轄屬 {user.assigned_stores?.length || 0} 店
+                </span>
+              </div>
+            ) : (
+              <div className="relative shrink-0">
+                <select
+                  value={selectedDepartment}
+                  onChange={(e) => onDepartmentChange(e.target.value)}
+                  className="appearance-none py-1.5 pl-2.5 pr-7 text-xs sm:text-[0.82rem] font-semibold bg-gray-50 border border-gray-200 rounded-lg text-gray-700 cursor-pointer outline-none"
+                >
+                  {deptOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+            )}
           </div>
 
-          {/* Settings Button (Admin Only) */}
-          {user?.role === 'admin' && (
+          {/* Desktop Controls (僅在 lg 以上顯示完整文字按鈕與時鐘) */}
+          <div className="hidden lg:flex items-center gap-2">
+            <div className="w-px h-6 bg-gray-200 mx-0.5" />
+
+            {/* Clock */}
+            <div className="flex items-center gap-1.5 text-gray-500 text-xs font-medium tabular-nums tracking-wider">
+              <Clock size={13} className="text-gray-400" />
+              {time.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </div>
+
+            {user?.role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => navigate('/admin/settings')}
+                className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                <Settings size={14} />
+                系統設定
+              </button>
+            )}
+
+            {user?.role === 'manager' && (
+              <button
+                id="header-change-password"
+                type="button"
+                onClick={() => setIsChangePasswordOpen(true)}
+                className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap"
+              >
+                <KeyRound size={14} />
+                修改密碼
+              </button>
+            )}
+
             <button
-              onClick={() => navigate('/admin/settings')}
+              type="button"
+              onClick={() => {
+                if (window.confirm('確定要安全登出系統嗎？')) {
+                  logout();
+                  navigate('/login');
+                }
+              }}
+              className="flex items-center gap-1.5 bg-white hover:bg-red-50 text-gray-600 hover:text-red-600 border border-gray-200 hover:border-red-200 rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap"
+            >
+              <LogOut size={13} />
+              登出
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/audit')}
+              className="flex items-center gap-1.5 text-white rounded-lg px-4 py-2 text-xs font-bold cursor-pointer transition-all shadow-sm hover:-translate-y-0.5 whitespace-nowrap"
               style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                background: '#f3f4f6',
-                color: '#4b5563',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                padding: '8px 12px',
-                fontSize: '0.82rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => {
-                (e.currentTarget as HTMLButtonElement).style.background = '#e5e7eb';
-                (e.currentTarget as HTMLButtonElement).style.color = '#1f2937';
-              }}
-              onMouseLeave={e => {
-                (e.currentTarget as HTMLButtonElement).style.background = '#f3f4f6';
-                (e.currentTarget as HTMLButtonElement).style.color = '#4b5563';
+                background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                boxShadow: '0 2px 8px rgba(37,99,235,0.3)',
               }}
             >
-              <Settings size={14} />
-              系統設定
+              <ClipboardSignature size={14} />
+              現場巡店作業
             </button>
-          )}
-
-          {/* Change Password (Manager Only) */}
-          {user?.role === 'manager' && (
-            <button
-              id="header-change-password"
-              onClick={() => setIsChangePasswordOpen(true)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                background: '#f3f4f6',
-                color: '#4b5563',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                padding: '8px 12px',
-                fontSize: '0.82rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <KeyRound size={14} />
-              修改密碼
-            </button>
-          )}
-
-          {/* Logout Button */}
-          <button
-            onClick={() => {
-              if (window.confirm('確定要安全登出系統嗎？')) {
-                logout();
-                navigate('/login');
-              }
-            }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '5px',
-              background: '#ffffff',
-              color: '#6b7280',
-              border: '1px solid #e5e7eb',
-              borderRadius: '8px',
-              padding: '8px 12px',
-              fontSize: '0.82rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.15s',
-              whiteSpace: 'nowrap',
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor = '#fca5a5';
-              (e.currentTarget as HTMLButtonElement).style.color = '#dc2626';
-              (e.currentTarget as HTMLButtonElement).style.background = '#fef2f2';
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor = '#e5e7eb';
-              (e.currentTarget as HTMLButtonElement).style.color = '#6b7280';
-              (e.currentTarget as HTMLButtonElement).style.background = '#ffffff';
-            }}
-          >
-            <LogOut size={13} />
-            登出
-          </button>
-
-          {/* CTA Button */}
-          <button
-            onClick={() => navigate('/audit')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px 16px',
-              fontSize: '0.82rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(37,99,235,0.3)',
-              transition: 'all 0.15s',
-              letterSpacing: '0.02em',
-              whiteSpace: 'nowrap',
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 14px rgba(37,99,235,0.45)';
-              (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)';
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 2px 8px rgba(37,99,235,0.3)';
-              (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(0)';
-            }}
-          >
-            <ClipboardSignature size={14} />
-            現場巡店作業
-          </button>
+          </div>
         </div>
       </div>
       <ChangePasswordModal open={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />

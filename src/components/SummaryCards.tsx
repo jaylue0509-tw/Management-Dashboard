@@ -73,17 +73,17 @@ const StoreTag: React.FC<{ store: string; type?: 'default' | 'danger' | 'warning
   );
 };
 
-const MetricCard: React.FC<MetricCardProps> = ({
-  icon, label, value, unit, valueColor, iconBg, borderTop, trend, trendColor, subText, onClick
+const MetricCard: React.FC<MetricCardProps & { className?: string }> = ({
+  icon, label, value, unit, valueColor, iconBg, borderTop, trend, trendColor, subText, onClick, className = ''
 }) => (
   <div
     onClick={onClick}
+    className={`p-3.5 sm:p-5 ${className}`}
     style={{
       background: '#ffffff',
       borderRadius: '12px',
       border: '1px solid #e5e7eb',
       borderTop: `3px solid ${borderTop}`,
-      padding: '20px 22px',
       boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
       transition: 'box-shadow 0.15s, transform 0.15s',
       cursor: 'pointer',
@@ -97,13 +97,11 @@ const MetricCard: React.FC<MetricCardProps> = ({
       (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)';
     }}
   >
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '14px' }}>
-      <div style={{
-        width: '38px', height: '38px',
-        background: iconBg,
-        borderRadius: '10px',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
+    <div className="flex items-start justify-between mb-2.5 sm:mb-3.5">
+      <div
+        className="w-8 h-8 sm:w-[38px] sm:h-[38px] rounded-[10px] flex items-center justify-center"
+        style={{ background: iconBg }}
+      >
         {icon}
       </div>
       {trend && (
@@ -117,29 +115,25 @@ const MetricCard: React.FC<MetricCardProps> = ({
       )}
     </div>
 
-    <div style={{ color: '#6b7280', fontSize: '0.78rem', fontWeight: 500, letterSpacing: '0.03em', marginBottom: '6px' }}>
+    <div className="text-gray-500 text-xs sm:text-[0.78rem] font-medium tracking-wide mb-1 sm:mb-1.5">
       {label}
     </div>
 
     <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
-      <span style={{
-        fontSize: '2.4rem',
-        fontWeight: 800,
-        color: valueColor,
-        lineHeight: 1,
-        letterSpacing: '-0.02em',
-        fontVariantNumeric: 'tabular-nums',
-      }}>
+      <span
+        className="text-3xl sm:text-[2.4rem] font-extrabold leading-none tracking-tight tabular-nums"
+        style={{ color: valueColor }}
+      >
         {value}
       </span>
       {unit && (
-        <span style={{ fontSize: '0.95rem', fontWeight: 500, color: '#9ca3af' }}>
+        <span className="text-xs sm:text-[0.95rem] font-medium text-gray-400">
           {unit}
         </span>
       )}
     </div>
     {subText && (
-      <div style={{ marginTop: '6px', fontSize: '0.85rem', color: '#6b7280', fontWeight: 600 }}>
+      <div className="mt-1.5 text-xs sm:text-[0.82rem] text-gray-500 font-semibold leading-snug">
         {subText}
       </div>
     )}
@@ -220,14 +214,14 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?
 
   return (
     <>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(185px, 1fr))',
-        gap: '14px',
-        marginBottom: '22px',
-      }}>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5 mb-5">
         {cards.map((card, idx) => (
-          <MetricCard key={idx} {...card} onClick={() => setActiveCard(card)} />
+          <MetricCard
+            key={idx}
+            {...card}
+            className={idx === 0 ? 'col-span-2 sm:col-span-1' : ''}
+            onClick={() => setActiveCard(card)}
+          />
         ))}
       </div>
 
@@ -235,22 +229,18 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?
         <div style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.4)',
+          background: 'rgba(0,0,0,0.45)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          padding: '12px',
           zIndex: 9999,
           animation: 'fadeIn 0.2s ease-out'
         }} onClick={() => setActiveCard(null)}>
-          <div style={{
-            background: '#fff',
-            borderRadius: '16px',
-            padding: '32px',
-            maxWidth: '450px',
-            width: '90%',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-            position: 'relative'
-          }} onClick={e => e.stopPropagation()}>
+          <div
+            className="bg-white rounded-2xl p-5 sm:p-7 max-w-[460px] w-full max-h-[86vh] flex flex-col relative shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
             <button 
               onClick={() => setActiveCard(null)}
               style={{

@@ -353,7 +353,7 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], fo
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                           <thead>
                             <tr style={{ background: '#f9fafb' }}>
-                              <th style={{ padding: '9px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600, borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap', width: '130px', fontSize: '0.75rem', letterSpacing: '0.03em' }}>
+                              <th style={{ padding: '9px 10px', textAlign: 'left', color: '#6b7280', fontWeight: 600, borderBottom: '1px solid #e5e7eb', width: '105px', fontSize: '0.75rem', letterSpacing: '0.03em' }}>
                                 檢查項目
                               </th>
                               <th style={{ padding: '9px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600, borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', letterSpacing: '0.03em' }}>
@@ -383,7 +383,7 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], fo
                                   }}>
                                     {hasSep ? (
                                       <>
-                                        <td style={{ padding: '9px 12px', color: '#374151', borderRight: '1px solid #f3f4f6', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                                        <td style={{ padding: '9px 10px', color: '#374151', borderRight: '1px solid #f3f4f6', verticalAlign: 'top', wordBreak: 'break-word', fontWeight: 600 }}>
                                           {title}
                                         </td>
                                         <td style={{ padding: '9px 12px', verticalAlign: 'top' }}>
@@ -453,7 +453,7 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], fo
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {validPhotoPairs.map((pair, pIdx) => (
-                          <div key={pIdx} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#ffffff', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', width: 'fit-content' }}>
+                          <div key={pIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', gap: '12px', background: '#ffffff', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', width: '100%', maxWidth: '300px' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                               <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#be123c' }}>改善前 (Before)</span>
                               {pair.beforeUrl ? (
