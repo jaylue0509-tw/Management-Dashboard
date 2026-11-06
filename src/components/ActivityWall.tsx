@@ -1,12 +1,13 @@
 import React from 'react';
 import type { VisitRecord } from '../types';
 import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { formatTaipeiReportTime, formatTimeAgo, getMinutesAgo } from '../utils/time-utils';
 
 interface Props {
   activities: VisitRecord[];
   actionItems?: any[];
+  focusedRecord?: { id: string; ts: number } | null;
 }
 
 const ITEM_NAMES: Record<string, string> = {
@@ -27,10 +28,16 @@ const resolvePhotoUrl = (url?: string): string => {
   return url;
 };
 
-export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) => {
+export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], focusedRecord }) => {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxPair, setLightboxPair] = useState<{ beforeUrl: string; afterUrl: string; mode: 'before' | 'after' | 'compare' } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (focusedRecord?.id) {
+      setExpandedId(focusedRecord.id);
+    }
+  }, [focusedRecord]);
 
   const toggleExpand = (id: string) => {
     setExpandedId(prev => prev === id ? null : id);
@@ -81,6 +88,13 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
             ? Object.entries((activity as any).categoryChecks).filter(([_, val]) => val === '缺失' || val === '待改善')
             : [];
           const abnormalChecks = [...coreAbnormals, ...categoryAbnormals];
+          const passedCoreChecks = (activity as any).coreChecks
+            ? Object.entries((activity as any).coreChecks).filter(([_, val]) => val === '合格')
+            : [];
+          const passedCategoryChecks = (activity as any).categoryChecks
+            ? Object.entries((activity as any).categoryChecks).filter(([_, val]) => val === '合格')
+            : [];
+          const passedChecks = [...passedCoreChecks, ...passedCategoryChecks];
             
           let hasRealDefectInNotes = false;
           if (activity.immediateImprovement) {
@@ -105,7 +119,7 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
           const isSpecialSchedule = ['總部行程', '會議行程', '特殊行程'].includes(activity.actionType || '');
           const isAbnormal = !isSpecialSchedule && (abnormalChecks.length > 0 || hasRealDefectInNotes);
             
-          const hasDetail = !!(activity.immediateImprovement || activity.highlightDescription || relatedItems.length > 0 || abnormalChecks.length > 0 || validPhotoPairs.length > 0);
+          const hasDetail = !isSpecialSchedule || !!(activity.immediateImprovement || activity.highlightDescription || relatedItems.length > 0 || abnormalChecks.length > 0 || validPhotoPairs.length > 0);
           const accentColor = isSpecialSchedule ? '#6366f1' : isAbnormal ? '#e11d48' : '#3b82f6';
 
           return (
@@ -533,6 +547,52 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [] }) 
                           </div>
                         ))}
                       </div>
+                    </div>
+                  )}
+
+                  {/* Passed Checks / Store Visit Detail Summary */}
+                  {passedChecks.length > 0 && (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '10px' }}>
+                        <CheckCircle2 size={14} color="#16a34a" />
+                        <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#111827' }}>現場查核合格細項 ({passedChecks.length} 項)</span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {passedChecks.map(([key]) => (
+                          <span key={key} style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: '#15803d',
+                            background: '#f0fdf4',
+                            border: '1px solid #bbf7d0',
+                            borderRadius: '6px',
+                            padding: '4px 10px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}>
+                            ✓ {ITEM_NAMES[key] || key}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {!activity.immediateImprovement && !activity.highlightDescription && relatedItems.length === 0 && abnormalChecks.length === 0 && validPhotoPairs.length === 0 && passedChecks.length === 0 && (
+                    <div style={{
+                      background: '#f0fdf4',
+                      border: '1px solid #bbf7d0',
+                      borderRadius: '8px',
+                      padding: '12px 14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      color: '#15803d',
+                      fontSize: '0.83rem',
+                      fontWeight: 600,
+                    }}>
+                      <CheckCircle2 size={16} color="#16a34a" />
+                      <span>本次巡店各項營運指標均正常合格（綜合評級：{activity.overallRating || '良好'}）</span>
                     </div>
                   )}
                 </div>

@@ -4,6 +4,7 @@ import { TrendingUp, CheckCircle, AlertTriangle, ClipboardList, Zap } from 'luci
 
 interface Props {
   summary: DashboardSummary | null;
+  onStoreSelect?: (storeName: string, recordId?: string) => void;
 }
 
 interface MetricCardProps {
@@ -26,24 +27,49 @@ interface MetricCardProps {
   onClick?: () => void;
 }
 
-const StoreTag: React.FC<{ store: string; type?: 'default' | 'danger' | 'warning' | 'gray' }> = ({ store, type = 'default' }) => {
-  let bg = '#f3f4f6';
-  let color = '#4b5563';
-  let border = '#d1d5db';
+const StoreTag: React.FC<{ store: string; type?: 'default' | 'danger' | 'warning' | 'gray'; onClick?: () => void }> = ({ store, type = 'default', onClick }) => {
+  let bg = '#eff6ff';
+  let color = '#1d4ed8';
+  let border = '#bfdbfe';
   if (type === 'danger') { bg = '#fef2f2'; color = '#b91c1c'; border = '#fca5a5'; }
   if (type === 'warning') { bg = '#fffbeb'; color = '#b45309'; border = '#fcd34d'; }
   if (type === 'gray') { bg = '#f9fafb'; color = '#9ca3af'; border = '#e5e7eb'; }
 
   return (
-    <span style={{
-      fontSize: '0.75rem',
-      fontWeight: 500,
-      color, background: bg, border: `1px solid ${border}`,
-      padding: '2px 8px', borderRadius: '6px',
-      display: 'inline-block'
-    }}>
-      {store}
-    </span>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      style={{
+        fontSize: '0.76rem',
+        fontWeight: 600,
+        color,
+        background: bg,
+        border: `1px solid ${border}`,
+        padding: '3px 9px',
+        borderRadius: '6px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => {
+        if (onClick) {
+          e.currentTarget.style.transform = 'translateY(-1px)';
+          e.currentTarget.style.boxShadow = '0 2px 6px rgba(37, 99, 235, 0.15)';
+        }
+      }}
+      onMouseLeave={e => {
+        if (onClick) {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = 'none';
+        }
+      }}
+    >
+      <span>{store}</span>
+      {onClick && <span style={{ fontSize: '0.68rem', opacity: 0.75 }}>➔</span>}
+    </button>
   );
 };
 
@@ -120,7 +146,7 @@ const MetricCard: React.FC<MetricCardProps> = ({
   </div>
 );
 
-export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?: string }> = ({ summary, regionLabel = '全區', periodLabel = '今日' }) => {
+export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?: string }> = ({ summary, regionLabel = '全區', periodLabel = '今日', onStoreSelect }) => {
   const [activeCard, setActiveCard] = React.useState<MetricCardProps | null>(null);
 
   if (!summary) return null;
@@ -266,14 +292,26 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?
             </div>
 
             {/* Store List Section */}
-            <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+            <div style={{ maxHeight: '240px', overflowY: 'auto' }}>
               {/* Coverage special case: Visited vs Unvisited */}
               {activeCard.label === '巡店覆蓋率（區間）' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>已巡視門市 ({activeCard.storeList?.length || 0})</div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>已巡視門市 ({activeCard.storeList?.length || 0})</span>
+                      {onStoreSelect && (activeCard.storeList?.length || 0) > 0 && (
+                        <span style={{ fontSize: '0.72rem', color: '#2563eb', fontWeight: 500 }}>點擊門市自動移至下方細節</span>
+                      )}
+                    </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {activeCard.storeList?.map(s => <StoreTag key={s} store={s} type="default" />)}
+                      {activeCard.storeList?.map(s => (
+                        <StoreTag
+                          key={s}
+                          store={s}
+                          type="default"
+                          onClick={onStoreSelect ? () => { setActiveCard(null); onStoreSelect(s); } : undefined}
+                        />
+                      ))}
                       {(!activeCard.storeList || activeCard.storeList.length === 0) && <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>無資料</span>}
                     </div>
                   </div>
@@ -293,14 +331,28 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?
                   <div>
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>已結案門市 ({activeCard.storeList?.length || 0})</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {activeCard.storeList?.map(s => <StoreTag key={s} store={s} type="default" />)}
+                      {activeCard.storeList?.map(s => (
+                        <StoreTag
+                          key={s}
+                          store={s}
+                          type="default"
+                          onClick={onStoreSelect ? () => { setActiveCard(null); onStoreSelect(s); } : undefined}
+                        />
+                      ))}
                       {(!activeCard.storeList || activeCard.storeList.length === 0) && <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>無資料</span>}
                     </div>
                   </div>
                   <div>
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>待改善/追蹤中門市 ({activeCard.openPdcaList?.length || 0})</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {activeCard.openPdcaList?.map(s => <StoreTag key={s} store={s} type="warning" />)}
+                      {activeCard.openPdcaList?.map(s => (
+                        <StoreTag
+                          key={s}
+                          store={s}
+                          type="warning"
+                          onClick={onStoreSelect ? () => { setActiveCard(null); onStoreSelect(s); } : undefined}
+                        />
+                      ))}
                       {(!activeCard.openPdcaList || activeCard.openPdcaList.length === 0) && <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>無資料</span>}
                     </div>
                   </div>
@@ -313,9 +365,28 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>紅燈門市與原因 ({activeCard.redLightStoresList?.length || 0})</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {activeCard.redLightStoresList?.map(item => (
-                      <div key={item.store} style={{ background: '#fef2f2', border: '1px solid #fca5a5', padding: '10px 14px', borderRadius: '8px' }}>
+                      <div
+                        key={item.store}
+                        onClick={() => {
+                          if (onStoreSelect) {
+                            setActiveCard(null);
+                            onStoreSelect(item.store, (item as any).recordId);
+                          }
+                        }}
+                        style={{
+                          background: '#fef2f2',
+                          border: '1px solid #fca5a5',
+                          padding: '10px 14px',
+                          borderRadius: '8px',
+                          cursor: onStoreSelect ? 'pointer' : 'default',
+                          transition: 'all 0.15s',
+                        }}
+                      >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                          <div style={{ fontWeight: 600, color: '#b91c1c', fontSize: '0.9rem' }}>{item.store}</div>
+                          <div style={{ fontWeight: 700, color: '#b91c1c', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>📍 {item.store}</span>
+                            {onStoreSelect && <span style={{ fontSize: '0.7rem', background: '#fee2e2', padding: '1px 6px', borderRadius: '99px' }}>查看細節 ➔</span>}
+                          </div>
                           {item.reportTime && (
                             <div style={{ fontSize: '0.75rem', color: '#991b1b', background: '#fee2e2', padding: '2px 6px', borderRadius: '4px' }}>
                               回報時間: {item.reportTime}
@@ -338,9 +409,28 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>相關異常門市清單 ({activeCard.abnormalStoresList?.length || 0})</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {activeCard.abnormalStoresList?.map(item => (
-                      <div key={item.store} style={{ background: '#fffbeb', border: '1px solid #fcd34d', padding: '10px 14px', borderRadius: '8px' }}>
+                      <div
+                        key={item.store}
+                        onClick={() => {
+                          if (onStoreSelect) {
+                            setActiveCard(null);
+                            onStoreSelect(item.store, (item as any).recordId);
+                          }
+                        }}
+                        style={{
+                          background: '#fffbeb',
+                          border: '1px solid #fcd34d',
+                          padding: '10px 14px',
+                          borderRadius: '8px',
+                          cursor: onStoreSelect ? 'pointer' : 'default',
+                          transition: 'all 0.15s',
+                        }}
+                      >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                          <div style={{ fontWeight: 600, color: '#b45309', fontSize: '0.9rem' }}>{item.store}</div>
+                          <div style={{ fontWeight: 700, color: '#b45309', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>📍 {item.store}</span>
+                            {onStoreSelect && <span style={{ fontSize: '0.7rem', background: '#fef3c7', padding: '1px 6px', borderRadius: '99px' }}>查看細節 ➔</span>}
+                          </div>
                           {item.reportTime && (
                             <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '2px 6px', borderRadius: '4px' }}>
                               回報時間: {item.reportTime}
@@ -360,9 +450,21 @@ export const SummaryCards: React.FC<Props & { regionLabel?: string; periodLabel?
               {/* Default List Rendering for others */}
               {activeCard.label !== '巡店覆蓋率（區間）' && activeCard.label !== 'PDCA 結案率' && activeCard.label !== '紅燈預警門市' && activeCard.label !== '發現異常事項' && (
                 <div>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>相關門市清單 ({activeCard.storeList?.length || 0})</div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>相關門市清單 ({activeCard.storeList?.length || 0})</span>
+                    {onStoreSelect && (activeCard.storeList?.length || 0) > 0 && (
+                      <span style={{ fontSize: '0.72rem', color: '#2563eb', fontWeight: 500 }}>點擊門市自動移至下方細節</span>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                    {activeCard.storeList?.map(s => <StoreTag key={s} store={s} type={activeCard.label === '紅燈預警門市' ? 'danger' : 'default'} />)}
+                    {activeCard.storeList?.map(s => (
+                      <StoreTag
+                        key={s}
+                        store={s}
+                        type={activeCard.label === '紅燈預警門市' ? 'danger' : 'default'}
+                        onClick={onStoreSelect ? () => { setActiveCard(null); onStoreSelect(s); } : undefined}
+                      />
+                    ))}
                     {(!activeCard.storeList || activeCard.storeList.length === 0) && <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>目前無門市紀錄</span>}
                   </div>
                 </div>

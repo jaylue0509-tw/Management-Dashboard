@@ -8,9 +8,10 @@ interface Props {
   selectedManager: Manager | null;
   onSelect: (manager: Manager | null) => void;
   timeRangeLabel?: string;
+  onStoreSelect?: (storeName: string) => void;
 }
 
-export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect, timeRangeLabel = '今日' }) => {
+export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSelect, timeRangeLabel = '今日', onStoreSelect }) => {
   const { user } = useAuth();
   const displayList = selectedManager
     ? managers.filter(m => m.areaManagerName === selectedManager.areaManagerName)
@@ -194,14 +195,34 @@ export const ManagerList: React.FC<Props> = ({ managers, selectedManager, onSele
               {manager.visitedStores && manager.visitedStores.length > 0 && (
                 <div style={{
                   marginTop: '7px',
-                  fontSize: '0.68rem',
-                  color: '#6b7280',
-                  background: '#f9fafb',
-                  borderRadius: '5px',
-                  padding: '4px 7px',
-                  lineHeight: 1.6,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '4px',
                 }}>
-                  📍 {manager.visitedStores.join('、')}
+                  {manager.visitedStores.map((st, sIdx) => (
+                    <button
+                      key={sIdx}
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onStoreSelect?.(st);
+                      }}
+                      style={{
+                        fontSize: '0.68rem',
+                        fontWeight: 600,
+                        color: '#2563eb',
+                        background: '#eff6ff',
+                        border: '1px solid #bfdbfe',
+                        borderRadius: '5px',
+                        padding: '2px 6px',
+                        cursor: onStoreSelect ? 'pointer' : 'default',
+                        transition: 'all 0.15s',
+                      }}
+                      title="點擊自動移至該門市細節"
+                    >
+                      📍 {st}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>

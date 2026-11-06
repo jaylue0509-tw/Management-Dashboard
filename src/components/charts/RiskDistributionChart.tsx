@@ -3,9 +3,10 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
 
 interface Props {
   data: { name: string; value: number; color: string; stores?: { name: string; score: number; reportTime?: string; reasons?: string[] }[] }[];
+  onStoreSelect?: (storeName: string) => void;
 }
 
-export const RiskDistributionChart: React.FC<Props> = ({ data }) => {
+export const RiskDistributionChart: React.FC<Props> = ({ data, onStoreSelect }) => {
   const [activeSlice, setActiveSlice] = useState<{ name: string; color: string; stores: { name: string; score: number; reportTime?: string; reasons?: string[] }[] } | null>(null);
 
   if (!data || data.length === 0) return null;
@@ -129,15 +130,36 @@ export const RiskDistributionChart: React.FC<Props> = ({ data }) => {
           
           <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
             {activeSlice.stores.map((s, i) => (
-               <div key={i} style={{
-                 padding: '12px',
-                 borderBottom: '1px solid #f3f4f6',
-                 display: 'flex',
-                 justifyContent: 'space-between',
-                 alignItems: 'center'
-               }}>
+               <div
+                 key={i}
+                 onClick={() => {
+                   if (onStoreSelect) {
+                     setActiveSlice(null);
+                     onStoreSelect(s.name);
+                   }
+                 }}
+                 style={{
+                   padding: '12px',
+                   borderBottom: '1px solid #f3f4f6',
+                   borderRadius: '8px',
+                   display: 'flex',
+                   justifyContent: 'space-between',
+                   alignItems: 'center',
+                   cursor: onStoreSelect ? 'pointer' : 'default',
+                   transition: 'background 0.15s',
+                 }}
+                 onMouseEnter={e => { if (onStoreSelect) e.currentTarget.style.background = '#f9fafb'; }}
+                 onMouseLeave={e => { if (onStoreSelect) e.currentTarget.style.background = 'transparent'; }}
+               >
                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                   <span style={{ fontSize: '0.95rem', color: '#374151', fontWeight: 500 }}>{s.name}</span>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                     <span style={{ fontSize: '0.95rem', color: '#1d4ed8', fontWeight: 700 }}>📍 {s.name}</span>
+                     {onStoreSelect && (
+                       <span style={{ fontSize: '0.7rem', color: '#2563eb', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '99px', fontWeight: 600 }}>
+                         查看細節 ➔
+                       </span>
+                     )}
+                   </div>
                    {s.reportTime && (
                      <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>回報時間：{s.reportTime}</span>
                    )}

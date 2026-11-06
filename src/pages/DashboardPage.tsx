@@ -90,6 +90,7 @@ export const DashboardPage: React.FC = () => {
   const [quickScheduleManager, setQuickScheduleManager] = useState('');
   const [quickScheduleDate, setQuickScheduleDate] = useState<string>(() => getTaipeiTodayStr());
   const [isSubmittingSchedule, setIsSubmittingSchedule] = useState(false);
+  const [focusedRecord, setFocusedRecord] = useState<{ id: string; ts: number } | null>(null);
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -783,6 +784,63 @@ export const DashboardPage: React.FC = () => {
     return Array.from(map.values()).sort((a, b) => b.stores.length - a.stores.length);
   }, [unresolvedStores]);
 
+  /**
+   * 點擊儀表板上的任一門市標籤，自動滾動定位並展開下方「即時巡店動態」中的該門市細節
+   */
+  const handleJumpToStore = (storeName: string, preferredRecordId?: string) => {
+    const norm = (s: string) => (s || '').trim().replace(/店$/, '');
+    const targetNorm = norm(storeName);
+
+    let matched = preferredRecordId
+      ? targetActivities.find(a => a.recordId === preferredRecordId)
+      : targetActivities.find(a => norm(a.storeName) === targetNorm);
+
+    if (!matched) {
+      matched = preferredRecordId
+        ? filteredActivities.find(a => a.recordId === preferredRecordId)
+        : filteredActivities.find(a => norm(a.storeName) === targetNorm);
+      if (matched && selectedManager) {
+        setSelectedManager(null);
+      }
+    }
+
+    if (!matched) {
+      matched = preferredRecordId
+        ? activities.find(a => a.recordId === preferredRecordId)
+        : activities.find(a => norm(a.storeName) === targetNorm);
+      if (matched) {
+        if (selectedDepartment !== 'all') setSelectedDepartment('all');
+        if (selectedManager) setSelectedManager(null);
+      }
+    }
+
+    if (!matched) {
+      matched = preferredRecordId
+        ? allActivities.find(a => a.recordId === preferredRecordId)
+        : allActivities.find(a => norm(a.storeName) === targetNorm);
+      if (matched) {
+        setTimeRange('all');
+        if (selectedDepartment !== 'all') setSelectedDepartment('all');
+        if (selectedManager) setSelectedManager(null);
+      }
+    }
+
+    if (!matched) return;
+
+    const targetId = matched.recordId;
+    setActiveTab('dashboard');
+    setFocusedRecord({ id: targetId, ts: Date.now() });
+
+    setTimeout(() => {
+      const el = document.getElementById(`activity-${targetId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('highlight-pulse');
+        setTimeout(() => el.classList.remove('highlight-pulse'), 2500);
+      }
+    }, 150);
+  };
+
   return (
     <div style={{ minHeight: '100vh', paddingBottom: '40px', background: '#f4f6f9' }}>
       <HeaderBar
@@ -1344,17 +1402,10 @@ export const DashboardPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => {
+                          const targetStore = resolvingStore.store;
                           const targetId = resolvingStore.recordId;
                           setResolvingStore(null);
-                          setActiveTab('dashboard');
-                          setTimeout(() => {
-                            const el = document.getElementById(`activity-${targetId}`);
-                            if (el) {
-                              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                              el.classList.add('highlight-pulse');
-                              setTimeout(() => el.classList.remove('highlight-pulse'), 2500);
-                            }
-                          }, 100);
+                          handleJumpToStore(targetStore, targetId);
                         }}
                         className="w-full py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       >
@@ -1387,14 +1438,14 @@ export const DashboardPage: React.FC = () => {
                       : `${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
                   }
                   const fullRegionLabel = `${selectedDepartment === 'all' ? '全區' : selectedDepartment} (${timeRangeText})`;
-                  return <SummaryCards summary={dynamicSummary} regionLabel={fullRegionLabel} periodLabel={timeRangeText} />;
+                  return <SummaryCards summary={dynamicSummary} regionLabel={fullRegionLabel} periodLabel={timeRangeText} onStoreSelect={handleJumpToStore} />;
                 })()}
 
                 {/* Charts Row */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
                   <CoverageRadarChart data={radarData} />
-                  <RiskDistributionChart data={riskData} />
-                  <IssuePieChart data={pieData} />
+                  <RiskDistributionChart data={riskData} onStoreSelect={handleJumpToStore} />
+                  <IssuePieChart data={pieData} onStoreSelect={handleJumpToStore} />
                 </div>
 
                 {/* Executive Summary */}
@@ -1414,6 +1465,7 @@ export const DashboardPage: React.FC = () => {
                     managers={filteredManagers}
                     selectedManager={selectedManager}
                     onSelect={setSelectedManager}
+                    onStoreSelect={handleJumpToStore}
                     timeRangeLabel={
                       timeRange === 'day'
                         ? (customStartDate === getTaipeiTodayStr() ? '今日' : customStartDate.slice(5).replace('-', '/'))
@@ -1433,22 +1485,12 @@ export const DashboardPage: React.FC = () => {
                   <main style={{ flex: 1, width: '100%', minWidth: 0 }}>
                     <TopIssuesList
                       issues={topIssues}
-                      onStoreClick={(recordId) => {
-                        const el = document.getElementById(`activity-${recordId}`);
-                        if (el) {
-                          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          el.classList.add('highlight-pulse');
-                          setTimeout(() => el.classList.remove('highlight-pulse'), 2000);
-                        } else {
-                          // If not found, it might be filtered out because of selectedManager,
-                          // clear selectedManager first?
-                          // Actually, targetActivities determines ActivityWall. If the issue is in topIssues,
-                          // it's in targetActivities.
-                        }
+                      onStoreClick={(recordId, storeName) => {
+                        handleJumpToStore(storeName, recordId);
                       }}
                     />
                     <div style={{ marginTop: '24px' }}>
-                      <ActivityWall activities={targetActivities} actionItems={actionItems} />
+                      <ActivityWall activities={targetActivities} actionItems={actionItems} focusedRecord={focusedRecord} />
                     </div>
                   </main>
                 </div>
