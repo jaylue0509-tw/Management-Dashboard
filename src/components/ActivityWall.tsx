@@ -279,9 +279,22 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], fo
                       {formatTimeAgo(activity.timeAgoMinutes ?? getMinutesAgo(activity.createdAt))}
                     </div>
                     {activity.createdAt && (
-                      <div style={{ fontSize: '0.68rem', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <div style={{ fontSize: '0.68rem', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <Calendar size={9} />
-                        {formatTaipeiReportTime(activity.createdAt)}
+                        <span>{formatTaipeiReportTime(activity.createdAt)}</span>
+                        {(activity as any).isBackfilled && (
+                          <span style={{
+                            fontSize: '0.62rem',
+                            fontWeight: 700,
+                            color: '#b45309',
+                            background: '#fef3c7',
+                            border: '1px solid #fde68a',
+                            borderRadius: '4px',
+                            padding: '0 4px',
+                          }}>
+                            補登
+                          </span>
+                        )}
                       </div>
                     )}
                     {hasDetail && (

@@ -70,8 +70,14 @@ export const DashboardPage: React.FC = () => {
   const [selectedManager, setSelectedManager] = useState<Manager | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [timeRange, setTimeRange] = useState<string>('day');
-  const [customStartDate, setCustomStartDate] = useState<string>(() => getTaipeiTodayStr());
-  const [customEndDate, setCustomEndDate] = useState<string>(() => getTaipeiTodayStr());
+  const [customStartDate, setCustomStartDate] = useState<string>(() => {
+    const qDate = new URLSearchParams(window.location.search).get('date')?.trim();
+    return qDate && /^\d{4}-\d{2}-\d{2}$/.test(qDate) ? qDate : getTaipeiTodayStr();
+  });
+  const [customEndDate, setCustomEndDate] = useState<string>(() => {
+    const qDate = new URLSearchParams(window.location.search).get('date')?.trim();
+    return qDate && /^\d{4}-\d{2}-\d{2}$/.test(qDate) ? qDate : getTaipeiTodayStr();
+  });
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [resolvingStore, setResolvingStore] = useState<{
@@ -1132,11 +1138,47 @@ export const DashboardPage: React.FC = () => {
                   )}
 
                   <div className="mb-4">
-                    <label className="block text-xs font-bold text-gray-700 mb-1.5">行程日期</label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-gray-700">行程／回填日期</label>
+                      <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        可往前補登最多 5 天
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-6 gap-1.5 mb-2">
+                      {[0, 1, 2, 3, 4, 5].map(daysAgo => {
+                        const dStr = shiftDateStr(getTaipeiTodayStr(), -daysAgo);
+                        const label = daysAgo === 0 ? '今日' : daysAgo === 1 ? '昨日' : `${daysAgo}天前`;
+                        const active = quickScheduleDate === dStr;
+                        return (
+                          <button
+                            key={dStr}
+                            type="button"
+                            onClick={() => setQuickScheduleDate(dStr)}
+                            className={`py-1.5 px-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                              active
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                                : 'bg-white text-gray-600 border-gray-200 hover:bg-indigo-50'
+                            }`}
+                          >
+                            <div>{label}</div>
+                            <div className={`text-[10px] ${active ? 'text-white/90' : 'text-gray-400'}`}>
+                              {dStr.slice(5).replace('-', '/')}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                     <input
                       type="date"
+                      min={shiftDateStr(getTaipeiTodayStr(), -5)}
+                      max={getTaipeiTodayStr()}
                       value={quickScheduleDate}
-                      onChange={e => setQuickScheduleDate(e.target.value || getTaipeiTodayStr())}
+                      onChange={e => {
+                        const today = getTaipeiTodayStr();
+                        const minD = shiftDateStr(today, -5);
+                        const val = e.target.value || today;
+                        setQuickScheduleDate(val < minD ? minD : val > today ? today : val);
+                      }}
                       className="w-full border border-gray-200 rounded-xl px-3.5 py-2 text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
@@ -1448,7 +1490,7 @@ export const DashboardPage: React.FC = () => {
                 )}
 
                 {/* Main Content: Manager List + Activity Wall */}
-                <div className="flex flex-col md:flex-row gap-6" style={{ alignItems: 'flex-start' }}>
+                <div className="flex flex-col md:flex-row gap-5 sm:gap-6 items-stretch md:items-start">
                   <ManagerList
                     managers={filteredManagers}
                     selectedManager={selectedManager}

@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, Resp
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import base64
 import binascii
@@ -878,22 +878,46 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
         raise HTTPException(status_code=400, detail="缺少門市名稱")
     payload["storeName"] = store_name
 
+    now_utc = datetime.utcnow()
+    created_at = now_utc
+    created_at_str = payload.get("createdAt")
+    if created_at_str:
+        try:
+            parsed_dt = datetime.fromisoformat(str(created_at_str).replace("Z", "+00:00"))
+            if parsed_dt.tzinfo is not None:
+                created_at = parsed_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            else:
+                created_at = parsed_dt
+        except (ValueError, TypeError):
+            created_at = now_utc
+
     is_manager = bool(user and user.get("role") == "manager")
     if is_manager:
-        # NOTE: 區主管送出時以登入身分為準，避免共用裝置草稿殘留造成紀錄掛錯人；時間以伺服器為準避免手機時鐘誤差
+        # NOTE: 區主管送出時以登入身分為準，避免共用裝置草稿殘留造成紀錄掛錯人
         payload["areaManagerName"] = user.get("name") or payload.get("areaManagerName")
-        created_at = datetime.utcnow()
-        payload["createdAt"] = created_at.isoformat() + "Z"
-    else:
-        # 相容外部匯入：允許帶入歷史 createdAt
-        created_at = datetime.utcnow()
-        created_at_str = payload.get("createdAt")
-        if created_at_str:
-            try:
-                created_at = datetime.fromisoformat(str(created_at_str).replace("Z", "+00:00")).replace(tzinfo=None)
-            except (ValueError, TypeError):
-                created_at = datetime.utcnow()
-        payload["createdAt"] = created_at.isoformat() + "Z"
+
+    # 驗證並限制區經理問卷回填時間：允許今日或往前最多 5 天（以台北時區日期為準），且不可超過當下時間
+    taipei_today = (now_utc + TAIPEI_OFFSET).date()
+    min_backfill_date = taipei_today - timedelta(days=5)
+    record_taipei_date = (created_at + TAIPEI_OFFSET).date()
+
+    if is_manager:
+        if record_taipei_date < min_backfill_date:
+            raise HTTPException(
+                status_code=400,
+                detail=f"問卷回填日期最多僅能往前 5 天（最早可選 {min_backfill_date.isoformat()}）"
+            )
+        if record_taipei_date > taipei_today:
+            raise HTTPException(status_code=400, detail="問卷回填日期不可選擇未來日期")
+
+    if created_at > now_utc:
+        created_at = now_utc
+
+    if record_taipei_date < taipei_today:
+        payload["isBackfilled"] = True
+        payload["submittedAt"] = now_utc.isoformat() + "Z"
+
+    payload["createdAt"] = created_at.isoformat() + "Z"
 
     mgr_name = payload.get("areaManagerName") or "未知主管"
     core_checks = payload.get("coreChecks") or {}

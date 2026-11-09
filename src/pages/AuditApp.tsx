@@ -1,12 +1,52 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SignatureCanvas from 'react-signature-canvas';
-import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut, KeyRound } from 'lucide-react';
+import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut, KeyRound, Calendar, Clock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { storeRegions } from '../data/storeRegions';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
 const LOCAL_STORAGE_KEY = 'audit_app_draft';
+const MAX_BACKFILL_DAYS = 5;
+
+/**
+ * 取得台北時區距離今日 N 天前的日期字串 (YYYY-MM-DD)
+ * @param daysAgo 往前天數 (0 為今日，最大 5 天)
+ */
+const getTaipeiDateOffsetStr = (daysAgo = 0): string => {
+  const d = new Date(Date.now() - daysAgo * 86400000);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+};
+
+/**
+ * 取得台北時區當下時間字串 (HH:mm)
+ */
+const getTaipeiCurrentTimeStr = (): string => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Taipei',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const hh = parts.find(p => p.type === 'hour')?.value || '09';
+  const mm = parts.find(p => p.type === 'minute')?.value || '00';
+  return `${hh}:${mm}`;
+};
+
+/**
+ * 產生可回填之日期選項清單（今日 + 往前最多 5 天）
+ */
+const getBackfillDateOptions = () => {
+  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+  return Array.from({ length: MAX_BACKFILL_DAYS + 1 }, (_, idx) => {
+    const dateStr = getTaipeiDateOffsetStr(idx);
+    const dt = new Date(`${dateStr}T12:00:00+08:00`);
+    const weekday = weekdays[dt.getUTCDay()];
+    const shortDate = dateStr.slice(5).replace('-', '/');
+    const label = idx === 0 ? '今日' : idx === 1 ? '昨日' : `${idx}天前`;
+    return { daysAgo: idx, dateStr, shortDate, weekday, label };
+  });
+};
 
 export const AuditApp = () => {
   const navigate = useNavigate();
@@ -43,6 +83,11 @@ export const AuditApp = () => {
   const [scheduleLocation, setScheduleLocation] = useState('');
   const [scheduleDuration, setScheduleDuration] = useState<number>(240);
 
+  // 問卷／巡店回填日期與時間（支援當日及往前最多 5 天補登）
+  const [visitDate, setVisitDate] = useState<string>(() => getTaipeiDateOffsetStr(0));
+  const [visitTime, setVisitTime] = useState<string>(() => getTaipeiCurrentTimeStr());
+  const [isCustomTime, setIsCustomTime] = useState<boolean>(false);
+
   // --- Local Storage Auto Save & Safe Recovery ---
   const [isDraftRestored, setIsDraftRestored] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<string>('');
@@ -72,6 +117,9 @@ export const AuditApp = () => {
       photoPairs: safePairs,
       defectPhotos,
       currentStep,
+      visitDate,
+      visitTime,
+      isCustomTime,
       savedAt: timeStr
     };
 
@@ -142,6 +190,15 @@ export const AuditApp = () => {
               : [{ beforeUrl: '', afterUrl: '' }]
           );
           setDefectPhotos(draft.defectPhotos || {});
+          if (draft.visitDate) {
+            const todayStr = getTaipeiDateOffsetStr(0);
+            const minDateStr = getTaipeiDateOffsetStr(MAX_BACKFILL_DAYS);
+            if (draft.visitDate >= minDateStr && draft.visitDate <= todayStr) {
+              setVisitDate(draft.visitDate);
+              if (draft.visitTime) setVisitTime(draft.visitTime);
+              if (typeof draft.isCustomTime === 'boolean') setIsCustomTime(draft.isCustomTime);
+            }
+          }
           if (draft.currentStep) setCurrentStep(draft.currentStep);
           setDraftSavedAt(draft.savedAt || '稍早');
           setHasRestoredBanner(true);
@@ -183,7 +240,7 @@ export const AuditApp = () => {
   useEffect(() => {
     if (!isDraftRestored) return;
     saveDraftSafe();
-  }, [storeName, mgrName, auditMode, selectedTopics, coreChecks, categoryChecks, categoryRemarks, customItems, pdcaResults, newActionItems, overallRating, photoPairs, defectPhotos, currentStep, isDraftRestored]);
+  }, [storeName, mgrName, auditMode, selectedTopics, coreChecks, categoryChecks, categoryRemarks, customItems, pdcaResults, newActionItems, overallRating, photoPairs, defectPhotos, currentStep, visitDate, visitTime, isCustomTime, isDraftRestored]);
 
   /**
    * 將使用者拍照/上傳的圖片進行客戶端等比縮放壓縮轉為 base64 (JPEG)
@@ -408,13 +465,44 @@ export const AuditApp = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitStatusText, setSubmitStatusText] = useState('');
 
+  /**
+   * 根據區經理所選之「問卷回填日期與時間」轉換為 UTC ISO 字串
+   * 嚴格限制於「今日 ~ 往前最多 5 天」範圍內，且不超過當下時間
+   */
+  const buildBackfillCreatedAtIso = (): string => {
+    const todayStr = getTaipeiDateOffsetStr(0);
+    const minDateStr = getTaipeiDateOffsetStr(MAX_BACKFILL_DAYS);
+    let safeDate = visitDate || todayStr;
+    if (safeDate < minDateStr) safeDate = minDateStr;
+    if (safeDate > todayStr) safeDate = todayStr;
+
+    // 若為今日且未手動指定回填時間，直接使用送出當下的即時時間
+    if (safeDate === todayStr && !isCustomTime) {
+      return new Date().toISOString();
+    }
+
+    const safeTime = /^\d{2}:\d{2}$/.test(visitTime) ? visitTime : getTaipeiCurrentTimeStr();
+    const parsed = new Date(`${safeDate}T${safeTime}:00+08:00`);
+    const now = new Date();
+    if (isNaN(parsed.getTime()) || parsed.getTime() > now.getTime()) {
+      return now.toISOString();
+    }
+    return parsed.toISOString();
+  };
+
   const submitScheduleForm = async () => {
     if (submitting) return;
     if (!scheduleNote.trim()) {
       return alert('請填寫當日行程／任務內容說明（將顯示於戰情牆）');
     }
+    const todayStr = getTaipeiDateOffsetStr(0);
+    const minDateStr = getTaipeiDateOffsetStr(MAX_BACKFILL_DAYS);
+    if (visitDate < minDateStr || visitDate > todayStr) {
+      return alert(`回填日期僅限今日至往前最多 ${MAX_BACKFILL_DAYS} 天（${minDateStr} ~ ${todayStr}）`);
+    }
+
     setSubmitting(true);
-    setSubmitStatusText(`正在回報當日${taskType}...`);
+    setSubmitStatusText(`正在回報${visitDate === todayStr ? '當日' : `${visitDate} `}${taskType}...`);
 
     let detectedRegion = '';
     const refStore = (user?.assigned_stores && user.assigned_stores[0]) || '';
@@ -439,7 +527,7 @@ export const AuditApp = () => {
       highlightDescription: scheduleNote.trim(),
       abnormalFlag: false,
       photoPairs: [],
-      createdAt: new Date().toISOString()
+      createdAt: buildBackfillCreatedAtIso()
     };
 
     try {
@@ -455,12 +543,14 @@ export const AuditApp = () => {
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
-        throw new Error(`伺服器回應 ${res.status}`);
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `伺服器回應 ${res.status}`);
       }
       setScheduleNote('');
       setScheduleLocation('');
-      alert(`✅ 已成功回報當日「${taskType}」！戰情牆已即時更新您的行程狀態。`);
-      navigate('/dashboard');
+      const dateHint = visitDate === todayStr ? '當日' : `【${visitDate} 補登】`;
+      alert(`✅ 已成功回報${dateHint}「${taskType}」！戰情牆已即時更新您的行程狀態。`);
+      navigate(visitDate === todayStr ? '/dashboard' : `/dashboard?date=${visitDate}`);
     } catch (e: any) {
       alert(`⚠️ 行程回報失敗（${e?.message || '網路異常'}），請稍後再試。`);
     } finally {
@@ -473,6 +563,11 @@ export const AuditApp = () => {
     if (submitting) return;
     if (!storeName) return alert('請選擇門市名稱');
     if (!auditMode) return alert('請選擇巡店模式');
+    const todayStr = getTaipeiDateOffsetStr(0);
+    const minDateStr = getTaipeiDateOffsetStr(MAX_BACKFILL_DAYS);
+    if (visitDate < minDateStr || visitDate > todayStr) {
+      return alert(`問卷回填日期僅限今日至往前最多 ${MAX_BACKFILL_DAYS} 天（${minDateStr} ~ ${todayStr}）`);
+    }
     
     // 檢查是否有缺失未填寫備註
     for (const [k, v] of Object.entries(coreChecks)) {
@@ -516,7 +611,7 @@ export const AuditApp = () => {
       overallRating,
       signature,
       photoPairs: mergedPhotos,
-      createdAt: new Date().toISOString()
+      createdAt: buildBackfillCreatedAtIso()
     };
 
     setSubmitting(true);
@@ -574,6 +669,7 @@ export const AuditApp = () => {
     }
 
     if (isSuccess) {
+      const submittedDate = visitDate;
       // 伺服器確認持久化存檔後，才安全清除本機草稿並重置表單狀態
       setIsDraftRestored(false);
       localStorage.removeItem(LOCAL_STORAGE_KEY);
@@ -589,13 +685,20 @@ export const AuditApp = () => {
       setPhotoPairs([{ beforeUrl: '', afterUrl: '' }]);
       setDefectPhotos({});
       setOverallRating('');
+      setVisitDate(getTaipeiDateOffsetStr(0));
+      setVisitTime(getTaipeiCurrentTimeStr());
+      setIsCustomTime(false);
       setCurrentStep(1);
       setHasRestoredBanner(false);
       setDraftSavedAt('');
       sigCanvas.current?.clear();
       setTimeout(() => setIsDraftRestored(true), 100);
-      alert('🎉 巡店紀錄已成功儲存至雲端系統！');
-      navigate(user?.role === 'admin' ? '/dashboard' : '/audit');
+      if (submittedDate !== todayStr) {
+        alert(`🎉 巡店紀錄（回填時間：${submittedDate} ${visitTime}）已成功儲存至雲端系統！`);
+      } else {
+        alert('🎉 巡店紀錄已成功儲存至雲端系統！');
+      }
+      navigate(user?.role === 'admin' ? (submittedDate === todayStr ? '/dashboard' : `/dashboard?date=${submittedDate}`) : '/audit');
     } else {
       // 失敗時嚴格保留草稿與表單內容，確保主管心血不流失
       alert(`⚠️ 儲存失敗（${lastErrorMsg}）。\n\n【請放心】您填寫的所有內容已妥善暫存於手機本機草稿！請確認網路訊號後，直接再次點擊【送出巡店紀錄】即可重試。`);
@@ -633,6 +736,143 @@ export const AuditApp = () => {
   };
 
   // --- Render Sections ---
+  /**
+   * 問卷／巡店回填時間選擇器（支援今日及往前最多 5 天補登）
+   */
+  const renderBackfillTimeSelector = () => {
+    const todayStr = getTaipeiDateOffsetStr(0);
+    const minDateStr = getTaipeiDateOffsetStr(MAX_BACKFILL_DAYS);
+    const dateOptions = getBackfillDateOptions();
+    const isBackfilling = visitDate !== todayStr;
+
+    return (
+      <div
+        className={`rounded-xl p-4 border transition-all ${
+          isBackfilling
+            ? 'bg-amber-50/70 border-amber-300 shadow-xs'
+            : 'bg-blue-50/40 border-blue-100'
+        }`}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <label className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+            <Calendar size={16} className={isBackfilling ? 'text-amber-600' : 'text-blue-600'} />
+            <span>問卷／巡店回填時間</span>
+            <span className="text-red-500">*</span>
+          </label>
+          <span
+            className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${
+              isBackfilling
+                ? 'bg-amber-100 text-amber-800 border-amber-300'
+                : 'bg-white text-blue-700 border-blue-200'
+            }`}
+          >
+            {isBackfilling
+              ? `🕒 補登回填：${visitDate} ${visitTime}`
+              : `可往前補登最多 ${MAX_BACKFILL_DAYS} 天`}
+          </span>
+        </div>
+
+        {/* 快速日期選擇按鈕（今日 + 往前 5 天） */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
+          {dateOptions.map(opt => {
+            const active = visitDate === opt.dateStr;
+            return (
+              <button
+                key={opt.dateStr}
+                type="button"
+                onClick={() => {
+                  setVisitDate(opt.dateStr);
+                  if (opt.daysAgo === 0 && !isCustomTime) {
+                    setVisitTime(getTaipeiCurrentTimeStr());
+                  }
+                }}
+                className={`py-2 px-1.5 rounded-lg border text-center transition-all cursor-pointer ${
+                  active
+                    ? opt.daysAgo === 0
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs font-bold'
+                      : 'bg-amber-500 text-white border-amber-500 shadow-xs font-bold'
+                    : 'bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:bg-blue-50/40'
+                }`}
+              >
+                <div className="text-xs font-bold leading-tight">{opt.label}</div>
+                <div className={`text-[11px] mt-0.5 ${active ? 'text-white/90' : 'text-gray-500'}`}>
+                  {opt.shortDate}({opt.weekday})
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* 日期與時間精細選擇器 */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2">
+            <Calendar size={15} className="text-gray-400 shrink-0" />
+            <span className="text-xs font-semibold text-gray-500 shrink-0">日期：</span>
+            <input
+              type="date"
+              min={minDateStr}
+              max={todayStr}
+              value={visitDate}
+              onChange={e => {
+                const val = e.target.value;
+                if (!val) {
+                  setVisitDate(todayStr);
+                  return;
+                }
+                if (val < minDateStr) {
+                  alert(`問卷回填日期最多僅能往前 ${MAX_BACKFILL_DAYS} 天（最早可選 ${minDateStr}）`);
+                  setVisitDate(minDateStr);
+                } else if (val > todayStr) {
+                  alert('問卷回填日期不可選擇未來日期');
+                  setVisitDate(todayStr);
+                } else {
+                  setVisitDate(val);
+                }
+              }}
+              className="flex-1 text-sm font-semibold text-gray-800 outline-none bg-transparent"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2">
+            <Clock size={15} className="text-gray-400 shrink-0" />
+            <span className="text-xs font-semibold text-gray-500 shrink-0">時間：</span>
+            <input
+              type="time"
+              value={visitTime}
+              onChange={e => {
+                setVisitTime(e.target.value || getTaipeiCurrentTimeStr());
+                setIsCustomTime(true);
+              }}
+              className="flex-1 text-sm font-semibold text-gray-800 outline-none bg-transparent"
+            />
+            {(isBackfilling || isCustomTime) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setVisitDate(todayStr);
+                  setVisitTime(getTaipeiCurrentTimeStr());
+                  setIsCustomTime(false);
+                }}
+                className="text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-md shrink-0 transition-colors cursor-pointer"
+              >
+                設為現在
+              </button>
+            )}
+          </div>
+        </div>
+
+        {(isBackfilling || isCustomTime) && (
+          <p className="text-xs text-amber-800 font-medium mt-2.5 flex items-center gap-1.5">
+            <span>📌</span>
+            <span>
+              本筆問卷將以 <strong>{visitDate} {visitTime}</strong> 回填送出，並自動計入該日期與當週之區主管巡店進度。
+            </span>
+          </p>
+        )}
+      </div>
+    );
+  };
+
   const renderStep1 = () => (
     <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3 flex items-center gap-2">
@@ -640,6 +880,9 @@ export const AuditApp = () => {
         當日作業與行程選擇
       </h2>
       <div className="space-y-5">
+        {/* 問卷／巡店回填日期與時間選擇（可往前最多 5 天） */}
+        {renderBackfillTimeSelector()}
+
         {/* 當日行程類型選擇：實地巡店 / 總部行程 / 會議行程 / 特殊行程 */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -1367,6 +1610,9 @@ export const AuditApp = () => {
               <div className="text-sm font-bold text-blue-600 mt-0.5">{validActionsCount} 筆</div>
             </div>
           </div>
+
+          {/* 確認／調整問卷回填時間（可往前補登最多 5 天） */}
+          {renderBackfillTimeSelector()}
 
           {/* 綜合評價 */}
           <div>
