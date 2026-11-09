@@ -22,7 +22,12 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
 
   const filteredManagers = useMemo(() => {
     if (user?.role === 'manager') {
-      return managers.filter(m => m.areaManagerName === user.name || (user.assigned_stores && user.assigned_stores.includes(m.storeName)));
+      return managers.filter(
+        m =>
+          m.areaManagerName === user.name ||
+          m.deputyManagerName === user.name ||
+          (user.assigned_stores && user.assigned_stores.includes(m.storeName))
+      );
     }
     return managers;
   }, [managers, user]);
@@ -182,11 +187,13 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                     <div key={region} className="flex flex-col gap-4" style={{ minWidth: '320px', width: '320px', flexShrink: 0 }}>
                       <div className="font-semibold text-primary flex items-center justify-center gap-2" style={{ borderBottom: '2px solid var(--color-primary-100)', paddingBottom: '8px' }}>
                         <MapPin size={18} />
-                        <span style={{ fontSize: '1.1rem' }}>{region}</span>
+                        <span style={{ fontSize: '1.1rem' }}>{region}（{regManagers.length} 店）</span>
                       </div>
                       
                       <div className="flex flex-row flex-wrap items-stretch gap-4" style={{ paddingLeft: '0' }}>
-                        {Object.entries(areaManagers).map(([areaManager, stores]) => (
+                        {Object.entries(areaManagers).map(([areaManager, stores]) => {
+                          const deputyMgr = stores.find(s => s.deputyManagerName)?.deputyManagerName;
+                          return (
                           <div key={areaManager} style={{ 
                             background: 'rgba(255, 255, 255, 0.65)', 
                             border: '1px solid rgba(255, 255, 255, 0.8)', 
@@ -197,9 +204,16 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                             maxWidth: '100%',
                             textAlign: 'center'
                           }}>
-                            <div className="font-bold text-gray-900 flex items-center justify-center gap-2" style={{ borderBottom: '1px solid var(--color-secondary-100)', paddingBottom: '8px', marginBottom: '12px' }}>
-                              <Users size={18} className="text-primary" />
-                              {areaManager}
+                            <div className="font-bold text-gray-900 flex flex-col items-center justify-center gap-1.5" style={{ borderBottom: '1px solid var(--color-secondary-100)', paddingBottom: '8px', marginBottom: '12px' }}>
+                              <div className="flex items-center justify-center gap-2">
+                                <Users size={18} className="text-primary" />
+                                <span>區域主管：{areaManager}</span>
+                              </div>
+                              {deputyMgr && (
+                                <div className="text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded-full">
+                                  副區主管：{deputyMgr}
+                                </div>
+                              )}
                             </div>
                             <ul style={{ 
                               display: 'grid', 
@@ -225,7 +239,8 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                               ))}
                             </ul>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );

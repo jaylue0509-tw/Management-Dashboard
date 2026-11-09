@@ -2,12 +2,12 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { HeaderBar } from '../components/HeaderBar';
 import { SummaryCards } from '../components/SummaryCards';
 import { ExecutiveSummary } from '../components/ExecutiveSummary';
-import { ActivityWall } from '../components/ActivityWall';
-import { ManagerList } from '../components/ManagerList';
+import { ActivityWall, type ActivityCategoryFilter } from '../components/ActivityWall';
+import { ManagerList, type ManagerStatusFilter } from '../components/ManagerList';
 import { OrganizationMap } from '../components/OrganizationMap';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
 import { getDashboardData } from '../api/api';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Compass } from 'lucide-react';
 import { CoverageRadarChart } from '../components/charts/CoverageRadarChart';
 import { IssuePieChart } from '../components/charts/IssuePieChart';
 import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
@@ -97,6 +97,7 @@ export const DashboardPage: React.FC = () => {
   const [quickScheduleDate, setQuickScheduleDate] = useState<string>(() => getTaipeiTodayStr());
   const [isSubmittingSchedule, setIsSubmittingSchedule] = useState(false);
   const [focusedRecord, setFocusedRecord] = useState<{ id: string; ts: number } | null>(null);
+  const [activityWallFilter, setActivityWallFilter] = useState<{ category: ActivityCategoryFilter; ts: number } | null>(null);
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -242,7 +243,8 @@ export const DashboardPage: React.FC = () => {
         }).map((a: any) => {
           // NOTE: 統一轉為帶 Z 的 UTC 字串，並即時計算距今分鐘數，避免今日篩選與回報時間偏移 8 小時
           const createdAt = normalizeUtcIso(a.createdAt);
-          return { ...a, createdAt, timeAgoMinutes: getMinutesAgo(createdAt) };
+          const normalizedRegion = a.region === '台南區' ? '嘉南區' : a.region;
+          return { ...a, region: normalizedRegion, createdAt, timeAgoMinutes: getMinutesAgo(createdAt) };
         });
         let validActionItems = (data.actionItems || []).filter((i: any) => {
           if (i.storeName?.includes('測試') || i.storeName?.includes('文心秀泰')) return false;
@@ -254,9 +256,26 @@ export const DashboardPage: React.FC = () => {
         if (user?.role === 'manager') {
           const mgrName = user.name;
           const assignedStores = new Set(user.assigned_stores || []);
-          validManagers = validManagers.filter((m: any) => m.areaManagerName === mgrName || assignedStores.has(m.storeName));
-          validActivities = validActivities.filter((a: any) => a.areaManagerName === mgrName || assignedStores.has(a.storeName));
-          validActionItems = validActionItems.filter((i: any) => assignedStores.has(i.storeName) || i.assignee === mgrName || i.createdBy === mgrName);
+          validManagers = validManagers.filter(
+            (m: any) =>
+              m.areaManagerName === mgrName ||
+              m.deputyManagerName === mgrName ||
+              assignedStores.has(m.storeName)
+          );
+          const coManagerNames = new Set<string>([mgrName]);
+          validManagers.forEach((m: any) => {
+            if (m.areaManagerName) coManagerNames.add(m.areaManagerName);
+            if (m.deputyManagerName) coManagerNames.add(m.deputyManagerName);
+          });
+          validActivities = validActivities.filter(
+            (a: any) => coManagerNames.has(a.areaManagerName) || assignedStores.has(a.storeName)
+          );
+          validActionItems = validActionItems.filter(
+            (i: any) =>
+              assignedStores.has(i.storeName) ||
+              coManagerNames.has(i.assignee) ||
+              coManagerNames.has(i.createdBy)
+          );
         }
 
         setManagers(validManagers);
@@ -285,17 +304,32 @@ export const DashboardPage: React.FC = () => {
   const uniqueManagers = useMemo(() => {
     let sourceManagers = managers;
     if (user?.role === 'manager') {
-      sourceManagers = managers.filter(m => m.areaManagerName === user.name || (user.assigned_stores && user.assigned_stores.includes(m.storeName)));
+      sourceManagers = managers.filter(
+        m =>
+          m.areaManagerName === user.name ||
+          m.deputyManagerName === user.name ||
+          (user.assigned_stores && user.assigned_stores.includes(m.storeName))
+      );
     }
     const grouped = groupBy(sourceManagers, m => m.areaManagerName);
     let entries = Object.entries(grouped);
     if (user?.role === 'manager') {
-      entries = entries.filter(([name]) => name === user.name);
+      entries = entries.filter(
+        ([name, stores]) => name === user.name || stores.some(s => s.deputyManagerName === user.name)
+      );
     }
     const SPECIAL_TYPES = new Set(['總部行程', '會議行程', '特殊行程']);
     return entries.map(([name, stores]) => {
-      // 找出該主管於目前所選時間區間 / 指定日期內的動態
-      const periodActivities = activities.filter(a => a.areaManagerName === name);
+      const deputyManagerName = stores.find(s => s.deputyManagerName)?.deputyManagerName?.trim() || '';
+      const teamManagerNames = new Set([name, deputyManagerName].filter(Boolean));
+      const regionStoresSet = new Set(stores.map(s => s.storeName));
+
+      // 找出該區正／副主管或轄下門市於目前所選時間區間 / 指定日期內的動態
+      const periodActivities = activities.filter(
+        a =>
+          teamManagerNames.has(a.areaManagerName) ||
+          (!SPECIAL_TYPES.has(a.actionType) && regionStoresSet.has(a.storeName))
+      );
 
       const periodStoreActivities = periodActivities.filter(a => !SPECIAL_TYPES.has(a.actionType));
       const periodScheduleActivities = periodActivities.filter(a => SPECIAL_TYPES.has(a.actionType));
@@ -304,7 +338,7 @@ export const DashboardPage: React.FC = () => {
       const visitedStores = Array.from(new Set(periodStoreActivities.map(a => a.storeName)));
       const todaySchedules = periodScheduleActivities.map(a => ({
         type: a.actionType,
-        note: a.highlightDescription || a.immediateImprovement || a.storeName || a.actionType,
+        note: `${teamManagerNames.size > 1 && a.areaManagerName ? `[${a.areaManagerName}] ` : ''}${a.highlightDescription || a.immediateImprovement || a.storeName || a.actionType}`,
         duration: a.expectedStayMinutes
       }));
 
@@ -333,6 +367,7 @@ export const DashboardPage: React.FC = () => {
       return {
         ...stores[0],
         areaManagerName: name,
+        deputyManagerName,
         region,
         assignedStoreCount,
         todayVisitCount,
@@ -358,16 +393,34 @@ export const DashboardPage: React.FC = () => {
     // 區主管只看自己與轄下門市的動態
     if (user?.role === 'manager') return activities;
     if (selectedDepartment === 'all') return activities;
-    const validManagerNames = new Set(filteredManagers.map(m => m.areaManagerName));
+    const validManagerNames = new Set<string>();
+    filteredManagers.forEach(m => {
+      if (m.areaManagerName) validManagerNames.add(m.areaManagerName);
+      if (m.deputyManagerName) validManagerNames.add(m.deputyManagerName);
+    });
     return activities.filter(a => validManagerNames.has(a.areaManagerName));
   }, [activities, filteredManagers, selectedDepartment, user]);
 
   const targetActivities = useMemo(() => {
     if (selectedManager) {
-      return filteredActivities.filter(a => a.areaManagerName === selectedManager.areaManagerName);
+      const targetMgrNames = new Set(
+        [selectedManager.areaManagerName, selectedManager.deputyManagerName].filter(Boolean)
+      );
+      const targetStoreNames = new Set(
+        managers
+          .filter(
+            m =>
+              m.region === selectedManager.region ||
+              m.areaManagerName === selectedManager.areaManagerName
+          )
+          .map(m => m.storeName)
+      );
+      return filteredActivities.filter(
+        a => targetMgrNames.has(a.areaManagerName) || targetStoreNames.has(a.storeName)
+      );
     }
     return filteredActivities;
-  }, [filteredActivities, selectedManager]);
+  }, [filteredActivities, selectedManager, managers]);
 
   const { dynamicSummary, radarData, pieData, riskData, topIssues, unresolvedStores } = useMemo(() => {
     let abnormalCount = 0;
@@ -708,8 +761,8 @@ export const DashboardPage: React.FC = () => {
       const reportTime = formatTaipeiReportTime(activity.createdAt);
       const normStore = normalizeStore(store);
       const matchedMgr = managers.find(m => normalizeStore(m.storeName) === normStore);
-      const region = activity.region || matchedMgr?.region || '未分區';
-      const areaManagerName = activity.areaManagerName || matchedMgr?.areaManagerName || '';
+      const region = matchedMgr?.region || (activity.region === '台南區' ? '嘉南區' : activity.region) || '未分區';
+      const areaManagerName = matchedMgr?.areaManagerName || activity.areaManagerName || '';
 
       return {
         store,
@@ -847,6 +900,96 @@ export const DashboardPage: React.FC = () => {
     }, 150);
   };
 
+  /**
+   * 點擊區主管之「公務行程」或上方特殊行程膠囊時，自動定位至下方對應之行程紀錄卡片
+   */
+  const handleJumpToSchedule = (managerName: string, scheduleType?: string) => {
+    const matchedMgrObj = uniqueManagers.find(
+      m => m.areaManagerName === managerName || m.deputyManagerName === managerName
+    );
+    const validNames = new Set(
+      [managerName, matchedMgrObj?.areaManagerName, matchedMgrObj?.deputyManagerName].filter(Boolean)
+    );
+    const isSch = (a: VisitRecord) =>
+      ['總部行程', '會議行程', '特殊行程'].includes(a.actionType || '') &&
+      validNames.has(a.areaManagerName) &&
+      (!scheduleType || a.actionType === scheduleType);
+
+    let matched = targetActivities.find(isSch);
+    if (!matched) {
+      matched = filteredActivities.find(isSch);
+      if (matched && selectedManager) setSelectedManager(null);
+    }
+    if (!matched) {
+      matched = activities.find(isSch);
+      if (matched) {
+        if (selectedDepartment !== 'all') setSelectedDepartment('all');
+        if (selectedManager) setSelectedManager(null);
+      }
+    }
+    if (!matched) return;
+
+    const targetId = matched.recordId;
+    setActiveTab('dashboard');
+    setFocusedRecord({ id: targetId, ts: Date.now() });
+    setTimeout(() => {
+      const el = document.getElementById(`activity-${targetId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('highlight-pulse');
+        setTimeout(() => el.classList.remove('highlight-pulse'), 2500);
+      }
+    }, 150);
+  };
+
+  /**
+   * 點擊「區主管進度」上方之已完成／巡店中／公務行程數字卡時，同步連動動態牆篩選並平滑定位至畫面
+   */
+  const handleManagerStatusFilterSelect = (filter: ManagerStatusFilter, matchedManagers: Manager[]) => {
+    if (filter === 'schedule') {
+      setActivityWallFilter({ category: 'schedule', ts: Date.now() });
+      const firstMgr = matchedManagers[0];
+      if (firstMgr) {
+        const schRecord = filteredActivities.find(
+          a => ['總部行程', '會議行程', '特殊行程'].includes(a.actionType || '') && a.areaManagerName === firstMgr.areaManagerName
+        );
+        if (schRecord) {
+          setTimeout(() => {
+            const el = document.getElementById(`activity-${schRecord.recordId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('highlight-pulse');
+              setTimeout(() => el.classList.remove('highlight-pulse'), 2200);
+            }
+          }, 120);
+        }
+      }
+    } else if (filter === 'completed' || filter === 'visiting') {
+      setActivityWallFilter({ category: 'store', ts: Date.now() });
+      const firstMgr = matchedManagers[0];
+      if (firstMgr && firstMgr.visitedStores && firstMgr.visitedStores.length > 0) {
+        setTimeout(() => {
+          const wallEl = document.getElementById('section-activity-wall');
+          if (wallEl && window.innerWidth < 768) {
+            wallEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 120);
+      }
+    } else {
+      setActivityWallFilter({ category: 'all', ts: Date.now() });
+    }
+  };
+
+  /**
+   * 頁面區塊快速索引定位
+   */
+  const scrollToSection = (sectionId: string) => {
+    const el = document.getElementById(sectionId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   return (
     <div style={{ minHeight: '100vh', paddingBottom: '40px', background: '#f4f6f9' }}>
       <HeaderBar
@@ -922,11 +1065,10 @@ export const DashboardPage: React.FC = () => {
                   key={opt.id}
                   type="button"
                   onClick={() => handleTimeRangeChange(opt.id)}
-                  className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                    active
+                  className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${active
                       ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                       : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
-                  }`}
+                    }`}
                 >
                   {opt.label}
                 </button>
@@ -1035,8 +1177,52 @@ export const DashboardPage: React.FC = () => {
           <DashboardSkeleton />
         ) : (
           <>
+            {/* 戰情牆全頁區塊快速索引導覽列 */}
+            {activeTab === 'dashboard' && (
+              <div className="mb-3.5 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-xl px-3 py-2 shadow-2xs flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                <span className="text-xs font-extrabold text-gray-700 flex items-center gap-1 shrink-0 mr-1">
+                  <Compass size={14} className="text-blue-600" />
+                  <span>快速索引：</span>
+                </span>
+                {[
+                  { id: 'section-kpi', label: '📊 核心指標', count: undefined, highlight: false },
+                  ...(unresolvedStores.length > 0
+                    ? [{ id: 'section-unresolved', label: '🚨 未結案提醒', count: unresolvedStores.length, highlight: true }]
+                    : []),
+                  { id: 'section-charts', label: '📈 圖表分析', count: 3, highlight: false },
+                  { id: 'section-managers', label: '👥 區主管進度', count: filteredManagers.length, highlight: false },
+                  ...(topIssues.length > 0
+                    ? [{ id: 'section-top-issues', label: '🔥 高頻缺失', count: topIssues.length, highlight: false }]
+                    : []),
+                  { id: 'section-activity-wall', label: '📋 巡店動態牆', count: targetActivities.length, highlight: false },
+                ].map(sec => (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    onClick={() => scrollToSection(sec.id)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                      sec.highlight
+                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200'
+                    }`}
+                  >
+                    <span>{sec.label}</span>
+                    {sec.count !== undefined && (
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[11px] font-extrabold ${
+                          sec.highlight ? 'bg-rose-600 text-white' : 'bg-white text-gray-600 border border-gray-200'
+                        }`}
+                      >
+                        {sec.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* 當日總部行程／會議行程／特殊行程 狀態與快速登記列 */}
-            <div className="mb-4 sm:mb-5 bg-white border border-indigo-100 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col gap-2.5 sm:gap-3">
+            <div id="section-schedule" className="mb-4 sm:mb-5 bg-white border border-indigo-100 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col gap-2.5 sm:gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1 rounded-full text-xs font-extrabold">
@@ -1068,16 +1254,19 @@ export const DashboardPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* 顯示今日已登記特殊行程之區主管清單 */}
+              {/* 顯示今日已登記特殊行程之區主管清單（點擊自動定位至下方行程明細） */}
               {filteredManagers.some(m => m.todaySchedules && m.todaySchedules.length > 0) && (
                 <div className="pt-2.5 border-t border-gray-100 flex flex-wrap gap-2">
                   {filteredManagers
                     .filter(m => m.todaySchedules && m.todaySchedules.length > 0)
                     .map(m =>
                       (m.todaySchedules || []).map((sch, sIdx) => (
-                        <div
+                        <button
                           key={`${m.areaManagerName}-${sIdx}`}
-                          className="inline-flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs"
+                          type="button"
+                          onClick={() => handleJumpToSchedule(m.areaManagerName, sch.type)}
+                          className="inline-flex items-center gap-2 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs cursor-pointer transition-all shadow-2xs"
+                          title="點擊自動移至下方公務行程紀錄細節"
                         >
                           <span className="font-extrabold text-indigo-900">
                             {sch.type === '總部行程' ? '🏢' : sch.type === '會議行程' ? '📅' : '⭐'} {m.areaManagerName}（{m.region}）
@@ -1088,7 +1277,8 @@ export const DashboardPage: React.FC = () => {
                           <span className="text-gray-700 font-semibold">
                             {sch.note}
                           </span>
-                        </div>
+                          <span className="text-indigo-600 font-extrabold text-[11px]">➔</span>
+                        </button>
                       ))
                     )}
                 </div>
@@ -1191,11 +1381,10 @@ export const DashboardPage: React.FC = () => {
                           key={t}
                           type="button"
                           onClick={() => setQuickScheduleType(t)}
-                          className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                            quickScheduleType === t
+                          className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${quickScheduleType === t
                               ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
                               : 'bg-white text-gray-700 border-gray-200 hover:bg-indigo-50'
-                          }`}
+                            }`}
                         >
                           {t === '總部行程' ? '🏢 ' : t === '會議行程' ? '📅 ' : '⭐ '}
                           {t}
@@ -1241,11 +1430,10 @@ export const DashboardPage: React.FC = () => {
                           key={d.mins}
                           type="button"
                           onClick={() => setQuickScheduleDuration(d.mins)}
-                          className={`py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                            quickScheduleDuration === d.mins
+                          className={`py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${quickScheduleDuration === d.mins
                               ? 'bg-indigo-50 text-indigo-700 border-indigo-500'
                               : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                          }`}
+                            }`}
                         >
                           {d.label}
                         </button>
@@ -1267,7 +1455,7 @@ export const DashboardPage: React.FC = () => {
 
             {/* Unresolved Issues Reminder Banner (依區域清晰劃分數量與門市) */}
             {unresolvedStores.length > 0 && (
-              <div className="mb-6 bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-2xl p-1 shadow-lg animate-in slide-in-from-top-4 fade-in duration-500">
+              <div id="section-unresolved" className="mb-6 bg-gradient-to-r from-red-500 via-rose-500 to-red-600 rounded-2xl p-1 shadow-lg animate-in slide-in-from-top-4 fade-in duration-500">
                 <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 sm:p-5 text-white flex flex-col gap-4">
                   {/* 頂部標題與統計列 */}
                   <div className="flex items-start sm:items-center justify-between flex-wrap gap-3">
@@ -1291,15 +1479,27 @@ export const DashboardPage: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* 區域數量快速摘要膠囊列 */}
+                    {/* 區域數量快速摘要膠囊列（點選直接定位至該區域卡片） */}
                     <div className="flex items-center flex-wrap gap-1.5">
                       {groupedUnresolvedStores.map(g => (
-                        <span
+                        <button
                           key={g.region}
-                          className="text-xs bg-black/25 text-white px-2.5 py-1 rounded-lg border border-white/25 font-bold flex items-center gap-1 shadow-sm"
+                          type="button"
+                          onClick={() => {
+                            if (g.stores.length === 1) {
+                              setResolvingStore(g.stores[0]);
+                            } else {
+                              const el = document.getElementById(`unresolved-region-${g.region}`);
+                              if (el) {
+                                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }
+                            }
+                          }}
+                          className="text-xs bg-black/25 hover:bg-black/40 text-white px-2.5 py-1 rounded-lg border border-white/25 font-bold flex items-center gap-1 shadow-sm cursor-pointer transition-colors"
+                          title={`點擊定位至「${g.region}」待結案門市`}
                         >
-                          <span className="text-amber-300">●</span> {g.region}：{g.stores.length} 店
-                        </span>
+                          <span className="text-amber-300">●</span> {g.region}：{g.stores.length} 店 ➔
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -1309,6 +1509,7 @@ export const DashboardPage: React.FC = () => {
                     {groupedUnresolvedStores.map(group => (
                       <div
                         key={group.region}
+                        id={`unresolved-region-${group.region}`}
                         className="bg-white/15 hover:bg-white/20 border border-white/25 rounded-xl p-3.5 flex flex-col justify-between gap-3 transition-all shadow-sm"
                       >
                         {/* 區域標題與負責主管 */}
@@ -1450,29 +1651,31 @@ export const DashboardPage: React.FC = () => {
 
             {activeTab === 'dashboard' ? (
               <>
-                {(() => {
-                  const fmtShort = (d: string) => d ? d.slice(5).replace('-', '/') : '';
-                  const todayStr = getTaipeiTodayStr();
-                  let timeRangeText = '全部';
-                  if (timeRange === 'day') {
-                    timeRangeText = customStartDate === todayStr ? '今日' : `${fmtShort(customStartDate)}`;
-                  } else if (timeRange === 'week') {
-                    timeRangeText = `本週 ${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
-                  } else if (timeRange === 'last_week') {
-                    timeRangeText = `上週 ${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
-                  } else if (timeRange === 'month') {
-                    timeRangeText = '本月';
-                  } else if (timeRange === 'custom') {
-                    timeRangeText = customStartDate === customEndDate
-                      ? `${fmtShort(customStartDate)}`
-                      : `${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
-                  }
-                  const fullRegionLabel = `${selectedDepartment === 'all' ? '全區' : selectedDepartment} (${timeRangeText})`;
-                  return <SummaryCards summary={dynamicSummary} regionLabel={fullRegionLabel} periodLabel={timeRangeText} onStoreSelect={handleJumpToStore} />;
-                })()}
+                <div id="section-kpi">
+                  {(() => {
+                    const fmtShort = (d: string) => d ? d.slice(5).replace('-', '/') : '';
+                    const todayStr = getTaipeiTodayStr();
+                    let timeRangeText = '全部';
+                    if (timeRange === 'day') {
+                      timeRangeText = customStartDate === todayStr ? '今日' : `${fmtShort(customStartDate)}`;
+                    } else if (timeRange === 'week') {
+                      timeRangeText = `本週 ${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
+                    } else if (timeRange === 'last_week') {
+                      timeRangeText = `上週 ${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
+                    } else if (timeRange === 'month') {
+                      timeRangeText = '本月';
+                    } else if (timeRange === 'custom') {
+                      timeRangeText = customStartDate === customEndDate
+                        ? `${fmtShort(customStartDate)}`
+                        : `${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
+                    }
+                    const fullRegionLabel = `${selectedDepartment === 'all' ? '全區' : selectedDepartment} (${timeRangeText})`;
+                    return <SummaryCards summary={dynamicSummary} regionLabel={fullRegionLabel} periodLabel={timeRangeText} onStoreSelect={handleJumpToStore} />;
+                  })()}
+                </div>
 
                 {/* Charts Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+                <div id="section-charts" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
                   <CoverageRadarChart data={radarData} />
                   <RiskDistributionChart data={riskData} onStoreSelect={handleJumpToStore} />
                   <IssuePieChart data={pieData} onStoreSelect={handleJumpToStore} />
@@ -1496,31 +1699,40 @@ export const DashboardPage: React.FC = () => {
                     selectedManager={selectedManager}
                     onSelect={setSelectedManager}
                     onStoreSelect={handleJumpToStore}
+                    onScheduleSelect={handleJumpToSchedule}
+                    onStatusFilterSelect={handleManagerStatusFilterSelect}
                     timeRangeLabel={
                       timeRange === 'day'
                         ? (customStartDate === getTaipeiTodayStr() ? '今日' : customStartDate.slice(5).replace('-', '/'))
                         : timeRange === 'week'
-                        ? '本週'
-                        : timeRange === 'last_week'
-                        ? '上週'
-                        : timeRange === 'month'
-                        ? '本月'
-                        : timeRange === 'custom'
-                        ? (customStartDate === customEndDate
-                            ? customStartDate.slice(5).replace('-', '/')
-                            : `${customStartDate.slice(5).replace('-', '/')}~${customEndDate.slice(5).replace('-', '/')}`)
-                        : '累計'
+                          ? '本週'
+                          : timeRange === 'last_week'
+                            ? '上週'
+                            : timeRange === 'month'
+                              ? '本月'
+                              : timeRange === 'custom'
+                                ? (customStartDate === customEndDate
+                                  ? customStartDate.slice(5).replace('-', '/')
+                                  : `${customStartDate.slice(5).replace('-', '/')}~${customEndDate.slice(5).replace('-', '/')}`)
+                                : '累計'
                     }
                   />
                   <main style={{ flex: 1, width: '100%', minWidth: 0 }}>
-                    <TopIssuesList
-                      issues={topIssues}
-                      onStoreClick={(recordId, storeName) => {
-                        handleJumpToStore(storeName, recordId);
-                      }}
-                    />
+                    <div id="section-top-issues">
+                      <TopIssuesList
+                        issues={topIssues}
+                        onStoreClick={(recordId, storeName) => {
+                          handleJumpToStore(storeName, recordId);
+                        }}
+                      />
+                    </div>
                     <div style={{ marginTop: '24px' }}>
-                      <ActivityWall activities={targetActivities} actionItems={actionItems} focusedRecord={focusedRecord} />
+                      <ActivityWall
+                        activities={targetActivities}
+                        actionItems={actionItems}
+                        focusedRecord={focusedRecord}
+                        externalFilter={activityWallFilter}
+                      />
                     </div>
                   </main>
                 </div>

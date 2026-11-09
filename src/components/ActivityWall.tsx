@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { VisitRecord } from '../types';
-import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck, Search, Compass } from 'lucide-react';
 import { formatTaipeiReportTime, formatTimeAgo, getMinutesAgo } from '../utils/time-utils';
+
+export type ActivityCategoryFilter = 'all' | 'store' | 'abnormal' | 'normal' | 'photo' | 'schedule';
 
 interface Props {
   activities: VisitRecord[];
   actionItems?: any[];
   focusedRecord?: { id: string; ts: number } | null;
+  externalFilter?: { category: ActivityCategoryFilter; ts: number } | null;
 }
 
 const ITEM_NAMES: Record<string, string> = {
@@ -28,46 +30,315 @@ const resolvePhotoUrl = (url?: string): string => {
   return url;
 };
 
-export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], focusedRecord }) => {
+/**
+ * 判斷單筆巡店紀錄是否含有異常或缺失
+ */
+const checkActivityAbnormal = (activity: VisitRecord): boolean => {
+  const isSpecialSchedule = ['總部行程', '會議行程', '特殊行程'].includes(activity.actionType || '');
+  if (isSpecialSchedule) return false;
+
+  const coreAbnormals = (activity as any).coreChecks
+    ? Object.entries((activity as any).coreChecks).filter(([_, val]) => val === '缺失')
+    : [];
+  const categoryAbnormals = (activity as any).categoryChecks
+    ? Object.entries((activity as any).categoryChecks).filter(([_, val]) => val === '缺失' || val === '待改善')
+    : [];
+  if (coreAbnormals.length > 0 || categoryAbnormals.length > 0) return true;
+
+  if (activity.immediateImprovement) {
+    const lines = activity.immediateImprovement.split('\n').filter(line => line.trim() && !line.includes('紀錄缺失項目'));
+    for (const line of lines) {
+      const sepIdx = line.indexOf('：') !== -1 ? line.indexOf('：') : line.indexOf(':');
+      const hasSep = sepIdx !== -1;
+      const title = hasSep ? line.substring(0, sepIdx).trim() : line;
+      const content = hasSep ? line.substring(sepIdx + 1).trim() : '';
+      const isNeutral = title.includes('姓名') || title.includes('簽名') || title.includes('反饋') || title.includes('店名');
+      const isOk = hasSep
+        ? (!content || content === '無' || content === '無缺失' || content === '正常')
+        : (title === '無' || title === '無缺失' || title === '正常');
+      if (!isNeutral && !isOk) return true;
+    }
+  }
+  return false;
+};
+
+export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], focusedRecord, externalFilter }) => {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxPair, setLightboxPair] = useState<{ beforeUrl: string; afterUrl: string; mode: 'before' | 'after' | 'compare' } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandAll, setExpandAll] = useState<boolean>(false);
+  const [categoryFilter, setCategoryFilter] = useState<ActivityCategoryFilter>('all');
+  const [regionFilter, setRegionFilter] = useState<string>('全部');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
     if (focusedRecord?.id) {
+      // 當外部點選指定門市或行程時，自動解除可能隱藏該筆紀錄的篩選並展開細節
+      setCategoryFilter('all');
+      setRegionFilter('全部');
+      setSearchQuery('');
       setExpandedId(focusedRecord.id);
     }
   }, [focusedRecord]);
 
+  useEffect(() => {
+    if (externalFilter) {
+      setCategoryFilter(externalFilter.category);
+      setRegionFilter('全部');
+    }
+  }, [externalFilter]);
+
   const toggleExpand = (id: string) => {
+    setExpandAll(false);
     setExpandedId(prev => prev === id ? null : id);
   };
 
+  // 各分類統計數字（連動按鈕）
+  const categoryCounts = useMemo(() => {
+    let store = 0;
+    let abnormal = 0;
+    let normal = 0;
+    let photo = 0;
+    let schedule = 0;
+    for (const act of activities) {
+      const isSch = ['總部行程', '會議行程', '特殊行程'].includes(act.actionType || '');
+      const isAbn = checkActivityAbnormal(act);
+      const hasPh = (act.photoPairs || []).some(p => p && (p.beforeUrl || p.afterUrl));
+      if (isSch) {
+        schedule++;
+      } else {
+        store++;
+        if (isAbn) abnormal++;
+        else normal++;
+      }
+      if (hasPh) photo++;
+    }
+    return {
+      all: activities.length,
+      store,
+      abnormal,
+      normal,
+      photo,
+      schedule,
+    };
+  }, [activities]);
+
+  // 區域統計清單
+  const regionStats = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const act of activities) {
+      const reg = act.region?.trim();
+      if (reg) {
+        map.set(reg, (map.get(reg) || 0) + 1);
+      }
+    }
+    return Array.from(map.entries()).map(([region, count]) => ({ region, count }));
+  }, [activities]);
+
+  // 過濾後的動態清單
+  const displayedActivities = useMemo(() => {
+    return activities.filter(act => {
+      const isSch = ['總部行程', '會議行程', '特殊行程'].includes(act.actionType || '');
+      const isAbn = checkActivityAbnormal(act);
+      const hasPh = (act.photoPairs || []).some(p => p && (p.beforeUrl || p.afterUrl));
+
+      if (categoryFilter === 'store' && isSch) return false;
+      if (categoryFilter === 'schedule' && !isSch) return false;
+      if (categoryFilter === 'abnormal' && (!(!isSch && isAbn))) return false;
+      if (categoryFilter === 'normal' && (!(!isSch && !isAbn))) return false;
+      if (categoryFilter === 'photo' && !hasPh) return false;
+
+      if (regionFilter !== '全部' && act.region !== regionFilter) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const hay = `${act.storeName || ''} ${act.areaManagerName || ''} ${act.region || ''} ${act.actionType || ''} ${act.immediateImprovement || ''} ${act.highlightDescription || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [activities, categoryFilter, regionFilter, searchQuery]);
+
+  const jumpToActivityCard = (recordId: string) => {
+    setExpandedId(recordId);
+    setTimeout(() => {
+      const el = document.getElementById(`activity-${recordId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.4), 0 8px 24px rgba(37, 99, 235, 0.18)';
+        setTimeout(() => {
+          el.style.boxShadow = '';
+        }, 1800);
+      }
+    }, 60);
+  };
+
   return (
-    <div>
+    <div id="section-activity-wall">
       {/* Section Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
         <ClipboardCheck size={18} color="#2563eb" />
         <h2 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#111827' }}>
           即時巡店動態
         </h2>
-        <span style={{
-          marginLeft: 'auto',
-          fontSize: '0.72rem', fontWeight: 600,
-          color: '#6b7280',
-          background: '#f3f4f6',
-          border: '1px solid #e5e7eb',
-          borderRadius: '99px',
-          padding: '2px 10px',
-        }}>
-          {activities.length} 筆紀錄
-        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {displayedActivities.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setExpandAll(prev => !prev);
+                setExpandedId(null);
+              }}
+              className="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full px-3 py-1 cursor-pointer transition-colors"
+            >
+              {expandAll ? '▲ 全部收合' : '▼ 全部展開細節'}
+            </button>
+          )}
+          <span style={{
+            fontSize: '0.72rem', fontWeight: 600,
+            color: '#6b7280',
+            background: '#f3f4f6',
+            border: '1px solid #e5e7eb',
+            borderRadius: '99px',
+            padding: '2px 10px',
+          }}>
+            顯示 {displayedActivities.length} / {activities.length} 筆
+          </span>
+        </div>
       </div>
+
+      {/* 動態牆多維度快速索引與篩選面板 */}
+      {activities.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl p-3 sm:p-3.5 mb-3.5 shadow-2xs space-y-2.5">
+          {/* 第一列：狀態與類型數字連動索引 */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {([
+              { key: 'all', label: '全部紀錄', count: categoryCounts.all, activeClass: 'bg-gray-900 text-white border-gray-900' },
+              { key: 'store', label: '🏪 門市巡檢', count: categoryCounts.store, activeClass: 'bg-blue-600 text-white border-blue-600' },
+              { key: 'abnormal', label: '🔴 發現異常', count: categoryCounts.abnormal, activeClass: 'bg-rose-600 text-white border-rose-600' },
+              { key: 'normal', label: '🟢 正常合格', count: categoryCounts.normal, activeClass: 'bg-emerald-600 text-white border-emerald-600' },
+              { key: 'photo', label: '📸 含照片', count: categoryCounts.photo, activeClass: 'bg-purple-600 text-white border-purple-600' },
+              { key: 'schedule', label: '🏢 公務行程', count: categoryCounts.schedule, activeClass: 'bg-indigo-600 text-white border-indigo-600' },
+            ] as const).map(tab => {
+              const active = categoryFilter === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setCategoryFilter(active && tab.key !== 'all' ? 'all' : tab.key)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                    active
+                      ? `${tab.activeClass} shadow-xs`
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[11px] font-extrabold ${active ? 'bg-white/20 text-white' : 'bg-white text-gray-600'}`}>
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+
+            {/* 搜尋輸入框 */}
+            <div className="relative flex-1 min-w-[160px] ml-auto">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="搜尋門市、主管或缺失內容..."
+                className="w-full pl-7 pr-6 py-1 text-xs border border-gray-200 rounded-lg bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 第二列：區域快速索引（當有多個區域時顯示） */}
+          {regionStats.length > 1 && (
+            <div className="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-gray-100">
+              <span className="text-[11px] font-bold text-gray-400 mr-1">區域索引：</span>
+              <button
+                type="button"
+                onClick={() => setRegionFilter('全部')}
+                className={`px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer ${
+                  regionFilter === '全部'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                全部區域 ({activities.length})
+              </button>
+              {regionStats.map(r => (
+                <button
+                  key={r.region}
+                  type="button"
+                  onClick={() => setRegionFilter(regionFilter === r.region ? '全部' : r.region)}
+                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer ${
+                    regionFilter === r.region
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-blue-50'
+                  }`}
+                >
+                  {r.region} ({r.count})
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 第三列：已巡門市／公務行程一鍵跳轉索引 */}
+          {displayedActivities.length > 1 && (
+            <div className="pt-1.5 border-t border-gray-100">
+              <div className="flex items-center gap-1 text-[11px] font-bold text-gray-500 mb-1.5">
+                <Compass size={12} className="text-blue-600" />
+                <span>門市／行程快速定位索引（點選直接跳至該筆明細並展開）：</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                {displayedActivities.map(act => {
+                  const isSch = ['總部行程', '會議行程', '特殊行程'].includes(act.actionType || '');
+                  const isAbn = checkActivityAbnormal(act);
+                  const isCurrExpanded = expandAll || expandedId === act.recordId;
+                  return (
+                    <button
+                      key={act.recordId}
+                      type="button"
+                      onClick={() => jumpToActivityCard(act.recordId)}
+                      className={`text-xs px-2.5 py-1 rounded-lg font-semibold border transition-all cursor-pointer flex items-center gap-1 ${
+                        isCurrExpanded
+                          ? 'ring-2 ring-blue-500 bg-blue-50 text-blue-800 border-blue-300'
+                          : isSch
+                          ? 'bg-indigo-50/70 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                          : isAbn
+                          ? 'bg-rose-50/80 text-rose-700 border-rose-200 hover:bg-rose-100'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-blue-50 hover:text-blue-700'
+                      }`}
+                    >
+                      <span>{isSch ? '🏢' : isAbn ? '🔴' : '🟢'}</span>
+                      <span>
+                        {isSch ? `${act.areaManagerName}·${act.actionType}` : act.storeName}
+                      </span>
+                      <span className="text-[10px] opacity-70">➔</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Activity Cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {activities.map((activity) => {
-          const isExpanded = expandedId === activity.recordId;
+        {displayedActivities.map((activity) => {
+          const isExpanded = expandAll || expandedId === activity.recordId;
           const relatedItems = actionItems.filter(
             ai =>
               (ai.visitRecordId === activity.recordId || ai.sourceRecordId === activity.recordId) &&

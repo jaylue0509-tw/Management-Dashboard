@@ -213,15 +213,21 @@ def init_default_users(conn):
 
 def sync_region_reorg_2026(conn):
     """
-    同步 2026 最新區域與門市組織異動：
-    1. 新增「嘉南區」（區經理：葉信宏）：嘉義北港店、嘉義友愛店、嘉義吳鳳南店、嘉義朴子店、新營民生店、新市中正店、佳里新生店、善化光復店、麻豆興中店
-    2. 「彰雲嘉區」改為「彰雲區」（區經理：林晟豐），並移除上述 4 間嘉義門市
-    3. 「台南區」（區經理：李景傑）移除上述 5 間移入嘉南區之門市
-    4. 「高雄區」之大寮鳳林店、高雄林園東店移至「高屏區」（區經理：鍾宜玲）
+    同步 2026 最新區域與門市組織整併：
+    1. 原「台南區」整併入「嘉南區」，統稱「嘉南區」（共 18 家門市）：
+       - 區域主管：葉信宏 區主管（統籌整體營運管理）
+       - 副區主管：李景傑 副區主管
+       - 轄下 18 家門市：新營民生店、麻豆興中店、佳里新生店、善化光復店、新市中正店、
+         嘉義北港店、嘉義友愛店、嘉義吳鳳南店、嘉義朴子店、安南海佃店、台南永康店、
+         永康永大店、關廟南雄店、台南中華東店、台南西門店、仁德中山店、安平建平店、歸仁中山店
+    2. 「彰雲嘉區」改為「彰雲區」（區經理：林晟豐）
+    3. 「高雄區」之大寮鳳林店、高雄林園東店移至「高屏區」（區經理：鍾宜玲）
     """
     jianan_stores = [
+        "新營民生店", "麻豆興中店", "佳里新生店", "善化光復店", "新市中正店",
         "嘉義北港店", "嘉義友愛店", "嘉義吳鳳南店", "嘉義朴子店",
-        "新營民生店", "新市中正店", "佳里新生店", "善化光復店", "麻豆興中店"
+        "安南海佃店", "台南永康店", "永康永大店", "關廟南雄店",
+        "台南中華東店", "台南西門店", "仁德中山店", "安平建平店", "歸仁中山店"
     ]
     jianan_set = set(jianan_stores)
     gaoping_moved = {"大寮鳳林店", "高雄林園東店", "高雄林園店"}
@@ -239,6 +245,14 @@ def sync_region_reorg_2026(conn):
         sample_dept = ""
         sample_director = ""
 
+        # 先擷取嘉南區／原台南區的處別與處長基準
+        for m in managers:
+            if m.get("region") in ("嘉南區", "台南區") and m.get("department"):
+                sample_dept = m.get("department", "")
+                sample_director = m.get("directorName", "")
+                if m.get("region") == "嘉南區":
+                    break
+
         for m in managers:
             s_name = str(m.get("storeName") or "").strip()
             if not s_name:
@@ -248,15 +262,29 @@ def sync_region_reorg_2026(conn):
                 m["storeName"] = s_name
                 changed = True
 
-            if m.get("region") in ("彰雲嘉區", "彰雲區", "台南區") and not sample_dept:
+            if m.get("region") in ("彰雲嘉區", "彰雲區", "台南區", "嘉南區") and not sample_dept:
                 sample_dept = m.get("department", "")
                 sample_director = m.get("directorName", "")
 
             if s_name in jianan_set:
-                if m.get("region") != "嘉南區" or m.get("areaManagerName") != "葉信宏":
+                if (
+                    m.get("region") != "嘉南區"
+                    or m.get("areaManagerName") != "葉信宏"
+                    or m.get("deputyManagerName") != "李景傑"
+                    or (sample_dept and m.get("department") != sample_dept)
+                ):
                     m["region"] = "嘉南區"
                     m["areaManagerName"] = "葉信宏"
+                    m["deputyManagerName"] = "李景傑"
+                    if sample_dept:
+                        m["department"] = sample_dept
+                    if sample_director:
+                        m["directorName"] = sample_director
                     changed = True
+            elif m.get("region") in ("嘉南區", "台南區") or m.get("areaManagerName") in ("葉信宏", "李景傑"):
+                # 移除原台南區／嘉南區不在最新 18 家清單內的舊門市
+                changed = True
+                continue
             elif s_name in gaoping_moved:
                 if m.get("region") != "高屏區" or m.get("areaManagerName") != "鍾宜玲":
                     m["region"] = "高屏區"
@@ -279,7 +307,7 @@ def sync_region_reorg_2026(conn):
                     "directorName": sample_director,
                     "region": "嘉南區",
                     "areaManagerName": "葉信宏",
-                    "deputyManagerName": "",
+                    "deputyManagerName": "李景傑",
                     "storeName": js,
                     "beautyLeader": "",
                     "todayVisitCount": 0,
@@ -293,7 +321,7 @@ def sync_region_reorg_2026(conn):
         if changed:
             cur.execute("UPDATE store SET data = %s WHERE id = 'managers'", (Json(updated_managers),))
 
-        # 同步區主管帳號與負責門市清單 (葉信宏、林晟豐、李景傑、涂綺恬、鍾宜玲)
+        # 同步區主管與副區主管帳號負責門市清單（葉信宏與李景傑共同管理嘉南區 18 家門市）
         target_mgrs = {"葉信宏", "林晟豐", "李景傑", "涂綺恬", "鍾宜玲"}
         mgr_stores_map = {name: [] for name in target_mgrs}
         for m in updated_managers:
@@ -301,6 +329,9 @@ def sync_region_reorg_2026(conn):
             s_name = str(m.get("storeName") or "").strip()
             if mgr_name in mgr_stores_map and s_name:
                 mgr_stores_map[mgr_name].append(s_name)
+
+        mgr_stores_map["葉信宏"] = list(jianan_stores)
+        mgr_stores_map["李景傑"] = list(jianan_stores)
 
         for mgr_name, stores_list in mgr_stores_map.items():
             cur.execute("SELECT assigned_stores FROM users WHERE username = %s", (mgr_name,))
@@ -318,6 +349,19 @@ def sync_region_reorg_2026(conn):
                         "UPDATE users SET assigned_stores = %s, name = %s WHERE username = %s",
                         (Json(stores_list), mgr_name, mgr_name)
                     )
+
+        # 將歷史巡店紀錄中之「台南區」或嘉南區 18 家門市統一歸入「嘉南區」
+        cur.execute(
+            """
+            UPDATE visit_records
+            SET region = '嘉南區',
+                data = jsonb_set(data, '{region}', '"嘉南區"', true)
+            WHERE region = '台南區'
+               OR data->>'region' = '台南區'
+               OR data->>'storeName' = ANY(%s)
+            """,
+            (jianan_stores,)
+        )
     conn.commit()
 
 init_db() # 啟用 DB 初始化，建立 users 表與預設帳號
@@ -597,7 +641,12 @@ def get_managers(user: Optional[dict] = Depends(get_optional_user)):
                 if user and user.get("role") == "manager":
                     mgr_name = user.get("name")
                     assigned = set(user.get("assigned_stores") or [])
-                    return [m for m in data if m.get("areaManagerName") == mgr_name or m.get("storeName") in assigned]
+                    return [
+                        m for m in data
+                        if m.get("areaManagerName") == mgr_name
+                        or m.get("deputyManagerName") == mgr_name
+                        or m.get("storeName") in assigned
+                    ]
                 return data
             return []
 
@@ -699,13 +748,25 @@ def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
                 changed_mgrs = False
                 for m in managers_list:
                     m_store_norm = _normalize_store(m.get("storeName"))
+                    is_deputy_target = (
+                        m.get("deputyManagerName") in (req.name, old_name)
+                        and m.get("areaManagerName") not in (req.name, old_name)
+                    )
                     if m_store_norm in assigned_norm:
-                        if m.get("areaManagerName") != req.name:
+                        if is_deputy_target:
+                            if m.get("deputyManagerName") != req.name:
+                                m["deputyManagerName"] = req.name
+                                changed_mgrs = True
+                        elif m.get("areaManagerName") != req.name:
                             m["areaManagerName"] = req.name
                             changed_mgrs = True
-                    elif old_name and old_name != req.name and m.get("areaManagerName") == old_name:
-                        m["areaManagerName"] = req.name
-                        changed_mgrs = True
+                    elif old_name and old_name != req.name:
+                        if m.get("deputyManagerName") == old_name:
+                            m["deputyManagerName"] = req.name
+                            changed_mgrs = True
+                        elif m.get("areaManagerName") == old_name:
+                            m["areaManagerName"] = req.name
+                            changed_mgrs = True
                 if changed_mgrs:
                     cur.execute("UPDATE store SET data = %s WHERE id = 'managers'", (Json(managers_list),))
 
@@ -1484,9 +1545,28 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             if user and user.get("role") == "manager":
                 mgr_name = user.get("name")
                 assigned = set(user.get("assigned_stores") or [])
-                managers = [m for m in managers if m.get("areaManagerName") == mgr_name or m.get("storeName") in assigned]
-                activities = [a for a in activities if a.get("areaManagerName") == mgr_name or a.get("storeName") in assigned]
-                action_items = [i for i in action_items if i.get("storeName") in assigned or i.get("assignee") == mgr_name or i.get("createdBy") == mgr_name]
+                managers = [
+                    m for m in managers
+                    if m.get("areaManagerName") == mgr_name
+                    or m.get("deputyManagerName") == mgr_name
+                    or m.get("storeName") in assigned
+                ]
+                co_mgrs = {mgr_name}
+                for m in managers:
+                    if m.get("areaManagerName"):
+                        co_mgrs.add(m.get("areaManagerName"))
+                    if m.get("deputyManagerName"):
+                        co_mgrs.add(m.get("deputyManagerName"))
+                activities = [
+                    a for a in activities
+                    if a.get("areaManagerName") in co_mgrs or a.get("storeName") in assigned
+                ]
+                action_items = [
+                    i for i in action_items
+                    if i.get("storeName") in assigned
+                    or i.get("assignee") in co_mgrs
+                    or i.get("createdBy") in co_mgrs
+                ]
 
             return {
                 "managers": managers,

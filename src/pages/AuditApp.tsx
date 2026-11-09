@@ -87,6 +87,8 @@ export const AuditApp = () => {
   const [visitDate, setVisitDate] = useState<string>(() => getTaipeiDateOffsetStr(0));
   const [visitTime, setVisitTime] = useState<string>(() => getTaipeiCurrentTimeStr());
   const [isCustomTime, setIsCustomTime] = useState<boolean>(false);
+  const [storeSearchQuery, setStoreSearchQuery] = useState<string>('');
+  const [selectedStoreRegionFilter, setSelectedStoreRegionFilter] = useState<string>('全部');
 
   // --- Local Storage Auto Save & Safe Recovery ---
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -998,38 +1000,133 @@ export const AuditApp = () => {
         ) : (
           <>
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">巡店門市 <span className="text-red-500">*</span></label>
-            <select
-              value={storeName}
-              onChange={(e) => {
-                setStoreName(e.target.value);
-                fetchActionItems(e.target.value);
-              }}
-              className="w-full border rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
-            >
-              <option value="" disabled>請選擇負責的門市</option>
-              {Object.entries(storeRegions).map(([region, stores]) => {
-                // 如果是總部管理員(admin) 或 權限全開，就顯示全部；否則過濾出指派的門市
-                const visibleStores = user?.role === 'admin' 
-                  ? stores 
-                  : stores.filter(s => user?.assigned_stores?.includes(s));
-                  
-                if (visibleStores.length === 0) return null;
-                
-                return (
-                  <optgroup key={region} label={`【${region}】`}>
-                    {visibleStores.map(store => (
-                      <option key={store} value={store}>{store}</option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-            </select>
-            {user?.role === 'manager' && (!user.assigned_stores || user.assigned_stores.length === 0) && (
-              <p className="text-xs text-amber-600 font-medium mt-1.5 flex items-center gap-1">
-                ⚠️ 您的帳號目前尚未指派負責門市，請聯繫總部管理員於「系統設定」勾選負責門市。
-              </p>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-sm font-semibold text-gray-700">
+              巡店門市 <span className="text-red-500">*</span>
+            </label>
+            {storeName && (
+              <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
+                📍 已選擇：{storeName}
+              </span>
             )}
+          </div>
+
+          {/* 門市區域索引與一鍵點選面板 */}
+          {(() => {
+            const visibleByRegion = Object.entries(storeRegions)
+              .map(([region, stores]) => {
+                const list = user?.role === 'admin'
+                  ? stores
+                  : stores.filter(s => user?.assigned_stores?.includes(s));
+                return { region, stores: list };
+              })
+              .filter(g => g.stores.length > 0);
+
+            const filteredStores = visibleByRegion
+              .filter(g => selectedStoreRegionFilter === '全部' || g.region === selectedStoreRegionFilter)
+              .flatMap(g => g.stores.map(s => ({ store: s, region: g.region })))
+              .filter(item => !storeSearchQuery.trim() || item.store.includes(storeSearchQuery.trim()) || item.region.includes(storeSearchQuery.trim()));
+
+            return (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-2.5 space-y-2.5">
+                {visibleByRegion.length > 1 && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] font-bold text-gray-500">區域索引：</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStoreRegionFilter('全部')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                        selectedStoreRegionFilter === '全部'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-blue-50'
+                      }`}
+                    >
+                      全部 ({visibleByRegion.reduce((acc, g) => acc + g.stores.length, 0)})
+                    </button>
+                    {visibleByRegion.map(g => (
+                      <button
+                        key={g.region}
+                        type="button"
+                        onClick={() => setSelectedStoreRegionFilter(selectedStoreRegionFilter === g.region ? '全部' : g.region)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                          selectedStoreRegionFilter === g.region
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-600 border-gray-200 hover:bg-blue-50'
+                        }`}
+                      >
+                        {g.region} ({g.stores.length})
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <input
+                  type="text"
+                  value={storeSearchQuery}
+                  onChange={e => setStoreSearchQuery(e.target.value)}
+                  placeholder="🔍 輸入門市關鍵字快速篩選（或直接點選下方門市按鈕）..."
+                  className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                />
+
+                {filteredStores.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                    {filteredStores.map(({ store }) => {
+                      const active = storeName === store;
+                      return (
+                        <button
+                          key={store}
+                          type="button"
+                          onClick={() => {
+                            setStoreName(store);
+                            fetchActionItems(store);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                            active
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+                          }`}
+                        >
+                          {active ? `✓ ${store}` : store}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          <select
+            value={storeName}
+            onChange={(e) => {
+              setStoreName(e.target.value);
+              fetchActionItems(e.target.value);
+            }}
+            className="w-full border rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+          >
+            <option value="" disabled>請選擇負責的門市（亦可從上方快速索引點選）</option>
+            {Object.entries(storeRegions).map(([region, stores]) => {
+              // 如果是總部管理員(admin) 或 權限全開，就顯示全部；否則過濾出指派的門市
+              const visibleStores = user?.role === 'admin' 
+                ? stores 
+                : stores.filter(s => user?.assigned_stores?.includes(s));
+                
+              if (visibleStores.length === 0) return null;
+              
+              return (
+                <optgroup key={region} label={`【${region}】`}>
+                  {visibleStores.map(store => (
+                    <option key={store} value={store}>{store}</option>
+                  ))}
+                </optgroup>
+              );
+            })}
+          </select>
+          {user?.role === 'manager' && (!user.assigned_stores || user.assigned_stores.length === 0) && (
+            <p className="text-xs text-amber-600 font-medium mt-1.5 flex items-center gap-1">
+              ⚠️ 您的帳號目前尚未指派負責門市，請聯繫總部管理員於「系統設定」勾選負責門市。
+            </p>
+          )}
         </div>
         
         {/* 前次未結案 */}
@@ -1123,10 +1220,25 @@ export const AuditApp = () => {
 
   const renderStep2 = () => (
     <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-right-8 duration-500">
-      <h2 className="text-xl font-bold text-gray-800 mb-2 border-b pb-3 flex items-center gap-2">
-        <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">2</span>
-        必看核心底線
-      </h2>
+      <div className="flex items-center justify-between mb-2 border-b pb-3 flex-wrap gap-2">
+        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+          <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">2</span>
+          必看核心底線
+        </h2>
+        <button
+          type="button"
+          onClick={() => {
+            setCoreChecks(prev => ({
+              'core-1': prev['core-1'] || '正常',
+              'core-2': prev['core-2'] || '正常',
+              'core-3': prev['core-3'] || '正常',
+            }));
+          }}
+          className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+        >
+          ⚡ 未填項一鍵設為正常
+        </button>
+      </div>
       <p className="text-sm text-gray-500 mb-6">不論停留時間長短，進店必須立刻檢核的重點。</p>
       
       <div className="space-y-4">
@@ -1165,11 +1277,27 @@ export const AuditApp = () => {
     if (auditMode === 'B' && !selectedTopics.includes(index)) return null; 
     
     return (
-      <div className="bg-white rounded-xl shadow-sm p-6 mb-6 border border-gray-100">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-          <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-sm">大項 {index}</span>
-          {title}
-        </h3>
+      <div id={`audit-category-${index}`} className="bg-white rounded-xl shadow-sm p-6 mb-6 border border-gray-100 scroll-mt-32">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+            <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-sm">大項 {index}</span>
+            {title}
+          </h3>
+          <button
+            type="button"
+            onClick={() => {
+              const next = { ...categoryChecks };
+              items.forEach((_, i) => {
+                const k = `${index}-${i + 1}`;
+                if (!next[k]) next[k] = '合格';
+              });
+              setCategoryChecks(next);
+            }}
+            className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+          >
+            ⚡ 本大項未填設為合格
+          </button>
+        </div>
         {items.map((item, i) => {
           const key = `${index}-${i+1}`;
           return (
@@ -1275,50 +1403,118 @@ export const AuditApp = () => {
     );
   };
 
-  const renderStep3 = () => (
-    <section className="animate-in fade-in slide-in-from-right-8 duration-500">
-      <div className="flex items-center gap-2 mb-4">
-        <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">3</span>
-        <h2 className="text-xl font-bold text-gray-800">六大模組檢核</h2>
-      </div>
-      
-      {renderCategory(1, '行銷與檔期執行', [
-        '檔期 POP 與宣傳物：海報、端架 POP、價格標卡齊全無破損。',
-        '主題陳列與佈置 (VMD)：端架與焦點區依總部指引陳列，商品量感充足。',
-        '檔期主打商品備貨：DM 熱銷品、特價組合包無預期缺貨。',
-        '結帳區加價購專區：櫃檯加價購商品放置於視覺焦點且標價清楚。'
-      ])}
-      {renderCategory(2, '商品陳列與損耗管理', [
-        '排面平整與拉面：商品拉面齊平、正面朝前，無缺貨空洞。',
-        '效期與先進先出 (FIFO)：飼料/罐頭/零食落實舊效期在前，無過期品。',
-        '臨期品與損耗處置：臨期品有獨立列管/折扣；破包凹罐及時報廢。',
-        '高單價與高損品防竊：高價保健品、家電有貼防盜標籤或上鎖。',
-        'PB 與高毛利商品陳列：自有品牌 (PB) 擺放於視線黃金位 (120-160cm)。'
-      ])}
-      {renderCategory(3, '寵物專業服務與照護', [
-        '美容房環境與衛生：美容房清潔無異味，消毒紀錄表、設備運作正常。',
-        '美容操作 SOP 與安全：有綁安全防護繩；接送寵物有進行體表檢查紀錄。',
-        '活體照護與環境（若有）：籠舍清潔無異味，水糧充足，健康觀察卡按時填記。',
-        '保健/醫療專區維護：保健品專區整潔，展示品齊全無積塵。'
-      ])}
-      {renderCategory(4, '人員服務與顧客體驗', [
-        '儀容儀態與招呼：統一穿著制服配戴名牌，顧客進門有主動親切招呼。',
-        '專業導購與衛教：能主動詢問寵物狀況，提供正確飼養/保健衛教與建議。',
-        '櫃檯結帳與附加銷售 (Add-on)：結帳順暢，主動推廣加價購、PB 商品或會員綁定。'
-      ])}
-      {renderCategory(5, '門市環境與設備安全', [
-        '門面與整體環境清潔：招牌/門口玻璃清潔，賣場無毛髮堆積或異味。',
-        '賣場氣氛與燈光空調：燈光全亮，空調溫度適宜（寵物與顧客體感舒適）。',
-        '後勤倉庫與公安動線：倉庫擺放整齊，通道暢通無堆積雜物，無傾倒風險。',
-        '系統與設備安全運作：POS、監視器、滅火器（效期內）、電器線路運作正常。'
-      ])}
-      {renderCategory(6, '經營數據與團隊管理', [
-        '業績與 KPI 指標跟進：店長清楚當月業績進度、PB 銷售佔比、加價購達成率。',
-        '人員 1-on-1 面談紀錄：今日有進行人員面談/輔導',
-        '團隊士氣與排班合理性：人員出勤正常，班表符合規範，團隊氛圍良好。'
-      ])}
-    </section>
-  );
+  const renderStep3 = () => {
+    const moduleMeta = [
+      { idx: 1, short: '1.行銷檔期', count: 4 },
+      { idx: 2, short: '2.陳列損耗', count: 5 },
+      { idx: 3, short: '3.寵物專業', count: 4 },
+      { idx: 4, short: '4.人員服務', count: 3 },
+      { idx: 5, short: '5.環境設備', count: 4 },
+      { idx: 6, short: '6.經營數據', count: 3 },
+    ].filter(m => auditMode !== 'B' || selectedTopics.includes(m.idx));
+
+    return (
+      <section className="animate-in fade-in slide-in-from-right-8 duration-500">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">3</span>
+          <h2 className="text-xl font-bold text-gray-800">六大模組檢核</h2>
+        </div>
+
+        {/* 六大模組浮動快速索引列 */}
+        <div className="sticky top-[56px] z-30 bg-white/95 backdrop-blur-md border border-blue-100 rounded-xl p-2.5 mb-5 shadow-sm">
+          <div className="text-[11px] font-bold text-gray-500 mb-1.5 flex items-center justify-between">
+            <span>🧭 六大模組快速索引（點擊直接跳至該大項）：</span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = { ...categoryChecks };
+                moduleMeta.forEach(m => {
+                  for (let i = 1; i <= m.count; i++) {
+                    const k = `${m.idx}-${i}`;
+                    if (!next[k]) next[k] = '合格';
+                  }
+                });
+                setCategoryChecks(next);
+              }}
+              className="text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-md font-bold cursor-pointer"
+            >
+              ⚡ 全部未填設為合格
+            </button>
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+            {moduleMeta.map(m => {
+              let answered = 0;
+              let hasDefect = false;
+              for (let i = 1; i <= m.count; i++) {
+                const val = categoryChecks[`${m.idx}-${i}`];
+                if (val) answered++;
+                if (val === '缺失' || val === '待改善') hasDefect = true;
+              }
+              const done = answered === m.count;
+              return (
+                <button
+                  key={m.idx}
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById(`audit-category-${m.idx}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-between gap-1 ${
+                    hasDefect
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : done
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-700'
+                  }`}
+                >
+                  <span className="truncate">{m.short}</span>
+                  <span className="text-[10px] font-extrabold shrink-0">
+                    {answered}/{m.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        
+        {renderCategory(1, '行銷與檔期執行', [
+          '檔期 POP 與宣傳物：海報、端架 POP、價格標卡齊全無破損。',
+          '主題陳列與佈置 (VMD)：端架與焦點區依總部指引陳列，商品量感充足。',
+          '檔期主打商品備貨：DM 熱銷品、特價組合包無預期缺貨。',
+          '結帳區加價購專區：櫃檯加價購商品放置於視覺焦點且標價清楚。'
+        ])}
+        {renderCategory(2, '商品陳列與損耗管理', [
+          '排面平整與拉面：商品拉面齊平、正面朝前，無缺貨空洞。',
+          '效期與先進先出 (FIFO)：飼料/罐頭/零食落實舊效期在前，無過期品。',
+          '臨期品與損耗處置：臨期品有獨立列管/折扣；破包凹罐及時報廢。',
+          '高單價與高損品防竊：高價保健品、家電有貼防盜標籤或上鎖。',
+          'PB 與高毛利商品陳列：自有品牌 (PB) 擺放於視線黃金位 (120-160cm)。'
+        ])}
+        {renderCategory(3, '寵物專業服務與照護', [
+          '美容房環境與衛生：美容房清潔無異味，消毒紀錄表、設備運作正常。',
+          '美容操作 SOP 與安全：有綁安全防護繩；接送寵物有進行體表檢查紀錄。',
+          '活體照護與環境（若有）：籠舍清潔無異味，水糧充足，健康觀察卡按時填記。',
+          '保健/醫療專區維護：保健品專區整潔，展示品齊全無積塵。'
+        ])}
+        {renderCategory(4, '人員服務與顧客體驗', [
+          '儀容儀態與招呼：統一穿著制服配戴名牌，顧客進門有主動親切招呼。',
+          '專業導購與衛教：能主動詢問寵物狀況，提供正確飼養/保健衛教與建議。',
+          '櫃檯結帳與附加銷售 (Add-on)：結帳順暢，主動推廣加價購、PB 商品或會員綁定。'
+        ])}
+        {renderCategory(5, '門市環境與設備安全', [
+          '門面與整體環境清潔：招牌/門口玻璃清潔，賣場無毛髮堆積或異味。',
+          '賣場氣氛與燈光空調：燈光全亮，空調溫度適宜（寵物與顧客體感舒適）。',
+          '後勤倉庫與公安動線：倉庫擺放整齊，通道暢通無堆積雜物，無傾倒風險。',
+          '系統與設備安全運作：POS、監視器、滅火器（效期內）、電器線路運作正常。'
+        ])}
+        {renderCategory(6, '經營數據與團隊管理', [
+          '業績與 KPI 指標跟進：店長清楚當月業績進度、PB 銷售佔比、加價購達成率。',
+          '人員 1-on-1 面談紀錄：今日有進行人員面談/輔導',
+          '團隊士氣與排班合理性：人員出勤正常，班表符合規範，團隊氛圍良好。'
+        ])}
+      </section>
+    );
+  };
 
   const renderStep4 = () => {
     const activePhotoPairs = Array.isArray(photoPairs) && photoPairs.length > 0
@@ -1760,21 +1956,68 @@ export const AuditApp = () => {
           </div>
         )}
 
-        {/* Stepper Progress */}
-        <div className="mb-8">
+        {/* Stepper Progress & 可點擊步驟索引列 */}
+        <div className="mb-6 bg-white border border-gray-200 rounded-xl p-3 shadow-xs sticky top-14 z-30">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Step {currentStep} of {totalSteps}</span>
-            <span className="text-xs font-semibold text-gray-500">
-              {currentStep === 1 && '基本資訊'}
-              {currentStep === 2 && '必看核心'}
-              {currentStep === 3 && '模組細項'}
-              {currentStep === 4 && '追蹤交辦'}
-              {currentStep === 5 && '總結簽名'}
+            <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
+              步驟 {currentStep} / {totalSteps}
+            </span>
+            <span className="text-xs font-semibold text-gray-600">
+              {currentStep === 1 && '1. 基本資訊與門市選擇'}
+              {currentStep === 2 && '2. 必看核心底線'}
+              {currentStep === 3 && '3. 六大模組細項'}
+              {currentStep === 4 && '4. PDCA 追蹤交辦'}
+              {currentStep === 5 && '5. 總結評價與簽名'}
             </span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
+          <div className="grid grid-cols-5 gap-1.5 mb-2">
+            {[
+              { step: 1, label: '1.基本' },
+              { step: 2, label: '2.核心' },
+              { step: 3, label: '3.模組' },
+              { step: 4, label: '4.追蹤' },
+              { step: 5, label: '5.總結' },
+            ].map(item => {
+              const isSkipped = item.step === 3 && auditMode === 'A';
+              const isActive = currentStep === item.step;
+              const isCompleted = currentStep > item.step && !isSkipped;
+              return (
+                <button
+                  key={item.step}
+                  type="button"
+                  disabled={isSkipped || (taskType !== '實地巡店' && item.step > 1)}
+                  onClick={() => {
+                    if (item.step > 1 && !storeName) {
+                      alert('請先於步驟 1 選擇門市名稱');
+                      return;
+                    }
+                    if (item.step > 2 && Object.keys(coreChecks).length < 3) {
+                      alert('請先完成步驟 2 必看核心底線（共 3 項）');
+                      setCurrentStep(2);
+                      window.scrollTo(0, 0);
+                      return;
+                    }
+                    setCurrentStep(item.step);
+                    window.scrollTo(0, 0);
+                  }}
+                  className={`py-1.5 px-1 rounded-lg text-[11px] sm:text-xs font-bold border transition-all cursor-pointer truncate ${
+                    isSkipped || (taskType !== '實地巡店' && item.step > 1)
+                      ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                      : isActive
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : isCompleted
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  {isCompleted ? `✓ ${item.label}` : item.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
             <div 
-              className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out" 
+              className="bg-blue-600 h-1.5 rounded-full transition-all duration-500 ease-out" 
               style={{ width: `${(currentStep / totalSteps) * 100}%` }}
             />
           </div>
