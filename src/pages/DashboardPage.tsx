@@ -1368,9 +1368,9 @@ export const DashboardPage: React.FC = () => {
                     <label className="block text-xs font-bold text-gray-700 mb-1.5">預計行程時數</label>
                     <div className="grid grid-cols-3 gap-2">
                       {[
-                        { mins: 120, label: '2 小時 (120分)' },
-                        { mins: 240, label: '半天 (240分)' },
-                        { mins: 480, label: '全天 (480分)' },
+                        { mins: 120, label: '2 小時' },
+                        { mins: 240, label: '半天 (4 小時)' },
+                        { mins: 480, label: '全天 (8 小時)' },
                       ].map(d => (
                         <button
                           key={d.mins}

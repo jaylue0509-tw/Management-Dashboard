@@ -462,9 +462,13 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], fo
                       </div>
 
                       {activity.expectedStayMinutes > 0 && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#16a34a', fontSize: '0.78rem', fontWeight: 500 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#0f766e', fontSize: '0.78rem', fontWeight: 600 }}>
                           <Clock size={11} />
-                          {activity.expectedStayMinutes} 分鐘
+                          預計時數：{activity.expectedStayMinutes >= 60 && activity.expectedStayMinutes % 60 === 0
+                            ? `${activity.expectedStayMinutes / 60} 小時`
+                            : activity.expectedStayMinutes > 60
+                            ? `${Math.floor(activity.expectedStayMinutes / 60)} 小時 ${activity.expectedStayMinutes % 60} 分鐘`
+                            : `${activity.expectedStayMinutes} 分鐘`}
                         </div>
                       )}
 

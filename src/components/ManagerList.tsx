@@ -1,7 +1,24 @@
 import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
-import { Users, TrendingUp, ArrowLeft, ChevronDown, ChevronUp, Compass } from 'lucide-react';
+import { Users, TrendingUp, ArrowLeft, ChevronDown, ChevronUp, Compass, Clock } from 'lucide-react';
+
+/**
+ * 將分鐘數轉為清晰易讀的時數說明（避免「480分」被誤認為評分分數）
+ */
+const formatDurationText = (minutes?: number): string => {
+  const mins = Number(minutes || 0);
+  if (mins <= 0) return '';
+  const hours = Math.floor(mins / 60);
+  const remainMins = mins % 60;
+  if (hours > 0 && remainMins === 0) {
+    return `${hours} 小時`;
+  }
+  if (hours > 0) {
+    return `${hours} 小時 ${remainMins} 分鐘`;
+  }
+  return `${remainMins} 分鐘`;
+};
 
 export type ManagerStatusFilter = 'all' | 'completed' | 'visiting' | 'schedule' | 'unvisited';
 
@@ -420,13 +437,33 @@ export const ManagerList: React.FC<Props> = ({
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#4b5563' }}>
-                    {timeRangeLabel}：<span style={{ color: '#111827', fontWeight: 700 }}>{manager.todayVisitCount || 0}</span>
-                    <span style={{ color: '#9ca3af', margin: '0 3px' }}>/</span>
-                    <span>{manager.assignedStoreCount} 店</span>
+                  <div style={{ fontSize: '0.78rem', color: '#4b5563', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                    <span>
+                      {timeRangeLabel}巡店：<span style={{ color: '#111827', fontWeight: 700 }}>{manager.todayVisitCount || 0}</span>
+                      <span style={{ color: '#9ca3af', margin: '0 3px' }}>/</span>
+                      <span>{manager.assignedStoreCount} 店</span>
+                    </span>
                     {(manager.expectedStayMinutes || 0) > 0 && (
-                      <span style={{ color: '#16a34a', marginLeft: '6px', fontWeight: 600 }}>
-                        · {manager.expectedStayMinutes}分
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                          color: '#0f766e',
+                          background: '#f0fdfa',
+                          border: '1px solid #ccfbf1',
+                          borderRadius: '6px',
+                          padding: '1px 6px',
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                        }}
+                        title={`當日累計行程／停留時間共 ${manager.expectedStayMinutes} 分鐘`}
+                      >
+                        <Clock size={11} />
+                        <span>
+                          {hasSchedule && (manager.todayVisitCount || 0) === 0 ? '行程時數 ' : '累計時數 '}
+                          {formatDurationText(manager.expectedStayMinutes)}
+                        </span>
                       </span>
                     )}
                   </div>
@@ -461,6 +498,11 @@ export const ManagerList: React.FC<Props> = ({
                       {manager.todaySchedules.map((sch, sIdx) => (
                         <div key={sIdx}>
                           {sch.type === '總部行程' ? '🏢' : sch.type === '會議行程' ? '📅' : '⭐'} {sch.type}：{sch.note}
+                          {sch.duration && sch.duration > 0 ? (
+                            <span style={{ color: '#6366f1', fontWeight: 500, marginLeft: '4px', fontSize: '0.7rem' }}>
+                              （{formatDurationText(sch.duration)}）
+                            </span>
+                          ) : null}
                         </div>
                       ))}
                     </div>
