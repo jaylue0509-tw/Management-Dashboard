@@ -7,7 +7,7 @@ import { ManagerList, type ManagerStatusFilter } from '../components/ManagerList
 import { OrganizationMap } from '../components/OrganizationMap';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
 import { getDashboardData } from '../api/api';
-import { RefreshCw, Compass } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { CoverageRadarChart } from '../components/charts/CoverageRadarChart';
 import { IssuePieChart } from '../components/charts/IssuePieChart';
 import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
@@ -980,16 +980,6 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
-  /**
-   * 頁面區塊快速索引定位
-   */
-  const scrollToSection = (sectionId: string) => {
-    const el = document.getElementById(sectionId);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
   return (
     <div style={{ minHeight: '100vh', paddingBottom: '40px', background: '#f4f6f9' }}>
       <HeaderBar
@@ -1177,50 +1167,6 @@ export const DashboardPage: React.FC = () => {
           <DashboardSkeleton />
         ) : (
           <>
-            {/* 戰情牆全頁區塊快速索引導覽列 */}
-            {activeTab === 'dashboard' && (
-              <div className="mb-3.5 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-xl px-3 py-2 shadow-2xs flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                <span className="text-xs font-extrabold text-gray-700 flex items-center gap-1 shrink-0 mr-1">
-                  <Compass size={14} className="text-blue-600" />
-                  <span>快速索引：</span>
-                </span>
-                {[
-                  { id: 'section-kpi', label: '📊 核心指標', count: undefined, highlight: false },
-                  ...(unresolvedStores.length > 0
-                    ? [{ id: 'section-unresolved', label: '🚨 未結案提醒', count: unresolvedStores.length, highlight: true }]
-                    : []),
-                  { id: 'section-charts', label: '📈 圖表分析', count: 3, highlight: false },
-                  { id: 'section-managers', label: '👥 區主管進度', count: filteredManagers.length, highlight: false },
-                  ...(topIssues.length > 0
-                    ? [{ id: 'section-top-issues', label: '🔥 高頻缺失', count: topIssues.length, highlight: false }]
-                    : []),
-                  { id: 'section-activity-wall', label: '📋 巡店動態牆', count: targetActivities.length, highlight: false },
-                ].map(sec => (
-                  <button
-                    key={sec.id}
-                    type="button"
-                    onClick={() => scrollToSection(sec.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
-                      sec.highlight
-                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200'
-                    }`}
-                  >
-                    <span>{sec.label}</span>
-                    {sec.count !== undefined && (
-                      <span
-                        className={`px-1.5 py-0.2 rounded-full text-[11px] font-extrabold ${
-                          sec.highlight ? 'bg-rose-600 text-white' : 'bg-white text-gray-600 border border-gray-200'
-                        }`}
-                      >
-                        {sec.count}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-
             {/* 當日總部行程／會議行程／特殊行程 狀態與快速登記列 */}
             <div id="section-schedule" className="mb-4 sm:mb-5 bg-white border border-indigo-100 rounded-2xl p-3 sm:p-4 shadow-xs flex flex-col gap-2.5 sm:gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
