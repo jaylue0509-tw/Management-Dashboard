@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
 import { MapPin, Building, Users } from 'lucide-react';
 import { importManagers } from '../api/api';
+import { normalizeRegionName } from '../utils/store-region';
 import Papa from 'papaparse';
 
 interface Props {
@@ -160,7 +161,7 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
         <div className="flex flex-col gap-6">
         {Object.entries(groupedData).map(([deptKey, deptManagers]) => {
           const [dept, director] = deptKey.split('|');
-          const regions = groupBy(deptManagers, m => m.region);
+          const regions = groupBy(deptManagers, m => normalizeRegionName(m.region) || m.region);
 
           return (
             <div key={deptKey} style={{ 

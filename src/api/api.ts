@@ -1,26 +1,29 @@
-import type { Manager, VisitRecord } from '../types';
+import type { Manager } from '../types';
 
 // ==========================================
-// API 網址設定：Vercel 生產環境自動使用同網域的 /api，本機開發使用 localhost:8000
+// API 網址設定：Vercel 生產環境自動使用同網域的 /api，本機開發指向遠端 API
 // ==========================================
-const API_BASE_URL = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
+export const API_BASE_URL = import.meta.env.PROD
+  ? '/api'
+  : 'https://management-dashboard-rust.vercel.app/api';
 
-// ==========================================
-// RESTful 呼叫核心 Helper (自動帶入 Bearer Token 確保權限隔離)
-// ==========================================
+/**
+ * 產生包含 Bearer Token 的認證 Header
+ */
+export const getAuthHeaders = (extra?: Record<string, string>): Record<string, string> => {
+  const token = localStorage.getItem('token');
+  const headers: Record<string, string> = { ...(extra || {}) };
+  if (token && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
 const fetchJSON = async (endpoint: string, options?: RequestInit) => {
   try {
-    const token = localStorage.getItem('token');
-    const headers: Record<string, string> = {
-      ...((options?.headers as Record<string, string>) || {})
-    };
-    if (token && !headers['Authorization']) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
-      headers
+      headers: getAuthHeaders((options?.headers as Record<string, string>) || {}),
     });
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     return await response.json();
@@ -30,42 +33,21 @@ const fetchJSON = async (endpoint: string, options?: RequestInit) => {
   }
 };
 
-// ==========================================
-// 匯出 API 函數
-// ==========================================
-
-export const getActivityWall = async (timeRange: string = 'day', region: string = 'all'): Promise<VisitRecord[]> => {
-  const data = await fetchJSON(`/activities?time_range=${timeRange}&region=${region}`);
-  if (data) {
-    return data;
-  }
-  return [];
-};
-
-export const getManagers = async (): Promise<Manager[]> => {
-  const data = await fetchJSON(`/managers`);
-  if (data && data.length > 0) return data;
-  return [];
-};
-
+/**
+ * 匯入組織架構與門市名單（限管理員權限）
+ */
 export const importManagers = async (managers: Manager[]): Promise<boolean> => {
   const data = await fetchJSON(`/managers/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(managers)
+    body: JSON.stringify(managers),
   });
-  return !!(data && data.success);
+  return Boolean(data && data.success);
 };
 
-export const getActionItems = async (store: string = ""): Promise<any[]> => {
-  const data = await fetchJSON(`/action-items${store ? `?store=${encodeURIComponent(store)}` : ''}`);
-  if (data) {
-    return data;
-  }
-  return [];
-};
-
+/**
+ * 取得儀表板完整資料（動態牆、組織主檔、待辦事項、統計摘要）
+ */
 export const getDashboardData = async (timeRange: string = 'day', region: string = 'all'): Promise<any> => {
-  const data = await fetchJSON(`/dashboard-data?time_range=${timeRange}&region=${region}`);
-  return data;
+  return await fetchJSON(`/dashboard-data?time_range=${timeRange}&region=${region}`);
 };

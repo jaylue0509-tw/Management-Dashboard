@@ -16,6 +16,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { AlertTriangle, CheckCircle2, ClipboardSignature, Search, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
+import { normalizeStoreName, normalizeRegionName, compareRegion } from '../utils/store-region';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -428,7 +429,6 @@ export const DashboardPage: React.FC = () => {
     const expectedStayByStore = new Map<string, number>();
 
     // Calculate Coverage
-    let redLightStoresCount = 0;
     const moduleScores = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
     const moduleCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
 
@@ -505,7 +505,6 @@ export const DashboardPage: React.FC = () => {
       }
 
       if (a.highlightDescription) highlightCount++;
-      if (a.overallRating === '需重點輔導') redLightStoresCount++;
 
       if (!latestRatingByStore.has(a.storeName)) {
         latestRatingByStore.set(a.storeName, { rating: a.overallRating || '良好', activity: a });
@@ -578,21 +577,27 @@ export const DashboardPage: React.FC = () => {
       { subject: '經營數據', A: moduleCounts[6] ? Math.round((moduleScores[6] / moduleCounts[6]) * 100) : 0, fullMark: 100 },
     ];
 
-    // Correctly calculate total assigned stores based on the raw managers list filtered by department
+    // 依處別與所選區主管過濾應巡視門市，確保覆蓋率分母與未巡視清單 100% 連動
     const keyword = selectedDepartment === 'all' ? '' : selectedDepartment.replace('營業', '');
-    const validRawManagers = selectedDepartment === 'all'
+    const deptManagers = selectedDepartment === 'all'
       ? managers
       : managers.filter(m => m.department.includes(keyword) || m.department === selectedDepartment);
+    const validRawManagers = selectedManager
+      ? deptManagers.filter(
+          m =>
+            normalizeRegionName(m.region) === normalizeRegionName(selectedManager.region) ||
+            m.areaManagerName === selectedManager.areaManagerName
+        )
+      : deptManagers;
 
-    const normalizeStore = (s: string) => (s || '').trim().replace(/店$/, '');
     const allAssignedStoresList = Array.from(new Set(validRawManagers.map(m => m.storeName)));
-    const assignedStoresNormalized = new Map(allAssignedStoresList.map(s => [normalizeStore(s), s]));
+    const assignedStoresNormalized = new Map(allAssignedStoresList.map(s => [normalizeStoreName(s), s]));
     const totalAssignedStores = allAssignedStoresList.length;
 
     // Only count visited stores that match an assigned store (fuzzily by ignoring trailing '店')
     const visitedStoresSet = new Set<string>();
     targetActivities.forEach(a => {
-      const norm = normalizeStore(a.storeName);
+      const norm = normalizeStoreName(a.storeName);
       if (assignedStoresNormalized.has(norm)) {
         visitedStoresSet.add(assignedStoresNormalized.get(norm)!);
       }
@@ -704,7 +709,7 @@ export const DashboardPage: React.FC = () => {
         if (reasons.length === 0) reasons.push('綜合評估紅燈');
 
         const reportTime = formatTaipeiReportTime(data.activity.createdAt);
-        return { store, reasons, reportTime };
+        return { store, reasons, reportTime, recordId: data.activity.recordId };
       });
 
     const periodStoreActivities = targetActivities.filter(
@@ -759,9 +764,9 @@ export const DashboardPage: React.FC = () => {
       if (reasons.length === 0) reasons.push('有異常事項待複查');
 
       const reportTime = formatTaipeiReportTime(activity.createdAt);
-      const normStore = normalizeStore(store);
-      const matchedMgr = managers.find(m => normalizeStore(m.storeName) === normStore);
-      const region = matchedMgr?.region || (activity.region === '台南區' ? '嘉南區' : activity.region) || '未分區';
+      const normStore = normalizeStoreName(store);
+      const matchedMgr = managers.find(m => normalizeStoreName(m.storeName) === normStore);
+      const region = normalizeRegionName(matchedMgr?.region || activity.region) || '未分區';
       const areaManagerName = matchedMgr?.areaManagerName || activity.areaManagerName || '';
 
       return {
@@ -805,7 +810,7 @@ export const DashboardPage: React.FC = () => {
         highlightCount: highlightCount,
         coverageRate,
         pdcaRate: computedPdcaRate,
-        redLightStores: redLightStoresCount,
+        redLightStores: redLightStoresList.length,
         assignedStoresCount: totalAssignedStores,
         uniqueVisitedStoresCount: uniqueVisitedStoresInPeriod,
         coverageStoresInfo: { visited: visitedStoresList, unvisited: unvisitedStoresList },
@@ -820,7 +825,7 @@ export const DashboardPage: React.FC = () => {
       topIssues,
       unresolvedStores: unresolvedList
     };
-  }, [targetActivities, actionItems]);
+  }, [targetActivities, actionItems, managers, selectedDepartment, selectedManager]);
 
   // NOTE: 將未結案門市依「區域」分組，提供各區主管與督導一眼掌握轄區數量與門市
   const groupedUnresolvedStores = useMemo(() => {
@@ -840,7 +845,7 @@ export const DashboardPage: React.FC = () => {
         grp.areaManagerName = s.areaManagerName;
       }
     });
-    return Array.from(map.values()).sort((a, b) => b.stores.length - a.stores.length);
+    return Array.from(map.values()).sort((a, b) => compareRegion(a.region, b.region));
   }, [unresolvedStores]);
 
   /**
@@ -1615,7 +1620,12 @@ export const DashboardPage: React.FC = () => {
                         ? `${fmtShort(customStartDate)}`
                         : `${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
                     }
-                    const fullRegionLabel = `${selectedDepartment === 'all' ? '全區' : selectedDepartment} (${timeRangeText})`;
+                    const scopeLabel = selectedManager
+                      ? `${selectedManager.region} · ${selectedManager.areaManagerName}`
+                      : selectedDepartment === 'all'
+                        ? '全區'
+                        : selectedDepartment;
+                    const fullRegionLabel = `${scopeLabel} (${timeRangeText})`;
                     return <SummaryCards summary={dynamicSummary} managers={managers} regionLabel={fullRegionLabel} periodLabel={timeRangeText} onStoreSelect={handleJumpToStore} />;
                   })()}
                 </div>

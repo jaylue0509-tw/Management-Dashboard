@@ -1,5 +1,5 @@
 import os
-import json
+import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Body, BackgroundTasks, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,10 +8,8 @@ from typing import List, Optional, Dict
 from datetime import datetime, timedelta, timezone
 import uuid
 import base64
-import binascii
 import psycopg2
 from psycopg2.extras import Json
-import threading
 import requests
 import re
 import jwt
@@ -23,6 +21,9 @@ JWT_ALGORITHM = "HS256"
 
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("dashboard-api")
 
 app = FastAPI(title="東寵戰情牆 API", description="採用 Vercel Postgres (Neon) 的輕量級後端")
 
@@ -59,7 +60,7 @@ if POSTGRES_URL:
     try:
         db_pool = pool.SimpleConnectionPool(1, 5, POSTGRES_URL, sslmode='require')
     except Exception as e:
-        print("連線池初始化失敗:", e)
+        logger.error("連線池初始化失敗: %s", e)
 
 @contextmanager
 def get_db_connection():
@@ -174,7 +175,7 @@ def init_db():
             sync_region_reorg_2026(conn)
 
     except Exception as e:
-        print("DB Init Error:", e)
+        logger.error("DB Init Error: %s", e)
 
 def init_default_users(conn):
     with conn.cursor() as cur:
@@ -444,7 +445,7 @@ def login(req: LoginRequest):
                         cur.execute("UPDATE users SET password_hash = %s WHERE username = %s", (new_hash, req.username))
                         conn.commit()
                     except Exception as e:
-                        print("Hash auto-upgrade warning:", e)
+                        logger.warning("Hash auto-upgrade warning: %s", e)
 
             if not is_valid_password:
                 raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -474,7 +475,7 @@ def login(req: LoginRequest):
                       datetime.utcnow()))
                 conn.commit()
             except Exception as log_err:
-                print("登入審計日誌寫入警告 (不阻斷登入):", log_err)
+                logger.warning("登入審計日誌寫入警告 (不阻斷登入): %s", log_err)
             
             return {
                 "token": token,
@@ -577,14 +578,14 @@ def change_password(req: ChangePasswordReq, user: dict = Depends(get_current_use
 def trigger_teams_notify(message: str):
     webhook_url = os.getenv("TEAMS_WEBHOOK_URL")
     if not webhook_url:
-        print("No TEAMS_WEBHOOK_URL found. Skip sending Teams notify.")
+        logger.info("No TEAMS_WEBHOOK_URL found. Skip sending Teams notify.")
         return
     headers = {"Content-Type": "application/json"}
     data = {"text": message}
     try:
         requests.post(webhook_url, headers=headers, json=data, timeout=5)
     except Exception as e:
-        print("Failed to send Teams notify:", e)
+        logger.warning("Failed to send Teams notify: %s", e)
 
 @app.get("/api/activities", response_model=List[VisitRecord])
 def get_activities(time_range: str = "day", region: str = "all", user: Optional[dict] = Depends(get_optional_user)):
@@ -651,7 +652,13 @@ def get_managers(user: Optional[dict] = Depends(get_optional_user)):
             return []
 
 @app.post("/api/managers/import")
-def import_managers(managers: List[Manager] = Body(...)):
+def import_managers(managers: List[Manager] = Body(...), user: dict = Depends(get_current_user)):
+    """
+    整份覆寫門市組織主檔（僅限總部管理員）
+    """
+    # NOTE: 此端點會整份覆寫組織資料，必須限制為 admin，避免未授權覆寫
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="僅總部管理員可匯入組織資料")
     if not managers:
         raise HTTPException(status_code=400, detail="No data provided")
         
@@ -792,29 +799,6 @@ def get_audit_logs(user: dict = Depends(get_current_user)):
                 "before_data": r[4], "after_data": r[5], "created_at": r[6]
             } for r in rows]
 
-@app.get("/api/admin/fix-mgr-names")
-def fix_mgr_names():
-    updated = 0
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT data FROM store WHERE id = 'managers'")
-            row = cur.fetchone()
-            managers = row[0] if row else []
-            store_mgr_map = {str(m.get('storeName', '')).strip().replace('店', ''): m.get('areaManagerName', '') for m in managers}
-            
-            cur.execute("SELECT id, data FROM visit_records")
-            records = cur.fetchall()
-            
-            for rid, data in records:
-                store_name = str(data.get('storeName', '')).strip().replace('店', '')
-                if store_name in store_mgr_map:
-                    # 強制覆蓋為資料庫正確的主管名稱
-                    data['areaManagerName'] = store_mgr_map[store_name]
-                    cur.execute("UPDATE visit_records SET data = %s WHERE id = %s", (Json(data), rid))
-                    updated += 1
-        conn.commit()
-    return {"success": True, "updated": updated}
-
 CORE_ITEM_NAMES = {'core-1': '環境異味與清潔', 'core-2': '櫃檯焦點陳列', 'core-3': '人員狀態與迎賓'}
 MODULE_NAMES = ['行銷與檔期執行', '商品陳列與損耗管理', '寵物專業服務與照護', '人員服務與顧客體驗', '門市環境與設備安全', '經營數據與團隊管理']
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
@@ -887,13 +871,12 @@ def _store_photo(cur, record_id: str, url: str) -> str:
             )
             return f"/api/photos/{photo_id}"
         except Exception as e:
-            print(f"照片解碼寫入警告 (降級保留原圖 Base64 以確保照片顯示): {e}")
+            logger.warning("照片解碼寫入警告 (降級保留原圖 Base64 以確保照片顯示): %s", e)
             try:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_photo")
             except Exception:
                 pass
             return url
-            return ""
 
     return ""
 
@@ -1254,100 +1237,6 @@ def webhook_google_forms(payload: dict = Body(...)):
         
     return {"success": True, "data": {"recordId": record_id}}
 
-@app.get("/api/admin/clean-db-2026")
-def clean_db_2026():
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT data FROM store WHERE id = 'managers'")
-            row = cur.fetchone()
-            if not row:
-                return {"error": "No managers found"}
-            
-            managers = row[0]
-            before_count = len(managers)
-            
-            new_managers = []
-            removed_stores = []
-            
-            # Target 1: 中投區-劉哲維 (營業二處) 保留正確 12 間店
-            allowed_lzw_stores = {
-                "草屯明賢店", "埔里中山店", "大里仁化店", "台中沙鹿店", 
-                "台中澄清店", "台中青海店", "北屯后庄北店", "台中東海店", 
-                "台中中清店", "北屯軍功店", "台中北屯店", "豐原圓環東店"
-            }
-            
-            # Target 4: 高雄區-涂綺恬 (營業二處) 刪除: 左營自由, 楠梓後昌, 楠梓梓新
-            deleted_tqt_keywords = {"左營自由", "楠梓後昌", "楠梓梓新"}
-            
-            # Target 5: 高屏區-鍾宜玲 (營業二處) 刪除: 三民鼎山, 三民建工
-            deleted_cyl_keywords = {"三民鼎山", "三民建工"}
-            
-            for m in managers:
-                dept = m.get("department", "")
-                region = m.get("region", "")
-                mgr_name = m.get("areaManagerName", "")
-                store_name = m.get("storeName", "").strip()
-                
-                should_remove = False
-                reason = ""
-                
-                if dept == "營業二處":
-                    if region == "中投區" and "劉哲維" in mgr_name:
-                        if store_name not in allowed_lzw_stores:
-                            should_remove = True
-                            reason = f"中投區-劉哲維: 移除店名 {store_name} (不在正確 12 間店清單內)"
-                            
-                    elif (region == "彰雲嘉區" or region == "彰嘉雲區") and "林晟豐" in mgr_name:
-                        if "嘉義林森西" in store_name or store_name == "嘉義林森西店":
-                            should_remove = True
-                            reason = f"彰雲嘉區-林晟豐: 移除已閉店 {store_name}"
-                            
-                    elif region == "台南區" and "李景傑" in mgr_name:
-                        if "永康中華" in store_name or store_name == "永康中華店":
-                            should_remove = True
-                            reason = f"台南區-李景傑 (營業二處): 移除舊店名 {store_name}"
-                            
-                    elif region == "高雄區" and "涂綺恬" in mgr_name:
-                        if any(kw in store_name for kw in deleted_tqt_keywords):
-                            should_remove = True
-                            reason = f"高雄區-涂綺恬: 移除已閉店或舊店名 {store_name}"
-                            
-                    elif region == "高屏區" and "鍾宜玲" in mgr_name:
-                        if any(kw in store_name for kw in deleted_cyl_keywords):
-                            should_remove = True
-                            reason = f"高屏區-鍾宜玲: 移除已閉店或舊店名 {store_name}"
-                
-                if should_remove:
-                    removed_stores.append({
-                        "department": dept,
-                        "region": region,
-                        "areaManagerName": mgr_name,
-                        "storeName": store_name,
-                        "reason": reason
-                    })
-                else:
-                    new_managers.append(m)
-            
-            # 寫入回資料庫
-            cur.execute("""
-                INSERT INTO store (id, data) VALUES ('managers', %s)
-                ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
-            """, (Json(new_managers),))
-
-            # 清除測試假資料 (例如文心秀泰)
-            # (保留所有歷史巡店與待辦資料)
-            pass
-            conn.commit()
-            
-            return {
-                "success": True,
-                "before_count": before_count,
-                "after_count": len(new_managers),
-                "removed_count": len(removed_stores),
-                "removed_details": removed_stores
-            }
-
-
 # === PDCA Action Items ===
 
 @app.post("/api/pdca/resolve-store")
@@ -1435,8 +1324,6 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
                         })
                         break
             return items
-            rows = cur.fetchall()
-            return [row[0] for row in rows]
 
 @app.post("/api/action-items")
 def create_action_item(payload: dict = Body(...)):
@@ -1533,7 +1420,7 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
                     and r[0].get("sourceRecordId") != "0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c"
                 ]
             except Exception as e:
-                print("Failed to fetch action_items:", e)
+                logger.warning("Failed to fetch action_items: %s", e)
                 conn.rollback() # Important to rollback the aborted transaction
             
             # NOTE: 區主管僅能看到自己的門市與活動紀錄（即時同步 users 表最新負責門市）
