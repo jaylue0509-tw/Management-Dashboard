@@ -1623,8 +1623,8 @@ export const DashboardPage: React.FC = () => {
                 {/* Charts Row */}
                 <div id="section-charts" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
                   <CoverageRadarChart data={radarData} />
-                  <RiskDistributionChart data={riskData} onStoreSelect={handleJumpToStore} />
-                  <IssuePieChart data={pieData} onStoreSelect={handleJumpToStore} />
+                  <RiskDistributionChart data={riskData} managers={managers} onStoreSelect={handleJumpToStore} />
+                  <IssuePieChart data={pieData} managers={managers} onStoreSelect={handleJumpToStore} />
                 </div>
 
                 {/* Executive Summary */}
@@ -1667,6 +1667,7 @@ export const DashboardPage: React.FC = () => {
                     <div id="section-top-issues">
                       <TopIssuesList
                         issues={topIssues}
+                        managers={managers}
                         onStoreClick={(recordId, storeName) => {
                           handleJumpToStore(storeName, recordId);
                         }}
