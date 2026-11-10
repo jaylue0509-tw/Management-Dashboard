@@ -1616,7 +1616,7 @@ export const DashboardPage: React.FC = () => {
                         : `${fmtShort(customStartDate)}~${fmtShort(customEndDate)}`;
                     }
                     const fullRegionLabel = `${selectedDepartment === 'all' ? '全區' : selectedDepartment} (${timeRangeText})`;
-                    return <SummaryCards summary={dynamicSummary} regionLabel={fullRegionLabel} periodLabel={timeRangeText} onStoreSelect={handleJumpToStore} />;
+                    return <SummaryCards summary={dynamicSummary} managers={managers} regionLabel={fullRegionLabel} periodLabel={timeRangeText} onStoreSelect={handleJumpToStore} />;
                   })()}
                 </div>
 
