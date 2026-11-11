@@ -17,6 +17,8 @@ import { AlertTriangle, CheckCircle2, ClipboardSignature, Search, X } from 'luci
 import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
 import { normalizeStoreName, normalizeRegionName, compareRegion } from '../utils/store-region';
+import { MileageExpensePanel } from '../components/MileageExpensePanel';
+import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -64,7 +66,7 @@ const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
 };
 
 export const DashboardPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'map'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'expense'>('dashboard');
   const [allActivities, setAllActivities] = useState<VisitRecord[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [actionItems, setActionItems] = useState<any[]>([]);
@@ -302,6 +304,20 @@ export const DashboardPage: React.FC = () => {
     return () => clearInterval(intervalId);
   }, []);
 
+  const adminExpenseReport = useMemo(() => {
+    if (user?.role !== 'admin') return null;
+    const baseDate = customStartDate || getTaipeiTodayStr();
+    return buildExpenseDashboardReport({
+      allActivities,
+      periodActivities: activities,
+      managers,
+      selectedDepartment,
+      targetDateStr: baseDate,
+      targetMonthKey: baseDate.slice(0, 7),
+      ratePerKm: DEFAULT_SUBSIDY_PER_KM,
+    });
+  }, [user, allActivities, activities, managers, selectedDepartment, customStartDate]);
+
   const uniqueManagers = useMemo(() => {
     let sourceManagers = managers;
     if (user?.role === 'manager') {
@@ -365,6 +381,15 @@ export const DashboardPage: React.FC = () => {
         visitStatus = '已完成';
       }
 
+      const expPrimary = adminExpenseReport?.managersReport.find(r => r.managerName === name);
+      const expDeputy = deputyManagerName
+        ? adminExpenseReport?.managersReport.find(r => r.managerName === deputyManagerName)
+        : undefined;
+      const dayEstimatedKm = Math.round(((expPrimary?.dayKm || 0) + (expDeputy?.dayKm || 0)) * 10) / 10;
+      const dayEstimatedSubsidy = (expPrimary?.daySubsidy || 0) + (expDeputy?.daySubsidy || 0);
+      const monthEstimatedKm = Math.round(((expPrimary?.monthKm || 0) + (expDeputy?.monthKm || 0)) * 10) / 10;
+      const monthEstimatedSubsidy = (expPrimary?.monthSubsidy || 0) + (expDeputy?.monthSubsidy || 0);
+
       return {
         ...stores[0],
         areaManagerName: name,
@@ -375,10 +400,14 @@ export const DashboardPage: React.FC = () => {
         visitStatus,
         visitedStores,
         todaySchedules,
-        expectedStayMinutes
+        expectedStayMinutes,
+        dayEstimatedKm,
+        dayEstimatedSubsidy,
+        monthEstimatedKm,
+        monthEstimatedSubsidy,
       };
     });
-  }, [managers, activities, user]);
+  }, [managers, activities, user, adminExpenseReport]);
 
   const filteredManagers = useMemo(() => {
     // 區主管只看自己，不受處別篩選干擾
@@ -997,14 +1026,17 @@ export const DashboardPage: React.FC = () => {
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6">
         {/* Tab Bar */}
         <div className="flex items-center justify-between mb-3.5 border-b border-gray-200 gap-2">
-          <div className="flex gap-1 min-w-0">
+          <div className="flex gap-1 min-w-0 overflow-x-auto">
             {[
               { id: 'dashboard', label: '即時動態牆' },
               { id: 'map', label: '區主管門店配置' },
+              ...(user?.role === 'admin'
+                ? [{ id: 'expense', label: '🚗 巡店車資與里程核算（最高權限）' }]
+                : []),
             ].map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as 'dashboard' | 'map')}
+                onClick={() => setActiveTab(tab.id as 'dashboard' | 'map' | 'expense')}
                 className="px-3 py-2.5 sm:px-4 sm:py-2.5 text-xs sm:text-[0.88rem] whitespace-nowrap cursor-pointer transition-all"
                 style={{
                   fontWeight: activeTab === tab.id ? 700 : 500,
@@ -1630,6 +1662,91 @@ export const DashboardPage: React.FC = () => {
                   })()}
                 </div>
 
+                {/* 最高管理權限專屬：當天推算車資與每月車程費用加總速覽橫幅 */}
+                {user?.role === 'admin' && adminExpenseReport && (
+                  <div className="mb-6 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-4 sm:p-5 text-white shadow-md border border-indigo-500/30">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-white/10">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-400 text-slate-950">
+                          🔒 最高管理權限專屬
+                        </span>
+                        <h3 className="text-sm sm:text-base font-extrabold text-white">
+                          🚗 巡店車程里程與預估車資補助（依汽車每公里 {adminExpenseReport.ratePerKm} 元推算）
+                        </h3>
+                      </div>
+
+                      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                        <div className="bg-blue-500/20 border border-blue-400/40 rounded-xl px-3 py-1.5 text-xs">
+                          <span className="text-blue-200 font-semibold">
+                            📅 當天推算 ({adminExpenseReport.targetDateStr.slice(5).replace('-', '/')})：
+                          </span>
+                          <strong className="text-white font-black text-sm ml-1">
+                            NT$ {adminExpenseReport.dayTotalSubsidy.toLocaleString()}
+                          </strong>
+                          <span className="text-blue-200 ml-1">
+                            ({adminExpenseReport.dayTotalKm.toFixed(1)} km)
+                          </span>
+                        </div>
+
+                        <div className="bg-emerald-500/20 border border-emerald-400/40 rounded-xl px-3 py-1.5 text-xs">
+                          <span className="text-emerald-200 font-semibold">
+                            🗓️ {adminExpenseReport.targetMonthKey.slice(5)}月累計加總：
+                          </span>
+                          <strong className="text-amber-300 font-black text-sm ml-1">
+                            NT$ {adminExpenseReport.monthTotalSubsidy.toLocaleString()}
+                          </strong>
+                          <span className="text-emerald-200 ml-1">
+                            ({adminExpenseReport.monthTotalKm.toFixed(1)} km)
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('expense')}
+                          className="px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs cursor-pointer transition-all shadow-xs"
+                        >
+                          查看完整路線與報表 ➔
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 每一位區主管當天推算費用 & 當月車程費用加總一覽 */}
+                    <div className="pt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2">
+                      {adminExpenseReport.managersReport.map(m => (
+                        <button
+                          key={m.managerName}
+                          type="button"
+                          onClick={() => setActiveTab('expense')}
+                          className="text-left bg-white/10 hover:bg-white/15 border border-white/15 rounded-xl px-3 py-2 transition-all cursor-pointer flex flex-col gap-1"
+                          title={`點擊查看 ${m.managerName} 每日行車路線與分段車資明細`}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-extrabold text-white truncate">
+                              {m.managerName}
+                              {m.roleLabel === '副區主管' ? ' (副)' : ''}
+                            </span>
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/40 text-indigo-100 shrink-0">
+                              {m.region}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-indigo-200">
+                            <span>當天 ({adminExpenseReport.targetDateStr.slice(5).replace('-', '/')})：</span>
+                            <strong className={m.daySubsidy > 0 ? 'text-sky-300 font-extrabold' : 'text-gray-400'}>
+                              ${m.daySubsidy.toLocaleString()} ({m.dayKm.toFixed(1)}km)
+                            </strong>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-indigo-200">
+                            <span>{adminExpenseReport.targetMonthKey.slice(5)}月加總：</span>
+                            <strong className="text-amber-300 font-extrabold">
+                              ${m.monthSubsidy.toLocaleString()} ({m.monthKm.toFixed(1)}km)
+                            </strong>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Charts Row */}
                 <div id="section-charts" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
                   <CoverageRadarChart data={radarData} />
@@ -1657,6 +1774,7 @@ export const DashboardPage: React.FC = () => {
                     onStoreSelect={handleJumpToStore}
                     onScheduleSelect={handleJumpToSchedule}
                     onStatusFilterSelect={handleManagerStatusFilterSelect}
+                    onOpenExpenseTab={() => setActiveTab('expense')}
                     timeRangeLabel={
                       timeRange === 'day'
                         ? (customStartDate === getTaipeiTodayStr() ? '今日' : customStartDate.slice(5).replace('-', '/'))
@@ -1694,6 +1812,18 @@ export const DashboardPage: React.FC = () => {
                   </main>
                 </div>
               </>
+            ) : activeTab === 'expense' && user?.role === 'admin' ? (
+              <MileageExpensePanel
+                allActivities={allActivities}
+                periodActivities={activities}
+                managers={managers}
+                selectedDepartment={selectedDepartment}
+                initialDateStr={customStartDate || getTaipeiTodayStr()}
+                onStoreSelect={(storeName, recordId) => {
+                  setActiveTab('dashboard');
+                  setTimeout(() => handleJumpToStore(storeName, recordId), 80);
+                }}
+              />
             ) : (
               <OrganizationMap managers={managers} />
             )}

@@ -16,6 +16,10 @@ export interface Manager {
   visitedStores?: string[];
   todaySchedules?: { type: string; note: string; duration?: number }[];
   expectedStayMinutes?: number;
+  dayEstimatedKm?: number;
+  dayEstimatedSubsidy?: number;
+  monthEstimatedKm?: number;
+  monthEstimatedSubsidy?: number;
 }
 
 export interface VisitRecord {

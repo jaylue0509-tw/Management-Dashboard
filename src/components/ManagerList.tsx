@@ -30,6 +30,7 @@ interface Props {
   onStoreSelect?: (storeName: string) => void;
   onScheduleSelect?: (managerName: string, scheduleType?: string) => void;
   onStatusFilterSelect?: (filter: ManagerStatusFilter, matchedManagers: Manager[]) => void;
+  onOpenExpenseTab?: (managerName: string) => void;
 }
 
 export const ManagerList: React.FC<Props> = ({
@@ -40,6 +41,7 @@ export const ManagerList: React.FC<Props> = ({
   onStoreSelect,
   onScheduleSelect,
   onStatusFilterSelect,
+  onOpenExpenseTab,
 }) => {
   const { user } = useAuth();
   const [isMobileExpanded, setIsMobileExpanded] = useState(true);
@@ -545,6 +547,33 @@ export const ManagerList: React.FC<Props> = ({
                         📍 {st} ➔
                       </button>
                     ))}
+                  </div>
+                )}
+
+                {user?.role === 'admin' && (
+                  <div
+                    onClick={e => {
+                      e.stopPropagation();
+                      onOpenExpenseTab?.(manager.areaManagerName);
+                    }}
+                    className="mt-2.5 pt-2 border-t border-gray-100 flex items-center justify-between gap-2 text-[11px] font-bold text-gray-600 hover:text-indigo-700 transition-colors"
+                    title="最高管理權限專屬：依行程推算之當日車資與當月累計車資（汽車每公里補助 6.5 元），點擊查看路線明細"
+                  >
+                    <span>
+                      🚗 當日推算：
+                      <strong className="text-blue-700">
+                        ${(manager.dayEstimatedSubsidy || 0).toLocaleString()}
+                      </strong>
+                      <span className="text-gray-400 font-normal ml-0.5">
+                        ({(manager.dayEstimatedKm || 0).toFixed(1)}km)
+                      </span>
+                    </span>
+                    <span>
+                      當月加總：
+                      <strong className="text-emerald-700">
+                        ${(manager.monthEstimatedSubsidy || 0).toLocaleString()}
+                      </strong>
+                    </span>
                   </div>
                 )}
               </div>
