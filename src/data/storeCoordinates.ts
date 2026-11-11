@@ -233,3 +233,4 @@ export const estimateDrivingKm = (from: GeoPoint, to: GeoPoint, region?: string)
   const estimated = Math.max(2.5, straightKm * roadFactor);
   return Math.round(estimated * 10) / 10;
 };
+

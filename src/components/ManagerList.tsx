@@ -31,6 +31,8 @@ interface Props {
   onScheduleSelect?: (managerName: string, scheduleType?: string) => void;
   onStatusFilterSelect?: (filter: ManagerStatusFilter, matchedManagers: Manager[]) => void;
   onOpenExpenseTab?: (managerName: string) => void;
+  onAddSchedule?: (managerName: string) => void;
+  onEditSchedule?: (managerName: string, recordId?: string) => void;
 }
 
 export const ManagerList: React.FC<Props> = ({
@@ -42,6 +44,8 @@ export const ManagerList: React.FC<Props> = ({
   onScheduleSelect,
   onStatusFilterSelect,
   onOpenExpenseTab,
+  onAddSchedule,
+  onEditSchedule,
 }) => {
   const { user } = useAuth();
   const [isMobileExpanded, setIsMobileExpanded] = useState(true);
@@ -496,15 +500,30 @@ export const ManagerList: React.FC<Props> = ({
                     }}
                     title="點擊自動移至下方公務行程明細"
                   >
-                    <div>
+                    <div className="flex flex-col gap-1 flex-1 min-w-0">
                       {manager.todaySchedules.map((sch, sIdx) => (
-                        <div key={sIdx}>
-                          {sch.type === '總部行程' ? '🏢' : sch.type === '會議行程' ? '📅' : '⭐'} {sch.type}：{sch.note}
-                          {sch.duration && sch.duration > 0 ? (
-                            <span style={{ color: '#6366f1', fontWeight: 500, marginLeft: '4px', fontSize: '0.7rem' }}>
-                              （{formatDurationText(sch.duration)}）
-                            </span>
-                          ) : null}
+                        <div key={sIdx} className="flex items-center justify-between gap-1.5">
+                          <span className="truncate">
+                            {sch.type === '總部行程' ? '🏢' : sch.type === '會議行程' ? '📅' : '⭐'} {sch.type}：{sch.note}
+                            {sch.duration && sch.duration > 0 ? (
+                              <span style={{ color: '#6366f1', fontWeight: 500, marginLeft: '4px', fontSize: '0.7rem' }}>
+                                （{formatDurationText(sch.duration)}）
+                              </span>
+                            ) : null}
+                          </span>
+                          {onEditSchedule && (user?.role === 'admin' || user?.name === manager.areaManagerName || user?.name === manager.deputyManagerName) && (
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                onEditSchedule(manager.areaManagerName, sch.recordId);
+                              }}
+                              className="px-1.5 py-0.5 rounded bg-white hover:bg-indigo-600 text-indigo-700 hover:text-white border border-indigo-300 text-[10px] font-bold shrink-0 cursor-pointer transition-colors"
+                              title="修改此筆當日活動內容"
+                            >
+                              ✏️ 修改
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -549,6 +568,42 @@ export const ManagerList: React.FC<Props> = ({
                     ))}
                   </div>
                 )}
+
+                {/* 區主管本人或管理員：快速「➕ 新增當日活動」與「✏️ 修改當日活動」按鈕 */}
+                {(user?.role === 'admin' ||
+                  user?.name === manager.areaManagerName ||
+                  user?.name === manager.deputyManagerName) &&
+                  (onAddSchedule || onEditSchedule) && (
+                    <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-1.5">
+                      {onAddSchedule && (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onAddSchedule(manager.areaManagerName);
+                          }}
+                          className="flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white border border-indigo-200 transition-colors cursor-pointer flex items-center justify-center gap-1"
+                        >
+                          <span>➕ 新增當日活動</span>
+                        </button>
+                      )}
+                      {onEditSchedule && (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onEditSchedule(
+                              manager.areaManagerName,
+                              manager.todaySchedules?.[0]?.recordId
+                            );
+                          }}
+                          className="flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold bg-amber-50 hover:bg-amber-600 text-amber-800 hover:text-white border border-amber-200 transition-colors cursor-pointer flex items-center justify-center gap-1"
+                        >
+                          <span>✏️ 修改當日活動</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                 {user?.role === 'admin' && (
                   <div

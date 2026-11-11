@@ -1154,6 +1154,152 @@ def update_visit_record_photos(record_id: str, payload: dict = Body(...)):
 
     return {"success": True, "photoPairs": cleaned_pairs}
 
+
+@app.put("/api/visit-records/{record_id}")
+def update_visit_record(
+    record_id: str,
+    payload: dict = Body(...),
+    user: dict = Depends(get_current_user)
+):
+    """
+    區主管或管理員修改已填寫之當日活動／行程或巡店補充內容
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data, created_at FROM visit_records WHERE id = %s", (record_id,))
+            row = cur.fetchone()
+            if not row or not row[0]:
+                raise HTTPException(status_code=404, detail="找不到該筆活動紀錄")
+
+            record_data = dict(row[0])
+            existing_created_at = row[1]
+
+            # 權限檢查：區主管僅能修改本人或轄下門市的活動紀錄
+            if user.get("role") != "admin":
+                mgr_name = user.get("name") or ""
+                assigned = set(user.get("assigned_stores") or [])
+                rec_mgr = str(record_data.get("areaManagerName") or "").strip()
+                rec_store = str(record_data.get("storeName") or "").strip()
+                if rec_mgr != mgr_name and rec_store not in assigned:
+                    raise HTTPException(status_code=403, detail="您僅能修改自己填寫的當日活動內容")
+
+            before_snapshot = {
+                "actionType": record_data.get("actionType"),
+                "storeName": record_data.get("storeName"),
+                "highlightDescription": record_data.get("highlightDescription"),
+                "immediateImprovement": record_data.get("immediateImprovement"),
+                "expectedStayMinutes": record_data.get("expectedStayMinutes"),
+                "createdAt": record_data.get("createdAt"),
+            }
+
+            schedule_types = {"總部行程", "會議行程", "特殊行程"}
+            if "actionType" in payload and payload["actionType"]:
+                new_type = str(payload["actionType"]).strip()
+                record_data["actionType"] = new_type
+                if new_type in schedule_types:
+                    record_data["storeName"] = str(payload.get("storeName") or new_type).strip()
+                    record_data["tags"] = [new_type, "當日行程"]
+
+            if "storeName" in payload and payload["storeName"]:
+                record_data["storeName"] = str(payload["storeName"]).strip()
+
+            if "highlightDescription" in payload and payload["highlightDescription"] is not None:
+                record_data["highlightDescription"] = str(payload["highlightDescription"]).strip()
+
+            if "immediateImprovement" in payload and payload["immediateImprovement"] is not None:
+                record_data["immediateImprovement"] = str(payload["immediateImprovement"]).strip()
+
+            if "expectedStayMinutes" in payload and payload["expectedStayMinutes"] is not None:
+                try:
+                    record_data["expectedStayMinutes"] = int(payload["expectedStayMinutes"])
+                except (ValueError, TypeError):
+                    pass
+
+            if user.get("role") == "admin" and payload.get("areaManagerName"):
+                record_data["areaManagerName"] = str(payload["areaManagerName"]).strip()
+
+            new_created_at = existing_created_at
+            raw_created = payload.get("createdAt")
+            if raw_created:
+                try:
+                    dt = datetime.fromisoformat(str(raw_created).replace("Z", "+00:00"))
+                    if dt.tzinfo is not None:
+                        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                    new_created_at = dt
+                    record_data["createdAt"] = dt.isoformat() + "Z"
+                except ValueError:
+                    pass
+
+            now_iso = datetime.utcnow().isoformat() + "Z"
+            record_data["updatedAt"] = now_iso
+            record_data["updatedBy"] = user.get("name") or user.get("sub") or "區主管"
+
+            cur.execute(
+                "UPDATE visit_records SET data = %s, created_at = %s WHERE id = %s",
+                (Json(record_data), new_created_at, record_id)
+            )
+
+            cur.execute("""
+                INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                str(uuid.uuid4()),
+                "UPDATE_VISIT_RECORD",
+                record_data.get("storeName") or record_id,
+                user.get("name") or user.get("sub") or "區主管",
+                Json(before_snapshot),
+                Json({
+                    "recordId": record_id,
+                    "actionType": record_data.get("actionType"),
+                    "highlightDescription": record_data.get("highlightDescription"),
+                    "expectedStayMinutes": record_data.get("expectedStayMinutes"),
+                }),
+                datetime.utcnow()
+            ))
+        conn.commit()
+
+    return {"success": True, "data": record_data}
+
+
+@app.delete("/api/visit-records/{record_id}")
+def delete_visit_record(
+    record_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """
+    刪除誤填之當日公務行程紀錄（限本人或管理員）
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM visit_records WHERE id = %s", (record_id,))
+            row = cur.fetchone()
+            if not row or not row[0]:
+                raise HTTPException(status_code=404, detail="找不到該筆活動紀錄")
+
+            record_data = dict(row[0])
+            if user.get("role") != "admin":
+                mgr_name = user.get("name") or ""
+                rec_mgr = str(record_data.get("areaManagerName") or "").strip()
+                if rec_mgr != mgr_name:
+                    raise HTTPException(status_code=403, detail="您僅能刪除自己登記的當日行程")
+
+            cur.execute("DELETE FROM visit_records WHERE id = %s", (record_id,))
+            cur.execute("""
+                INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                str(uuid.uuid4()),
+                "DELETE_VISIT_RECORD",
+                record_data.get("storeName") or record_id,
+                user.get("name") or user.get("sub") or "區主管",
+                Json(record_data),
+                None,
+                datetime.utcnow()
+            ))
+        conn.commit()
+
+    return {"success": True, "recordId": record_id}
+
 @app.post("/api/webhook/google-forms")
 def webhook_google_forms(payload: dict = Body(...)):
     record_id = str(uuid.uuid4())

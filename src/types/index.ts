@@ -7,14 +7,21 @@ export interface Manager {
   storeName: string;
   beautyLeader: string;
   managerStatus?: string;
-  
+
   // Dashboard fields calculated
   todayVisitCount?: number;
   assignedStoreCount?: number;
   hasAbnormal?: boolean;
   visitStatus?: '尚未回填' | '巡店中' | '已完成' | '總部行程' | '會議行程' | '特殊行程';
   visitedStores?: string[];
-  todaySchedules?: { type: string; note: string; duration?: number }[];
+  todaySchedules?: {
+    recordId?: string;
+    type: string;
+    note: string;
+    rawNote?: string;
+    duration?: number;
+    createdAt?: string;
+  }[];
   expectedStayMinutes?: number;
   dayEstimatedKm?: number;
   dayEstimatedSubsidy?: number;

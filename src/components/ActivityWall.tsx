@@ -5,11 +5,13 @@ import { formatTaipeiReportTime, formatTimeAgo, getMinutesAgo } from '../utils/t
 
 export type ActivityCategoryFilter = 'all' | 'store' | 'abnormal' | 'normal' | 'photo' | 'schedule';
 
-interface Props {
+export interface Props {
   activities: VisitRecord[];
   actionItems?: any[];
   focusedRecord?: { id: string; ts: number } | null;
   externalFilter?: { category: ActivityCategoryFilter; ts: number } | null;
+  onEditActivity?: (activity: VisitRecord) => void;
+  canEditActivity?: (activity: VisitRecord) => boolean;
 }
 
 const ITEM_NAMES: Record<string, string> = {
@@ -62,7 +64,14 @@ const checkActivityAbnormal = (activity: VisitRecord): boolean => {
   return false;
 };
 
-export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], focusedRecord, externalFilter }) => {
+export const ActivityWall: React.FC<Props> = ({
+  activities,
+  actionItems = [],
+  focusedRecord,
+  externalFilter,
+  onEditActivity,
+  canEditActivity,
+}) => {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxPair, setLightboxPair] = useState<{ beforeUrl: string; afterUrl: string; mode: 'before' | 'after' | 'compare' } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -571,6 +580,19 @@ export const ActivityWall: React.FC<Props> = ({ activities, actionItems = [], fo
                           </span>
                         )}
                       </div>
+                    )}
+                    {onEditActivity && (!canEditActivity || canEditActivity(activity)) && (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          onEditActivity(activity);
+                        }}
+                        className="mt-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white border border-indigo-200 transition-all cursor-pointer flex items-center gap-1"
+                        title="修改此筆當日活動／行程內容"
+                      >
+                        <span>✏️ 修改活動內容</span>
+                      </button>
                     )}
                     {hasDetail && (
                       <div style={{ color: '#9ca3af', marginTop: '2px' }}>
