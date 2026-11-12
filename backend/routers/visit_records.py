@@ -22,6 +22,87 @@ from backend.utils import (
 logger = logging.getLogger("dashboard-api")
 router = APIRouter(prefix="/api", tags=["巡店與活動管理"])
 
+@router.get("/visit-records/last-audit")
+def get_last_audit_record(store: str, user: Optional[dict] = Depends(get_optional_user)):
+    """
+    查詢特定門市前次實地巡檢紀錄與缺失清單（供區主管進店時進行 PDCA 複查與歷史對比）
+    """
+    store_name = str(store or "").strip()
+    if not store_name:
+        raise HTTPException(status_code=400, detail="缺少門市名稱")
+    
+    norm_store = _normalize_store(store_name)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # 查詢排除純公務行程後的最新實地巡檢
+            cur.execute("""
+                SELECT data, created_at FROM visit_records 
+                WHERE replace(data->>'storeName', '店', '') = %s
+                  AND data->>'actionType' NOT IN ('總部行程', '會議行程', '特殊行程')
+                ORDER BY created_at DESC LIMIT 1
+            """, (norm_store,))
+            row = cur.fetchone()
+            if not row or not row[0]:
+                return {"hasHistory": False, "storeName": store_name}
+            
+            raw_data = row[0]
+            created_at_dt = row[1]
+            norm_item = _normalize_activity_time(raw_data, created_at_dt)
+            
+            # 擷取前次所有缺失項目與對應的主題編號
+            core_checks = norm_item.get("coreChecks") or {}
+            category_checks = norm_item.get("categoryChecks") or {}
+            category_remarks = norm_item.get("categoryRemarks") or {}
+            
+            defects = []
+            suggested_topics = set()
+            
+            for k, v in core_checks.items():
+                if v == '缺失':
+                    rmk = category_remarks.get(k) or ""
+                    defects.append({
+                        "key": k,
+                        "label": _build_defect_label(k),
+                        "status": v,
+                        "remark": rmk,
+                        "isCore": True
+                    })
+                    
+            for k, v in category_checks.items():
+                if v in ('缺失', '待改善'):
+                    rmk = category_remarks.get(k) or ""
+                    topic_idx = None
+                    if '-' in k and k.split('-')[0].isdigit():
+                        topic_idx = int(k.split('-')[0])
+                        suggested_topics.add(topic_idx)
+                    defects.append({
+                        "key": k,
+                        "label": _build_defect_label(k),
+                        "status": v,
+                        "remark": rmk,
+                        "topicIndex": topic_idx,
+                        "isCore": False
+                    })
+            
+            # 台北時區日期易讀標記
+            taipei_dt = (created_at_dt + TAIPEI_OFFSET) if created_at_dt else None
+            taipei_date_str = taipei_dt.strftime("%Y/%m/%d %H:%M") if taipei_dt else ""
+            
+            return {
+                "hasHistory": True,
+                "recordId": norm_item.get("recordId"),
+                "storeName": norm_item.get("storeName") or store_name,
+                "createdAt": norm_item.get("createdAt"),
+                "taipeiDate": taipei_date_str,
+                "areaManagerName": norm_item.get("areaManagerName"),
+                "overallRating": norm_item.get("overallRating") or "正常",
+                "abnormalFlag": norm_item.get("abnormalFlag") or False,
+                "immediateImprovement": norm_item.get("immediateImprovement") or "",
+                "pdcaResolved": norm_item.get("pdcaResolved") or False,
+                "defects": defects,
+                "suggestedTopicIndices": sorted(list(suggested_topics))
+            }
+
 @router.get("/photos/{photo_id}")
 def get_photo(photo_id: str):
     """

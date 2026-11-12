@@ -1,13 +1,39 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SignatureCanvas from 'react-signature-canvas';
-import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut, KeyRound, Calendar, Clock } from 'lucide-react';
+import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut, KeyRound, Calendar, Clock, Wifi, WifiOff, History, Sparkles, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { storeRegions } from '../data/storeRegions';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
 const LOCAL_STORAGE_KEY = 'audit_app_draft';
+const MULTI_DRAFTS_STORAGE_KEY = 'audit_app_multidrafts_v1';
 const MAX_BACKFILL_DAYS = 5;
+const AUDIT_TOPIC_NAMES = ['行銷檔期', '陳列損耗', '寵物專業', '人員服務', '環境設備', '經營數據'];
+
+export interface LastAuditDefect {
+  key: string;
+  label: string;
+  status: string;
+  remark?: string;
+  topicIndex?: number;
+  isCore: boolean;
+}
+
+export interface LastAuditData {
+  hasHistory: boolean;
+  recordId?: string;
+  storeName?: string;
+  createdAt?: string;
+  taipeiDate?: string;
+  areaManagerName?: string;
+  overallRating?: string;
+  abnormalFlag?: boolean;
+  immediateImprovement?: string;
+  pdcaResolved?: boolean;
+  defects?: LastAuditDefect[];
+  suggestedTopicIndices?: number[];
+}
 
 /**
  * 取得台北時區距離今日 N 天前的日期字串 (YYYY-MM-DD)
@@ -90,21 +116,91 @@ export const AuditApp = () => {
   const [storeSearchQuery, setStoreSearchQuery] = useState<string>('');
   const [selectedStoreRegionFilter, setSelectedStoreRegionFilter] = useState<string>('全部');
 
-  // --- Local Storage Auto Save & Safe Recovery ---
+  // 門市前次巡店紀錄與歷史缺失 (PDCA 閉環)
+  const [lastAuditData, setLastAuditData] = useState<LastAuditData | null>(null);
+  const [lastAuditLoading, setLastAuditLoading] = useState<boolean>(false);
+
+  // 網路即時連線監控 (離線填報安全防護)
+  const [isOnline, setIsOnline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [onlineNotice, setOnlineNotice] = useState<boolean>(false);
+
+  // --- Local Storage Auto Save & Multi-Store Drafts ---
   const [isDraftRestored, setIsDraftRestored] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<string>('');
   const [draftWarning, setDraftWarning] = useState<string>('');
   const [hasRestoredBanner, setHasRestoredBanner] = useState<boolean>(false);
   const [saveToast, setSaveToast] = useState<boolean>(false);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+  const [multiDrafts, setMultiDrafts] = useState<Record<string, any>>({});
 
-  // 安全存入 LocalStorage，防禦 QuotaExceededError 確保文字資料 100% 永不遺失
+  // 監聽離線與上線事件
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setOnlineNotice(true);
+      setTimeout(() => setOnlineNotice(false), 3500);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setOnlineNotice(false);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // 抓取前次巡檢紀錄
+  const fetchLastAuditRecord = async (store: string) => {
+    if (!store || taskType !== '實地巡店') {
+      setLastAuditData(null);
+      return;
+    }
+    setLastAuditLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
+      const res = await fetch(`${apiBase}/visit-records/last-audit?store=${encodeURIComponent(store)}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setLastAuditData(data);
+      } else {
+        setLastAuditData(null);
+      }
+    } catch (err) {
+      console.warn('載入前次巡檢紀錄稍有延遲', err);
+      setLastAuditData(null);
+    } finally {
+      setLastAuditLoading(false);
+    }
+  };
+
+  // 計算當前表單完成度百分比 (0~100)
+  const calculateFormProgress = () => {
+    let score = 0;
+    if (storeName) score += 20;
+    if (auditMode) score += 10;
+    const coreCount = Object.keys(coreChecks).length;
+    score += Math.min(30, coreCount * 10);
+    const catCount = Object.keys(categoryChecks).length;
+    if (catCount > 0) score += Math.min(25, catCount * 5);
+    if (overallRating) score += 15;
+    return Math.min(100, score);
+  };
+
+  // 安全存入 LocalStorage，支援多門市草稿
   const saveDraftSafe = () => {
     const timeStr = new Date().toLocaleTimeString('zh-TW', { hour12: false });
     const safePairs = Array.isArray(photoPairs) && photoPairs.length > 0
       ? photoPairs
       : [{ beforeUrl: '', afterUrl: '' }];
-    const draft = {
+    const progress = calculateFormProgress();
+
+    const currentDraft = {
       storeName,
       mgrName: user?.name || mgrName,
       auditMode,
@@ -122,28 +218,135 @@ export const AuditApp = () => {
       visitDate,
       visitTime,
       isCustomTime,
-      savedAt: timeStr
+      savedAt: timeStr,
+      progress
     };
 
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(draft));
+      // 1. 存入單一主要草稿
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentDraft));
+
+      // 2. 存入多門市草稿字典
+      if (storeName) {
+        const existingMulti = (() => {
+          try {
+            return JSON.parse(localStorage.getItem(MULTI_DRAFTS_STORAGE_KEY) || '{}');
+          } catch {
+            return {};
+          }
+        })();
+        existingMulti[storeName] = currentDraft;
+        localStorage.setItem(MULTI_DRAFTS_STORAGE_KEY, JSON.stringify(existingMulti));
+        setMultiDrafts(existingMulti);
+      }
+
       setDraftSavedAt(timeStr);
       setDraftWarning('');
     } catch (quotaErr) {
-      // 若因照片 Base64 累積超過行動瀏覽器 5MB 限制，自動啟動降級保護：剔除照片大圖，確保所有勾選、評分與文字備註安全入庫
-      console.warn('LocalStorage 空間不足，啟用降級保護：保全所有文字、項目與進度', quotaErr);
+      console.warn('LocalStorage 空間不足，啟用降級保護', quotaErr);
       try {
         const slimDraft = {
-          ...draft,
+          ...currentDraft,
           photoPairs: [{ beforeUrl: '', afterUrl: '' }],
           defectPhotos: {}
         };
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(slimDraft));
+        if (storeName) {
+          const existingMulti = (() => {
+            try {
+              return JSON.parse(localStorage.getItem(MULTI_DRAFTS_STORAGE_KEY) || '{}');
+            } catch {
+              return {};
+            }
+          })();
+          existingMulti[storeName] = slimDraft;
+          localStorage.setItem(MULTI_DRAFTS_STORAGE_KEY, JSON.stringify(existingMulti));
+          setMultiDrafts(existingMulti);
+        }
         setDraftSavedAt(timeStr);
-        setDraftWarning('文字資料已妥善暫存（因本機容量限制，照片暫不存於本機，送出時仍會上傳）');
+        setDraftWarning('文字資料已妥善暫存（照片暫不佔用本機容量）');
       } catch (innerErr) {
         console.error('嚴重 LocalStorage 儲存錯誤', innerErr);
       }
+    }
+  };
+
+  // 還原指定門市的草稿
+  const restoreDraft = (draft: any) => {
+    if (!draft) return;
+    setStoreName(draft.storeName || '');
+    if (draft.storeName) {
+      fetchActionItems(draft.storeName);
+      fetchLastAuditRecord(draft.storeName);
+    }
+    setMgrName(user?.name || draft.mgrName || '區主管');
+    setAuditMode(draft.auditMode || 'C');
+    setSelectedTopics(draft.selectedTopics || []);
+    setCoreChecks(draft.coreChecks || {});
+    setCategoryChecks(draft.categoryChecks || {});
+    setCategoryRemarks(draft.categoryRemarks || {});
+    setCustomItems(draft.customItems || {});
+    setPdcaResults(draft.pdcaResults || {});
+    setNewActionItems(
+      Array.isArray(draft.newActionItems) && draft.newActionItems.length > 0
+        ? draft.newActionItems
+        : [{ desc: '', assignee: '', dueDate: '' }]
+    );
+    setOverallRating(draft.overallRating || '');
+    setPhotoPairs(
+      Array.isArray(draft.photoPairs) && draft.photoPairs.length > 0
+        ? draft.photoPairs
+        : [{ beforeUrl: '', afterUrl: '' }]
+    );
+    setDefectPhotos(draft.defectPhotos || {});
+    if (draft.visitDate) {
+      const todayStr = getTaipeiDateOffsetStr(0);
+      const minDateStr = getTaipeiDateOffsetStr(MAX_BACKFILL_DAYS);
+      if (draft.visitDate >= minDateStr && draft.visitDate <= todayStr) {
+        setVisitDate(draft.visitDate);
+        if (draft.visitTime) setVisitTime(draft.visitTime);
+        if (typeof draft.isCustomTime === 'boolean') setIsCustomTime(draft.isCustomTime);
+      }
+    }
+    if (draft.currentStep) setCurrentStep(draft.currentStep);
+    setDraftSavedAt(draft.savedAt || '稍早');
+    setHasRestoredBanner(true);
+  };
+
+  // 放棄/清除指定門市之草稿
+  const handleDiscardDraft = (targetStore: string) => {
+    if (!window.confirm(`確定要放棄並清除「${targetStore}」的暫存草稿嗎？已填寫內容將無法復原。`)) return;
+    try {
+      const existingMulti = (() => {
+        try {
+          return JSON.parse(localStorage.getItem(MULTI_DRAFTS_STORAGE_KEY) || '{}');
+        } catch {
+          return {};
+        }
+      })();
+      delete existingMulti[targetStore];
+      localStorage.setItem(MULTI_DRAFTS_STORAGE_KEY, JSON.stringify(existingMulti));
+      setMultiDrafts(existingMulti);
+
+      if (storeName === targetStore) {
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
+        setStoreName('');
+        setSelectedTopics([]);
+        setCoreChecks({});
+        setCategoryChecks({});
+        setCategoryRemarks({});
+        setCustomItems({});
+        setPdcaResults({});
+        setPastActionItems([]);
+        setLastAuditData(null);
+        setOverallRating('');
+        setPhotoPairs([{ beforeUrl: '', afterUrl: '' }]);
+        setDefectPhotos({});
+        setHasRestoredBanner(false);
+        setCurrentStep(1);
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -156,6 +359,14 @@ export const AuditApp = () => {
 
   // 進入頁面時無損自動還原草稿，避免主管手誤點擊取消而遺失心血
   useEffect(() => {
+    // 載入多門市草稿字典
+    try {
+      const savedMulti = JSON.parse(localStorage.getItem(MULTI_DRAFTS_STORAGE_KEY) || '{}');
+      setMultiDrafts(savedMulti);
+    } catch (e) {
+      console.warn('Failed to parse multi-drafts', e);
+    }
+
     const draftStr = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (draftStr) {
       try {
@@ -168,42 +379,7 @@ export const AuditApp = () => {
         );
 
         if (hasContent) {
-          setStoreName(draft.storeName || '');
-          if (draft.storeName) {
-            fetchActionItems(draft.storeName);
-          }
-          setMgrName(user?.name || draft.mgrName || '區主管');
-          setAuditMode(draft.auditMode || 'C');
-          setSelectedTopics(draft.selectedTopics || []);
-          setCoreChecks(draft.coreChecks || {});
-          setCategoryChecks(draft.categoryChecks || {});
-          setCategoryRemarks(draft.categoryRemarks || {});
-          setCustomItems(draft.customItems || {});
-          setPdcaResults(draft.pdcaResults || {});
-          setNewActionItems(
-            Array.isArray(draft.newActionItems) && draft.newActionItems.length > 0
-              ? draft.newActionItems
-              : [{ desc: '', assignee: '', dueDate: '' }]
-          );
-          setOverallRating(draft.overallRating || '');
-          setPhotoPairs(
-            Array.isArray(draft.photoPairs) && draft.photoPairs.length > 0
-              ? draft.photoPairs
-              : [{ beforeUrl: '', afterUrl: '' }]
-          );
-          setDefectPhotos(draft.defectPhotos || {});
-          if (draft.visitDate) {
-            const todayStr = getTaipeiDateOffsetStr(0);
-            const minDateStr = getTaipeiDateOffsetStr(MAX_BACKFILL_DAYS);
-            if (draft.visitDate >= minDateStr && draft.visitDate <= todayStr) {
-              setVisitDate(draft.visitDate);
-              if (draft.visitTime) setVisitTime(draft.visitTime);
-              if (typeof draft.isCustomTime === 'boolean') setIsCustomTime(draft.isCustomTime);
-            }
-          }
-          if (draft.currentStep) setCurrentStep(draft.currentStep);
-          setDraftSavedAt(draft.savedAt || '稍早');
-          setHasRestoredBanner(true);
+          restoreDraft(draft);
         }
       } catch (e) {
         console.error('Failed to parse draft', e);
@@ -217,6 +393,7 @@ export const AuditApp = () => {
       setStoreName(queryStore);
       setCurrentStep(1);
       fetchActionItems(queryStore);
+      fetchLastAuditRecord(queryStore);
     } else if (querySchedule) {
       setTaskType('總部行程');
       setCurrentStep(1);
@@ -672,9 +849,18 @@ export const AuditApp = () => {
 
     if (isSuccess) {
       const submittedDate = visitDate;
+      const submittedStore = storeName;
       // 伺服器確認持久化存檔後，才安全清除本機草稿並重置表單狀態
       setIsDraftRestored(false);
       localStorage.removeItem(LOCAL_STORAGE_KEY);
+      try {
+        const existingMulti = JSON.parse(localStorage.getItem(MULTI_DRAFTS_STORAGE_KEY) || '{}');
+        delete existingMulti[submittedStore];
+        localStorage.setItem(MULTI_DRAFTS_STORAGE_KEY, JSON.stringify(existingMulti));
+        setMultiDrafts(existingMulti);
+      } catch (e) {
+        console.warn(e);
+      }
       setStoreName('');
       setSelectedTopics([]);
       setCoreChecks({});
@@ -683,6 +869,7 @@ export const AuditApp = () => {
       setCustomItems({});
       setPdcaResults({});
       setPastActionItems([]);
+      setLastAuditData(null);
       setNewActionItems([{ desc: '', assignee: '', dueDate: '' }]);
       setPhotoPairs([{ beforeUrl: '', afterUrl: '' }]);
       setDefectPhotos({});
@@ -875,6 +1062,147 @@ export const AuditApp = () => {
     );
   };
 
+  /**
+   * 門市前次巡檢歷史紀錄與缺失提醒卡片 (PDCA 閉環)
+   */
+  const renderHistoricalDefectCard = () => {
+    if (!storeName || taskType !== '實地巡店') return null;
+
+    if (lastAuditLoading) {
+      return (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex items-center gap-2.5 animate-pulse">
+          <History size={16} className="text-blue-500 animate-spin" />
+          <span className="text-xs text-gray-500 font-medium">正在比對「{storeName}」前次巡檢紀錄與歷史缺失...</span>
+        </div>
+      );
+    }
+
+    if (!lastAuditData || !lastAuditData.hasHistory) {
+      return (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center gap-2 text-xs text-gray-500">
+          <History size={15} className="text-gray-400 shrink-0" />
+          <span>門市「{storeName}」尚無前次實地巡檢紀錄（新進門市或首次巡檢）。</span>
+        </div>
+      );
+    }
+
+    const {
+      taipeiDate,
+      areaManagerName,
+      overallRating: prevRating,
+      defects = [],
+      suggestedTopicIndices = [],
+      immediateImprovement,
+      abnormalFlag,
+    } = lastAuditData;
+
+    const hasDefects = defects.length > 0;
+
+    // 一鍵將歷史缺失對應之主題加入本次重點複查 (PDCA)
+    const handleApplySuggestedTopics = () => {
+      if (suggestedTopicIndices.length === 0) return;
+      const merged = Array.from(new Set([...selectedTopics, ...suggestedTopicIndices])).sort((a, b) => a - b);
+      setSelectedTopics(merged);
+      setAuditMode('B'); // 自動切換為模式 B (主題巡店)
+      const topicNames = suggestedTopicIndices.map(idx => AUDIT_TOPIC_NAMES[idx - 1]).filter(Boolean).join('、');
+      alert(`⚡ 已自動為您切換至【模式 B 主題巡店】，並自動勾選前次缺失對應主題：\n${topicNames}\n\n您可直接前往步驟 2 與步驟 3 進行重點複查！`);
+    };
+
+    return (
+      <div className={`rounded-xl border p-4 transition-all ${
+        hasDefects ? 'bg-amber-50/70 border-amber-300 shadow-xs' : 'bg-emerald-50/60 border-emerald-200'
+      }`}>
+        <div className="flex items-start justify-between flex-wrap gap-2.5 mb-2.5">
+          <div className="flex items-center gap-2.5">
+            <span className={`p-1.5 rounded-lg ${hasDefects ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+              <History size={18} />
+            </span>
+            <div>
+              <div className="text-sm font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+                <span>前次巡檢紀錄（{storeName}）</span>
+                {prevRating && (
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold border ${
+                    prevRating === '特優' ? 'bg-purple-100 text-purple-700 border-purple-200' :
+                    prevRating === '優' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                    prevRating === '良' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+                    'bg-red-100 text-red-700 border-red-200'
+                  }`}>
+                    評等：{prevRating}
+                  </span>
+                )}
+                {abnormalFlag && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-red-100 text-red-700 border border-red-200">
+                    ⚠️ 異常警示
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">
+                巡檢日期：<span className="font-semibold text-gray-700">{taipeiDate || '歷史紀錄'}</span>
+                {areaManagerName && <> · 查核主管：<span className="font-semibold text-gray-700">{areaManagerName}</span></>}
+              </div>
+            </div>
+          </div>
+
+          {hasDefects && suggestedTopicIndices.length > 0 && (
+            <button
+              type="button"
+              onClick={handleApplySuggestedTopics}
+              className="text-xs bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold px-3 py-1.5 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-transform active:scale-95"
+            >
+              <Sparkles size={14} />
+              <span>⚡ 一鍵帶入本次重點複查主題 ({suggestedTopicIndices.length})</span>
+            </button>
+          )}
+        </div>
+
+        {/* 缺失項目列表 */}
+        {hasDefects ? (
+          <div className="mt-3 bg-white/95 rounded-lg p-3 border border-amber-200 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-amber-900 border-b border-amber-100 pb-1.5">
+              <span className="flex items-center gap-1">
+                <AlertTriangle size={14} className="text-amber-600" />
+                <span>前次共發現 {defects.length} 項缺失（本次巡店應加強抽查）：</span>
+              </span>
+            </div>
+            <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+              {defects.map((defect, idx) => (
+                <div key={defect.key || idx} className="text-xs bg-amber-50/60 rounded-md p-2 border border-amber-100 flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="font-bold text-gray-800 flex items-center gap-1.5">
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
+                        defect.isCore ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-orange-100 text-orange-700 border border-orange-200'
+                      }`}>
+                        {defect.isCore ? '核心底線' : '模組細項'}
+                      </span>
+                      <span>{defect.label}</span>
+                    </div>
+                    {defect.remark && (
+                      <div className="text-[11px] text-gray-600 mt-1 pl-2 border-l-2 border-amber-300">
+                        備註：{defect.remark}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 text-xs text-emerald-800 font-medium flex items-center gap-1.5 bg-white/80 p-2.5 rounded-lg border border-emerald-200">
+            <span>🎉</span>
+            <span>前次巡檢全項合格無缺失，表現優良！請維持現場水準。</span>
+          </div>
+        )}
+
+        {immediateImprovement && (
+          <div className="mt-2 text-xs text-gray-600 bg-white/80 p-2.5 rounded-lg border border-gray-200">
+            <span className="font-bold text-gray-700">前次即時改善與指示：</span>
+            <span>{immediateImprovement}</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderStep1 = () => (
     <section className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <h2 className="text-xl font-bold text-gray-800 mb-6 border-b pb-3 flex items-center gap-2">
@@ -999,6 +1327,76 @@ export const AuditApp = () => {
           </div>
         ) : (
           <>
+        {/* 本機多門市草稿箱 (地下室/弱網安全暫存) */}
+        {Object.keys(multiDrafts).length > 0 && (
+          <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 shadow-xs">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                <span>📝</span> 本機暫存草稿箱 ({Object.keys(multiDrafts).length} 間門市)
+              </span>
+              <span className="text-[11px] text-indigo-600 font-medium">
+                地下室／離線填報安全保護中
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(multiDrafts).map(([targetStore, draft]) => {
+                const isCurrent = storeName === targetStore;
+                const progress = typeof draft?.progress === 'number' ? draft.progress : 0;
+                return (
+                  <div
+                    key={targetStore}
+                    className={`flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-lg border text-xs transition-all ${
+                      isCurrent
+                        ? 'bg-white border-indigo-500 font-bold text-indigo-950 shadow-xs ring-2 ring-indigo-400/30'
+                        : 'bg-white/80 border-indigo-200 text-gray-700 hover:bg-white hover:border-indigo-400'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isCurrent) return;
+                        if (storeName && storeName !== targetStore) {
+                          saveDraftSafe(); // 切換前先為當前門市存檔
+                        }
+                        restoreDraft(draft);
+                      }}
+                      className="flex items-center gap-1.5 cursor-pointer text-left"
+                      title={isCurrent ? '目前正在編輯此門市' : `點擊切換還原「${targetStore}」草稿`}
+                    >
+                      <span>🏪 {targetStore}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        progress >= 80 ? 'bg-emerald-100 text-emerald-700' :
+                        progress >= 40 ? 'bg-blue-100 text-blue-700' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>
+                        {progress}%
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-normal">
+                        {draft.savedAt || '稍早'}
+                      </span>
+                      {isCurrent && (
+                        <span className="text-[10px] text-emerald-600 font-bold">● 編輯中</span>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDiscardDraft(targetStore);
+                      }}
+                      title={`清除「${targetStore}」暫存草稿`}
+                      className="text-gray-400 hover:text-red-500 p-0.5 rounded transition-colors cursor-pointer"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <label className="block text-sm font-semibold text-gray-700">
@@ -1079,6 +1477,7 @@ export const AuditApp = () => {
                           onClick={() => {
                             setStoreName(store);
                             fetchActionItems(store);
+                            fetchLastAuditRecord(store);
                           }}
                           className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
                             active
@@ -1099,8 +1498,10 @@ export const AuditApp = () => {
           <select
             value={storeName}
             onChange={(e) => {
-              setStoreName(e.target.value);
-              fetchActionItems(e.target.value);
+              const val = e.target.value;
+              setStoreName(val);
+              fetchActionItems(val);
+              fetchLastAuditRecord(val);
             }}
             className="w-full border rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
           >
@@ -1128,6 +1529,9 @@ export const AuditApp = () => {
             </p>
           )}
         </div>
+
+        {/* 門市前次巡檢紀錄與歷史缺失 (PDCA 閉環) */}
+        {renderHistoricalDefectCard()}
         
         {/* 前次未結案 */}
         {storeName && (
@@ -1241,6 +1645,19 @@ export const AuditApp = () => {
       </div>
       <p className="text-sm text-gray-500 mb-6">不論停留時間長短，進店必須立刻檢核的重點。</p>
       
+      {/* 前次巡檢缺失即時提醒 (PDCA 閉環) */}
+      {lastAuditData?.hasHistory && lastAuditData.defects && lastAuditData.defects.length > 0 && (
+        <div className="mb-5 bg-amber-50/80 border border-amber-300 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-amber-900 shadow-xs">
+          <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1 leading-relaxed">
+            <span className="font-bold">⚠️ 前次巡檢缺失重點提醒（{storeName}）：</span>
+            <span>
+              前次巡檢共發現 <strong>{lastAuditData.defects.length}</strong> 項缺失。請在本次進店核心底線及後續模組查核時，嚴格檢視門市是否已徹底改善與落實。
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-4">
         {[
           { id: 'core-1', label: '環境異味與清潔', desc: '門口/賣場無明顯排泄物或寵物異味，地板乾淨。' },
@@ -1874,6 +2291,23 @@ export const AuditApp = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* 網路連線狀態小圖示指示 */}
+          {!isOnline ? (
+            <span
+              title="目前為離線／弱網模式，資料已妥善暫存於本機"
+              className="text-[11px] bg-amber-100 text-amber-800 px-2 py-1 rounded-lg font-bold border border-amber-300 flex items-center gap-1 shadow-xs"
+            >
+              <WifiOff size={13} className="text-amber-600 animate-pulse" /> 離線安全模式
+            </span>
+          ) : (
+            <span
+              title="網路連線正常"
+              className="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg font-bold border border-emerald-200 flex items-center gap-1"
+            >
+              <Wifi size={13} className="text-emerald-600" /> 連線中
+            </span>
+          )}
+
           {/* 草稿狀態與手動儲存 */}
           <button
             onClick={handleManualSave}
@@ -1914,6 +2348,24 @@ export const AuditApp = () => {
         </div>
       </div>
       <ChangePasswordModal open={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />
+
+      {/* 離線弱網與上線恢復通知橫幅 */}
+      {!isOnline && (
+        <div className="bg-amber-600 text-white px-4 py-2.5 text-xs font-bold flex items-center justify-between sticky top-[65px] z-40 shadow-sm animate-in slide-in-from-top duration-200">
+          <div className="flex items-center gap-2 max-w-4xl mx-auto w-full">
+            <WifiOff size={16} className="shrink-0 animate-pulse text-amber-200" />
+            <span>【離線／弱網防護啟動】目前處於無網路或弱網環境，所有填寫進度與評估項目均已即時安全備份於本機，連線恢復時可隨時送出。</span>
+          </div>
+        </div>
+      )}
+      {onlineNotice && (
+        <div className="bg-emerald-600 text-white px-4 py-2 text-xs font-bold flex items-center justify-between sticky top-[65px] z-40 shadow-sm animate-in slide-in-from-top duration-200">
+          <div className="flex items-center gap-2 max-w-4xl mx-auto w-full">
+            <Wifi size={16} className="shrink-0 text-emerald-200" />
+            <span>【網路已恢復連線】連線訊號良好，您可以正常進行拍照並提交巡店紀錄！</span>
+          </div>
+        </div>
+      )}
 
       <div className="md:max-w-4xl max-w-2xl mx-auto px-4 pt-6">
         {/* 草稿自動還原提示橫幅 */}
