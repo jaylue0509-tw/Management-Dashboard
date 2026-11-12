@@ -81,3 +81,21 @@ export const formatTimeAgo = (minutes: number): string => {
   return `${Math.floor(minutes / (60 * 24))} 天前`;
 };
 
+/**
+ * 取得台北時區的今日日期字串 (YYYY-MM-DD)
+ */
+export const getTaipeiTodayStr = (): string =>
+  new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+
+/**
+ * 依天數增減日期字串 (YYYY-MM-DD)
+ * @param dateStr 基準日期 YYYY-MM-DD
+ * @param deltaDays 增加或減少的天數
+ */
+export const shiftDateStr = (dateStr: string, deltaDays: number): string => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  return dt.toISOString().slice(0, 10);
+};
+
+

@@ -13,12 +13,14 @@ import { IssuePieChart } from '../components/charts/IssuePieChart';
 import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
 import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
-import { AlertTriangle, CheckCircle2, ClipboardSignature, Search, X } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { normalizeUtcIso, getTaipeiDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
+import { normalizeUtcIso, getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
 import { normalizeStoreName, normalizeRegionName, compareRegion } from '../utils/store-region';
 import { MileageExpensePanel } from '../components/MileageExpensePanel';
 import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
+import { ActivityScheduleModal, type ActivityScheduleType } from '../components/modals/ActivityScheduleModal';
+import { UnresolvedStoreModal, type ResolvingStoreInfo } from '../components/modals/UnresolvedStoreModal';
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -43,14 +45,6 @@ const groupBy = <T, K extends keyof any>(list: T[], getKey: (item: T) => K) =>
     previous[group].push(currentItem);
     return previous;
   }, {} as Record<K, T[]>);
-
-const getTaipeiTodayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
-
-const shiftDateStr = (dateStr: string, deltaDays: number) => {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
-  return dt.toISOString().slice(0, 10);
-};
 
 const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
   const [y, m, d] = baseDateStr.split('-').map(Number);
@@ -83,28 +77,13 @@ export const DashboardPage: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [resolvingStore, setResolvingStore] = useState<{
-    store: string;
-    reasons: string[];
-    reportTime?: string;
-    recordId?: string;
-    region?: string;
-    areaManagerName?: string;
-  } | null>(null);
+  const [resolvingStore, setResolvingStore] = useState<ResolvingStoreInfo | null>(null);
   const [isSubmittingResolve, setIsSubmittingResolve] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalMode, setScheduleModalMode] = useState<'create' | 'edit'>('create');
-  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
-  const [editingActionType, setEditingActionType] = useState<string>('總部行程');
-  const [editingStoreName, setEditingStoreName] = useState<string>('');
-  const [quickScheduleType, setQuickScheduleType] = useState<'總部行程' | '會議行程' | '特殊行程'>('總部行程');
-  const [quickScheduleNote, setQuickScheduleNote] = useState('');
-  const [quickScheduleImprovement, setQuickScheduleImprovement] = useState('');
-  const [quickScheduleDuration, setQuickScheduleDuration] = useState(240);
-  const [quickScheduleManager, setQuickScheduleManager] = useState('');
-  const [quickScheduleDate, setQuickScheduleDate] = useState<string>(() => getTaipeiTodayStr());
-  const [isSubmittingSchedule, setIsSubmittingSchedule] = useState(false);
-  const [isDeletingSchedule, setIsDeletingSchedule] = useState(false);
+  const [scheduleModalPresetType, setScheduleModalPresetType] = useState<ActivityScheduleType>('總部行程');
+  const [scheduleModalInitialRecord, setScheduleModalInitialRecord] = useState<VisitRecord | null>(null);
+  const [scheduleModalManager, setScheduleModalManager] = useState('');
   const [focusedRecord, setFocusedRecord] = useState<{ id: string; ts: number } | null>(null);
   const [activityWallFilter, setActivityWallFilter] = useState<{ category: ActivityCategoryFilter; ts: number } | null>(null);
   const { user } = useAuth();
@@ -172,213 +151,32 @@ export const DashboardPage: React.FC = () => {
     );
   };
 
-  const editableManagerRecords = useMemo(() => {
-    const targetMgr = user?.role === 'manager' ? user.name : (quickScheduleManager || selectedManager?.areaManagerName || user?.name || '');
-    const coNames = new Set<string>([targetMgr].filter(Boolean));
-    managers.forEach(m => {
-      if (m.areaManagerName === targetMgr || m.deputyManagerName === targetMgr) {
-        if (m.areaManagerName) coNames.add(m.areaManagerName);
-        if (m.deputyManagerName) coNames.add(m.deputyManagerName);
-      }
-    });
-    return allActivities
-      .filter(a => (coNames.size > 0 ? coNames.has(a.areaManagerName) : true) && canEditActivityRecord(a))
-      .slice()
-      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-      .slice(0, 30);
-  }, [allActivities, managers, user, quickScheduleManager, selectedManager]);
-
-  const loadRecordIntoModal = (record: VisitRecord) => {
-    const specialTypes = ['總部行程', '會議行程', '特殊行程'];
-    setScheduleModalMode('edit');
-    setEditingRecordId(record.recordId);
-    setEditingActionType(record.actionType || '總部行程');
-    setEditingStoreName(record.storeName || record.actionType || '');
-    if (specialTypes.includes(record.actionType)) {
-      setQuickScheduleType(record.actionType as '總部行程' | '會議行程' | '特殊行程');
-    }
-    setQuickScheduleManager(record.areaManagerName);
-    setQuickScheduleDate(getTaipeiDateStr(record.createdAt) || getTaipeiTodayStr());
-    setQuickScheduleNote(record.highlightDescription || '');
-    setQuickScheduleImprovement(record.immediateImprovement || '');
-    setQuickScheduleDuration(record.expectedStayMinutes || 240);
-    setScheduleModalOpen(true);
-  };
-
   const openCreateActivityModal = (
     mgrName?: string,
-    presetType: '總部行程' | '會議行程' | '特殊行程' = '總部行程'
+    presetType: ActivityScheduleType = '總部行程'
   ) => {
     const defaultMgr =
       mgrName ||
       (user?.role === 'manager'
         ? user.name
-        : selectedManager?.areaManagerName || quickScheduleManager || managers[0]?.areaManagerName || '');
-    const defaultDate =
-      timeRange === 'day' && customStartDate ? customStartDate : getTaipeiTodayStr();
+        : selectedManager?.areaManagerName || scheduleModalManager || managers[0]?.areaManagerName || '');
     setScheduleModalMode('create');
-    setEditingRecordId(null);
-    setEditingActionType(presetType);
-    setEditingStoreName(presetType);
-    setQuickScheduleType(presetType);
-    setQuickScheduleManager(defaultMgr);
-    setQuickScheduleDate(defaultDate);
-    setQuickScheduleNote('');
-    setQuickScheduleImprovement('');
-    setQuickScheduleDuration(240);
+    setScheduleModalPresetType(presetType);
+    setScheduleModalInitialRecord(null);
+    setScheduleModalManager(defaultMgr);
     setScheduleModalOpen(true);
   };
 
   const openEditActivityModal = (record?: VisitRecord, fallbackMgrName?: string) => {
-    if (record) {
-      loadRecordIntoModal(record);
-      return;
-    }
-    const targetMgr =
+    const defaultMgr =
       fallbackMgrName ||
       (user?.role === 'manager'
         ? user.name
-        : selectedManager?.areaManagerName || quickScheduleManager || managers[0]?.areaManagerName || '');
-    setQuickScheduleManager(targetMgr);
-    const targetDate = timeRange === 'day' && customStartDate ? customStartDate : getTaipeiTodayStr();
-    const coNames = new Set<string>([targetMgr].filter(Boolean));
-    managers.forEach(m => {
-      if (m.areaManagerName === targetMgr || m.deputyManagerName === targetMgr) {
-        if (m.areaManagerName) coNames.add(m.areaManagerName);
-        if (m.deputyManagerName) coNames.add(m.deputyManagerName);
-      }
-    });
-    const candidates = allActivities.filter(a => coNames.has(a.areaManagerName) && canEditActivityRecord(a));
-    const sameDayCandidate = candidates.find(a => getTaipeiDateStr(a.createdAt) === targetDate);
-    const chosen = sameDayCandidate || candidates[0];
-    if (chosen) {
-      loadRecordIntoModal(chosen);
-    } else {
-      setScheduleModalMode('edit');
-      setEditingRecordId(null);
-      setQuickScheduleDate(targetDate);
-      setQuickScheduleNote('');
-      setQuickScheduleImprovement('');
-      setScheduleModalOpen(true);
-    }
-  };
-
-  const handleDeleteActivityRecord = async (recordId: string) => {
-    if (!recordId || isDeletingSchedule) return;
-    if (!window.confirm('確定要刪除這筆已填寫的當日活動／行程紀錄嗎？')) return;
-    setIsDeletingSchedule(true);
-    try {
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
-      const res = await fetch(`${apiBase}/visit-records/${encodeURIComponent(recordId)}`, {
-        method: 'DELETE',
-        headers,
-      });
-      if (res.ok) {
-        setScheduleModalOpen(false);
-        setEditingRecordId(null);
-        await fetchData(true);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        alert(errData.detail || '刪除失敗，僅限刪除公務行程紀錄或確認權限');
-      }
-    } catch (e) {
-      console.error(e);
-      alert('網路連線異常，請稍後再試');
-    } finally {
-      setIsDeletingSchedule(false);
-    }
-  };
-
-  const handleQuickSubmitSchedule = async () => {
-    if (isSubmittingSchedule) return;
-    const isSpecialType = ['總部行程', '會議行程', '特殊行程'].includes(
-      scheduleModalMode === 'edit' ? editingActionType : quickScheduleType
-    );
-    const targetMgr = user?.role === 'manager' ? user.name : (quickScheduleManager || user?.name || '區主管');
-    const noteText =
-      quickScheduleNote.trim() ||
-      (isSpecialType ? `執行當日${quickScheduleType}` : '');
-    setIsSubmittingSchedule(true);
-    try {
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
-
-      if (scheduleModalMode === 'edit' && editingRecordId) {
-        const existingRecord = allActivities.find(a => a.recordId === editingRecordId);
-        const existingDateStr = existingRecord ? getTaipeiDateStr(existingRecord.createdAt) : '';
-        const nextCreatedAt =
-          quickScheduleDate && quickScheduleDate !== existingDateStr
-            ? (quickScheduleDate === getTaipeiTodayStr()
-              ? new Date().toISOString()
-              : new Date(`${quickScheduleDate}T09:00:00+08:00`).toISOString())
-            : undefined;
-
-        const res = await fetch(`${apiBase}/visit-records/${encodeURIComponent(editingRecordId)}`, {
-          method: 'PUT',
-          headers,
-          body: JSON.stringify({
-            actionType: isSpecialType ? quickScheduleType : editingActionType,
-            storeName: isSpecialType ? quickScheduleType : editingStoreName,
-            highlightDescription: noteText,
-            immediateImprovement: quickScheduleImprovement.trim(),
-            expectedStayMinutes: quickScheduleDuration || 240,
-            ...(nextCreatedAt ? { createdAt: nextCreatedAt } : {}),
-          }),
-        });
-        if (res.ok) {
-          setScheduleModalOpen(false);
-          setEditingRecordId(null);
-          setQuickScheduleNote('');
-          setQuickScheduleImprovement('');
-          await fetchData(true);
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          alert(errData.detail || '活動內容修改失敗，請稍後再試');
-        }
-        return;
-      }
-
-      const mgrRecord = managers.find(m => m.areaManagerName === targetMgr);
-      const res = await fetch(`${apiBase}/visit-records`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          storeName: quickScheduleType,
-          region: mgrRecord?.region || '',
-          department: mgrRecord?.department || '',
-          areaManagerName: targetMgr,
-          jobTitle: '區主管',
-          actionType: quickScheduleType,
-          expectedStayMinutes: quickScheduleDuration || 240,
-          tags: [quickScheduleType, '當日行程'],
-          immediateImprovement: quickScheduleImprovement.trim(),
-          highlightDescription: noteText,
-          abnormalFlag: false,
-          photoPairs: [],
-          createdAt: quickScheduleDate === getTaipeiTodayStr()
-            ? new Date().toISOString()
-            : new Date(`${quickScheduleDate}T09:00:00+08:00`).toISOString()
-        })
-      });
-      if (res.ok) {
-        setScheduleModalOpen(false);
-        setQuickScheduleNote('');
-        setQuickScheduleImprovement('');
-        await fetchData(true);
-      } else {
-        alert('行程登記失敗，請稍後再試');
-      }
-    } catch (e) {
-      console.error(e);
-      alert('網路連線異常，請稍後再試');
-    } finally {
-      setIsSubmittingSchedule(false);
-    }
+        : selectedManager?.areaManagerName || scheduleModalManager || managers[0]?.areaManagerName || '');
+    setScheduleModalMode('edit');
+    setScheduleModalInitialRecord(record || null);
+    setScheduleModalManager(defaultMgr);
+    setScheduleModalOpen(true);
   };
 
   const handleResolveStorePdca = async (storeName: string) => {
@@ -795,10 +593,10 @@ export const DashboardPage: React.FC = () => {
       : managers.filter(m => m.department.includes(keyword) || m.department === selectedDepartment);
     const validRawManagers = selectedManager
       ? deptManagers.filter(
-        m =>
-          normalizeRegionName(m.region) === normalizeRegionName(selectedManager.region) ||
-          m.areaManagerName === selectedManager.areaManagerName
-      )
+          m =>
+            normalizeRegionName(m.region) === normalizeRegionName(selectedManager.region) ||
+            m.areaManagerName === selectedManager.areaManagerName
+        )
       : deptManagers;
 
     const allAssignedStoresList = Array.from(new Set(validRawManagers.map(m => m.storeName)));
@@ -1275,8 +1073,8 @@ export const DashboardPage: React.FC = () => {
                   type="button"
                   onClick={() => handleTimeRangeChange(opt.id)}
                   className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${active
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                    : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
                     }`}
                 >
                   {opt.label}
@@ -1438,8 +1236,8 @@ export const DashboardPage: React.FC = () => {
                         const matchedRecord = sch.recordId
                           ? allActivities.find(a => a.recordId === sch.recordId)
                           : allActivities.find(
-                            a => a.areaManagerName === m.areaManagerName && a.actionType === sch.type
-                          );
+                              a => a.areaManagerName === m.areaManagerName && a.actionType === sch.type
+                            );
                         const canEditThis =
                           user?.role === 'admin' ||
                           user?.name === m.areaManagerName ||
@@ -1485,341 +1283,25 @@ export const DashboardPage: React.FC = () => {
               )}
             </div>
 
-            {/* 當日活動內容 新增／修改雙模式彈窗 */}
-            {scheduleModalOpen && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200 overflow-y-auto"
-                onClick={() => setScheduleModalOpen(false)}
-              >
-                <div
-                  className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-gray-100 relative my-auto max-h-[92vh] overflow-y-auto"
-                  onClick={e => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setScheduleModalOpen(false)}
-                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 cursor-pointer"
-                  >
-                    <X size={20} />
-                  </button>
-
-                  <h3 className="text-lg font-bold text-gray-900 mb-1">
-                    {scheduleModalMode === 'edit' ? '✏️ 修改當日活動內容' : '➕ 新增當日活動內容'}
-                  </h3>
-                  <p className="text-xs text-gray-500 mb-3">
-                    {scheduleModalMode === 'edit'
-                      ? '可點選下方已填寫之當日活動進行內容修改、調整時數／日期，或刪除誤填之公務行程'
-                      : '登記後將即時同步顯示於戰情牆上方、左側區主管進度與即時巡店動態牆中'}
-                  </p>
-
-                  {/* 新增 / 修改 模式切換按鈕 */}
-                  <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-xl mb-4">
-                    <button
-                      type="button"
-                      onClick={() => openCreateActivityModal(quickScheduleManager || undefined, quickScheduleType)}
-                      className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${scheduleModalMode === 'create'
-                          ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'text-gray-600 hover:text-gray-900'
-                        }`}
-                    >
-                      <span>➕ 新增當日活動內容</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEditActivityModal(undefined, quickScheduleManager || undefined)}
-                      className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${scheduleModalMode === 'edit'
-                          ? 'bg-amber-500 text-white shadow-xs'
-                          : 'text-gray-600 hover:text-gray-900'
-                        }`}
-                    >
-                      <span>✏️ 修改已填寫活動 ({editableManagerRecords.length})</span>
-                    </button>
-                  </div>
-
-                  {user?.role === 'admin' && (
-                    <div className="mb-4">
-                      <label className="block text-xs font-bold text-gray-700 mb-1.5">選擇區主管</label>
-                      <select
-                        value={quickScheduleManager}
-                        onChange={e => {
-                          const nextMgr = e.target.value;
-                          setQuickScheduleManager(nextMgr);
-                          if (scheduleModalMode === 'edit') {
-                            openEditActivityModal(undefined, nextMgr);
-                          }
-                        }}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                        {uniqueManagers.map(m => (
-                          <option key={m.areaManagerName} value={m.areaManagerName}>
-                            {m.areaManagerName}（{m.region}）
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {/* 修改模式下：列出該區主管近期已填寫之活動紀錄供選擇 */}
-                  {scheduleModalMode === 'edit' && (
-                    <div className="mb-4">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-xs font-bold text-gray-700">
-                          選擇要修改的已填寫活動紀錄
-                        </label>
-                        <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                          共 {editableManagerRecords.length} 筆可修改
-                        </span>
-                      </div>
-
-                      {editableManagerRecords.length === 0 ? (
-                        <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 text-center">
-                          <div className="text-xs font-bold text-gray-600 mb-2">
-                            目前尚無已填寫之活動紀錄可供修改
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => openCreateActivityModal(quickScheduleManager || undefined, '總部行程')}
-                            className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer"
-                          >
-                            ➕ 立即新增當日活動內容
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1 border border-gray-200 rounded-xl p-2 bg-gray-50/70">
-                          {editableManagerRecords.map(rec => {
-                            const isSelected = editingRecordId === rec.recordId;
-                            const recDate = getTaipeiDateStr(rec.createdAt).slice(5).replace('-', '/');
-                            const summaryText =
-                              rec.highlightDescription ||
-                              rec.immediateImprovement ||
-                              rec.storeName ||
-                              rec.actionType;
-                            return (
-                              <button
-                                key={rec.recordId}
-                                type="button"
-                                onClick={() => loadRecordIntoModal(rec)}
-                                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-all cursor-pointer flex items-center justify-between gap-2 border ${isSelected
-                                    ? 'bg-amber-50 border-amber-400 text-amber-950 font-bold shadow-2xs'
-                                    : 'bg-white border-gray-200/80 text-gray-700 hover:bg-indigo-50/50'
-                                  }`}
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-extrabold text-[10px]">
-                                      {recDate}
-                                    </span>
-                                    <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-800 font-bold text-[10px]">
-                                      {rec.actionType}
-                                    </span>
-                                    {!['總部行程', '會議行程', '特殊行程'].includes(rec.actionType) && (
-                                      <span className="font-extrabold text-indigo-900">
-                                        {rec.storeName}
-                                      </span>
-                                    )}
-                                    <span className="text-[11px] text-gray-500">
-                                      ({rec.areaManagerName})
-                                    </span>
-                                  </div>
-                                  <div className="truncate text-gray-700 mt-0.5">
-                                    {summaryText}
-                                  </div>
-                                </div>
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 ${isSelected
-                                      ? 'bg-amber-500 text-white'
-                                      : 'bg-gray-100 text-gray-600'
-                                    }`}
-                                >
-                                  {isSelected ? '編輯中' : '點選修改'}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {(scheduleModalMode === 'create' || editingRecordId) && (
-                    <>
-                      <div className="mb-4">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <label className="block text-xs font-bold text-gray-700">活動／行程日期</label>
-                          <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
-                            可選擇今日或往前調整日期
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-6 gap-1.5 mb-2">
-                          {[0, 1, 2, 3, 4, 5].map(daysAgo => {
-                            const dStr = shiftDateStr(getTaipeiTodayStr(), -daysAgo);
-                            const label = daysAgo === 0 ? '今日' : daysAgo === 1 ? '昨日' : `${daysAgo}天前`;
-                            const active = quickScheduleDate === dStr;
-                            return (
-                              <button
-                                key={dStr}
-                                type="button"
-                                onClick={() => setQuickScheduleDate(dStr)}
-                                className={`py-1.5 px-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${active
-                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
-                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-indigo-50'
-                                  }`}
-                              >
-                                <div>{label}</div>
-                                <div className={`text-[10px] ${active ? 'text-white/90' : 'text-gray-400'}`}>
-                                  {dStr.slice(5).replace('-', '/')}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <input
-                          type="date"
-                          max={getTaipeiTodayStr()}
-                          value={quickScheduleDate}
-                          onChange={e => {
-                            const today = getTaipeiTodayStr();
-                            const val = e.target.value || today;
-                            setQuickScheduleDate(val > today ? today : val);
-                          }}
-                          className="w-full border border-gray-200 rounded-xl px-3.5 py-2 text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-
-                      {scheduleModalMode === 'create' ||
-                        ['總部行程', '會議行程', '特殊行程'].includes(editingActionType) ? (
-                        <div className="mb-4">
-                          <label className="block text-xs font-bold text-gray-700 mb-1.5">當日活動／行程類型</label>
-                          <div className="grid grid-cols-3 gap-2">
-                            {(['總部行程', '會議行程', '特殊行程'] as const).map(t => (
-                              <button
-                                key={t}
-                                type="button"
-                                onClick={() => {
-                                  setQuickScheduleType(t);
-                                  if (scheduleModalMode === 'edit') {
-                                    setEditingActionType(t);
-                                    setEditingStoreName(t);
-                                  }
-                                }}
-                                className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${quickScheduleType === t
-                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                                    : 'bg-white text-gray-700 border-gray-200 hover:bg-indigo-50'
-                                  }`}
-                              >
-                                {t === '總部行程' ? '🏢 ' : t === '會議行程' ? '📅 ' : '⭐ '}
-                                {t}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mb-4 p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-center justify-between">
-                          <div>
-                            <div className="text-[11px] font-bold text-indigo-600">正在修改門市巡檢活動內容</div>
-                            <div className="text-sm font-extrabold text-indigo-950 mt-0.5">
-                              📍 {editingStoreName}（{editingActionType}）
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="mb-4">
-                        <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                          當日活動內容／亮點與任務說明（可點選下方快速標籤或自由輸入）
-                        </label>
-                        <div className="flex flex-wrap gap-1.5 mb-2">
-                          {['總部營運會議', '教育訓練課程', '跨區專案支援', '盤點／展店籌備', '部門主管會議'].map(preset => (
-                            <button
-                              key={preset}
-                              type="button"
-                              onClick={() => setQuickScheduleNote(preset)}
-                              className="text-[11px] px-2.5 py-1 rounded-full bg-gray-100 hover:bg-indigo-100 text-gray-700 hover:text-indigo-700 font-semibold transition-colors cursor-pointer"
-                            >
-                              {preset}
-                            </button>
-                          ))}
-                        </div>
-                        <textarea
-                          rows={2}
-                          value={quickScheduleNote}
-                          onChange={e => setQuickScheduleNote(e.target.value)}
-                          placeholder={`請輸入當日活動內容，例如：參加${quickScheduleType}、總部月會、跨店支援說明...`}
-                          className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
-                        />
-                      </div>
-
-                      {scheduleModalMode === 'edit' &&
-                        !['總部行程', '會議行程', '特殊行程'].includes(editingActionType) && (
-                          <div className="mb-4">
-                            <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                              現場改善／補充指導內容（選填）
-                            </label>
-                            <textarea
-                              rows={2}
-                              value={quickScheduleImprovement}
-                              onChange={e => setQuickScheduleImprovement(e.target.value)}
-                              placeholder="補充填寫當日現場立即改善或指導事項..."
-                              className="w-full border border-gray-200 rounded-xl px-3.5 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
-                            />
-                          </div>
-                        )}
-
-                      <div className="mb-5">
-                        <label className="block text-xs font-bold text-gray-700 mb-1.5">預計活動／停留時數</label>
-                        <div className="grid grid-cols-4 gap-2">
-                          {[
-                            { mins: 60, label: '1 小時' },
-                            { mins: 120, label: '2 小時' },
-                            { mins: 240, label: '半天 (4h)' },
-                            { mins: 480, label: '全天 (8h)' },
-                          ].map(d => (
-                            <button
-                              key={d.mins}
-                              type="button"
-                              onClick={() => setQuickScheduleDuration(d.mins)}
-                              className={`py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${quickScheduleDuration === d.mins
-                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-500'
-                                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                                }`}
-                            >
-                              {d.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        {scheduleModalMode === 'edit' &&
-                          editingRecordId &&
-                          ['總部行程', '會議行程', '特殊行程'].includes(editingActionType) && (
-                            <button
-                              type="button"
-                              disabled={isDeletingSchedule || isSubmittingSchedule}
-                              onClick={() => handleDeleteActivityRecord(editingRecordId)}
-                              className="sm:w-1/3 py-3 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                            >
-                              {isDeletingSchedule ? '刪除中...' : '🗑️ 刪除此筆行程'}
-                            </button>
-                          )}
-                        <button
-                          type="button"
-                          disabled={isSubmittingSchedule || isDeletingSchedule}
-                          onClick={handleQuickSubmitSchedule}
-                          className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white font-bold rounded-xl text-sm shadow-md transition-colors cursor-pointer"
-                        >
-                          {isSubmittingSchedule
-                            ? '正在儲存活動內容...'
-                            : scheduleModalMode === 'edit'
-                              ? '💾 儲存修改當日活動內容'
-                              : `✅ 確認新增「${quickScheduleType}」`}
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
+            {/* 當日活動內容 新增／修改雙模式彈窗（模組化組件） */}
+            <ActivityScheduleModal
+              isOpen={scheduleModalOpen}
+              onClose={() => setScheduleModalOpen(false)}
+              mode={scheduleModalMode}
+              onModeChange={setScheduleModalMode}
+              initialRecord={scheduleModalInitialRecord}
+              initialPresetType={scheduleModalPresetType}
+              targetManagerName={scheduleModalManager}
+              onManagerChange={setScheduleModalManager}
+              managers={uniqueManagers}
+              allActivities={allActivities}
+              isAdmin={user?.role === 'admin'}
+              currentUserName={user?.name}
+              onSuccess={async () => {
+                await fetchData(true);
+              }}
+              canEditRecord={canEditActivityRecord}
+            />
 
             {/* Unresolved Issues Reminder Banner (依區域清晰劃分數量與門市) */}
             {unresolvedStores.length > 0 && (
@@ -1924,98 +1406,15 @@ export const DashboardPage: React.FC = () => {
               </div>
             )}
 
-            {/* 未結案門市追蹤與結案彈窗 */}
-            {resolvingStore && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200"
-                onClick={() => setResolvingStore(null)}
-              >
-                <div
-                  className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 relative"
-                  onClick={e => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setResolvingStore(null)}
-                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100"
-                  >
-                    <X size={20} />
-                  </button>
-                  <div className="flex items-center gap-2.5 mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
-                      <AlertTriangle size={20} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-lg font-bold text-gray-900">{resolvingStore.store}</h3>
-                        {resolvingStore.region && (
-                          <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
-                            {resolvingStore.region}
-                          </span>
-                        )}
-                        {resolvingStore.areaManagerName && (
-                          <span className="text-xs font-semibold text-gray-500">
-                            (主管：{resolvingStore.areaManagerName})
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        未結案缺失追蹤 {resolvingStore.reportTime ? `· 回報時間：${resolvingStore.reportTime}` : ''}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="bg-rose-50/70 border border-rose-200 rounded-xl p-3.5 mb-5 max-h-48 overflow-y-auto">
-                    <div className="text-xs font-bold text-rose-800 mb-2">待改善 / 異常原因：</div>
-                    <ul className="space-y-1.5">
-                      {resolvingStore.reasons.map((r, i) => (
-                        <li key={i} className="text-sm text-rose-900 font-medium flex items-start gap-2">
-                          <span className="text-rose-500 mt-0.5">•</span>
-                          <span>{r}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="flex flex-col gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/audit?store=${encodeURIComponent(resolvingStore.store)}`)}
-                      className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20 transition-colors cursor-pointer"
-                    >
-                      <ClipboardSignature size={17} />
-                      前往巡店複查 / 拍照存證
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isSubmittingResolve}
-                      onClick={() => handleResolveStorePdca(resolvingStore.store)}
-                      className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20 transition-colors cursor-pointer"
-                    >
-                      <CheckCircle2 size={17} />
-                      {isSubmittingResolve ? '正在結案處理中...' : '確認現場已改善（直接結案）'}
-                    </button>
-
-                    {resolvingStore.recordId && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const targetStore = resolvingStore.store;
-                          const targetId = resolvingStore.recordId;
-                          setResolvingStore(null);
-                          handleJumpToStore(targetStore, targetId);
-                        }}
-                        className="w-full py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <Search size={14} />
-                        定位查看下方原始巡店紀錄
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* 未結案門市追蹤與結案彈窗（模組化組件） */}
+            <UnresolvedStoreModal
+              storeInfo={resolvingStore}
+              onClose={() => setResolvingStore(null)}
+              onNavigateAudit={storeName => navigate(`/audit?store=${encodeURIComponent(storeName)}`)}
+              onResolveStore={handleResolveStorePdca}
+              onJumpToStore={handleJumpToStore}
+              isSubmittingResolve={isSubmittingResolve}
+            />
 
             {activeTab === 'dashboard' ? (
               <>

@@ -7,7 +7,7 @@ export interface Manager {
   storeName: string;
   beautyLeader: string;
   managerStatus?: string;
-
+  
   // Dashboard fields calculated
   todayVisitCount?: number;
   assignedStoreCount?: number;
