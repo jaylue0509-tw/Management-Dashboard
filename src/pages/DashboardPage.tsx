@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
 import { normalizeStoreName, normalizeRegionName, compareRegion } from '../utils/store-region';
 import { MileageExpensePanel } from '../components/MileageExpensePanel';
+import { AuditRouteMapPanel } from '../components/AuditRouteMapPanel';
 import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
 import { ActivityScheduleModal, type ActivityScheduleType } from '../components/modals/ActivityScheduleModal';
 import { UnresolvedStoreModal, type ResolvingStoreInfo } from '../components/modals/UnresolvedStoreModal';
@@ -60,7 +61,9 @@ const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
 };
 
 export const DashboardPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'expense'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'route_map' | 'expense' | 'org_map' | 'map'>('dashboard');
+  const [routeMapInitialManager, setRouteMapInitialManager] = useState<string>('');
+  const [routeMapInitialDate, setRouteMapInitialDate] = useState<string>('');
   const [allActivities, setAllActivities] = useState<VisitRecord[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [actionItems, setActionItems] = useState<any[]>([]);
@@ -1009,23 +1012,24 @@ export const DashboardPage: React.FC = () => {
           <div className="flex gap-1 min-w-0 overflow-x-auto">
             {[
               { id: 'dashboard', label: '即時動態牆' },
-              { id: 'map', label: '區主管門店配置' },
+              { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
               ...(user?.role === 'admin'
                 ? [{ id: 'expense', label: '🚗 巡店車資與里程核算（最高權限）' }]
                 : []),
+              { id: 'org_map', label: '組織架構配置' },
             ].map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as 'dashboard' | 'map' | 'expense')}
+                onClick={() => setActiveTab(tab.id as 'dashboard' | 'route_map' | 'expense' | 'org_map')}
                 className="px-3 py-2.5 sm:px-4 sm:py-2.5 text-xs sm:text-[0.88rem] whitespace-nowrap cursor-pointer transition-all"
                 style={{
-                  fontWeight: activeTab === tab.id ? 700 : 500,
+                  fontWeight: activeTab === tab.id || (tab.id === 'route_map' && activeTab === 'map') ? 700 : 500,
                   background: 'none',
                   border: 'none',
-                  borderBottom: activeTab === tab.id
+                  borderBottom: activeTab === tab.id || (tab.id === 'route_map' && activeTab === 'map')
                     ? '2px solid #2563eb'
                     : '2px solid transparent',
-                  color: activeTab === tab.id
+                  color: activeTab === tab.id || (tab.id === 'route_map' && activeTab === 'map')
                     ? '#2563eb'
                     : '#9ca3af',
                   marginBottom: '-1px',
@@ -1559,6 +1563,10 @@ export const DashboardPage: React.FC = () => {
                     onScheduleSelect={handleJumpToSchedule}
                     onStatusFilterSelect={handleManagerStatusFilterSelect}
                     onOpenExpenseTab={() => setActiveTab('expense')}
+                    onOpenRouteMap={mgrName => {
+                      if (mgrName) setRouteMapInitialManager(mgrName);
+                      setActiveTab('route_map');
+                    }}
                     onAddSchedule={mgrName => openCreateActivityModal(mgrName, '總部行程')}
                     onEditSchedule={(mgrName, recordId) => {
                       const matched = recordId
@@ -1613,6 +1621,23 @@ export const DashboardPage: React.FC = () => {
                 selectedDepartment={selectedDepartment}
                 initialDateStr={customStartDate || getTaipeiTodayStr()}
                 onStoreSelect={(storeName, recordId) => {
+                  setActiveTab('dashboard');
+                  setTimeout(() => handleJumpToStore(storeName, recordId), 80);
+                }}
+                onOpenRouteMap={(managerName, dateStr) => {
+                  if (managerName) setRouteMapInitialManager(managerName);
+                  if (dateStr) setRouteMapInitialDate(dateStr);
+                  setActiveTab('route_map');
+                }}
+              />
+            ) : activeTab === 'route_map' || activeTab === 'map' ? (
+              <AuditRouteMapPanel
+                allActivities={allActivities}
+                managers={managers}
+                selectedDepartment={selectedDepartment}
+                initialDateStr={routeMapInitialDate || customStartDate || getTaipeiTodayStr()}
+                initialManagerName={routeMapInitialManager}
+                onJumpToActivity={(storeName, recordId) => {
                   setActiveTab('dashboard');
                   setTimeout(() => handleJumpToStore(storeName, recordId), 80);
                 }}

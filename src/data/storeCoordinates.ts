@@ -34,7 +34,7 @@ export const REGION_HUB_POINTS: Record<string, GeoPoint> = {
 /**
  * 全台各門市實際行政區與路段座標（依正規化門市名稱索引，不含結尾「店」字）
  */
-const RAW_STORE_COORDINATES: Record<string, { lat: number; lng: number; isOffshore?: boolean }> = {
+export const RAW_STORE_COORDINATES: Record<string, { lat: number; lng: number; isOffshore?: boolean }> = {
   // 新北區 (8 店)
   板橋雨農: { lat: 25.0252, lng: 121.4596 },
   新北八里: { lat: 25.1468, lng: 121.4015 },

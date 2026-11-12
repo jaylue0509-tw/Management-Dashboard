@@ -27,6 +27,7 @@ interface Props {
   selectedDepartment: string;
   initialDateStr: string;
   onStoreSelect?: (storeName: string, recordId?: string) => void;
+  onOpenRouteMap?: (managerName: string, dateStr?: string) => void;
 }
 
 const ALL_REGIONS = '全部區域';
@@ -40,7 +41,8 @@ const formatCurrency = (amount: number): string =>
 const RouteLegTimeline: React.FC<{
   route: DailyRouteRecord;
   onStoreSelect?: (storeName: string, recordId?: string) => void;
-}> = ({ route, onStoreSelect }) => (
+  onOpenRouteMap?: (managerName: string, dateStr?: string) => void;
+}> = ({ route, onStoreSelect, onOpenRouteMap }) => (
   <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs">
     <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2.5 border-b border-slate-100">
       <div className="flex items-center gap-2 flex-wrap">
@@ -52,13 +54,23 @@ const RouteLegTimeline: React.FC<{
           {route.scheduleCount > 0 ? ` · 公務行程 ${route.scheduleCount} 筆` : ''}
         </span>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5 flex-wrap">
         <span className="text-xs font-bold text-slate-600">
           單日里程：<strong className="text-blue-700">{route.totalKm.toFixed(1)} km</strong>
         </span>
         <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-extrabold">
           單日車資：{formatCurrency(route.totalSubsidy)}
         </span>
+        {onOpenRouteMap && (
+          <button
+            type="button"
+            onClick={() => onOpenRouteMap(route.managerName, route.dateStr)}
+            className="text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+            title="在地圖上查看此路徑與最佳化建議"
+          >
+            <span>🗺️ 查看地圖路徑</span>
+          </button>
+        )}
       </div>
     </div>
 
@@ -116,6 +128,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
   selectedDepartment,
   initialDateStr,
   onStoreSelect,
+  onOpenRouteMap,
 }) => {
   const { user } = useAuth();
   const [targetDateStr, setTargetDateStr] = useState<string>(initialDateStr);
@@ -622,6 +635,18 @@ export const MileageExpensePanel: React.FC<Props> = ({
                             路線：{m.dayRoute.visitedStores.join(' ➔ ')}
                           </div>
                         )}
+                        {onOpenRouteMap && m.dayRoute && m.dayRoute.visitedStores.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenRouteMap(m.managerName, targetDateStr);
+                            }}
+                            className="mt-1.5 text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-white border border-blue-200 px-2 py-0.5 rounded shadow-2xs hover:bg-blue-50 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>🗺️ 地圖路徑與最佳化</span>
+                          </button>
+                        )}
                       </div>
                       <div className="text-right shrink-0">
                         <div
@@ -710,6 +735,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                             key={route.dateStr}
                             route={route}
                             onStoreSelect={onStoreSelect}
+                            onOpenRouteMap={onOpenRouteMap}
                           />
                         ))}
                       </div>

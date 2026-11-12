@@ -31,6 +31,7 @@ interface Props {
   onScheduleSelect?: (managerName: string, scheduleType?: string) => void;
   onStatusFilterSelect?: (filter: ManagerStatusFilter, matchedManagers: Manager[]) => void;
   onOpenExpenseTab?: (managerName: string) => void;
+  onOpenRouteMap?: (managerName: string) => void;
   onAddSchedule?: (managerName: string) => void;
   onEditSchedule?: (managerName: string, recordId?: string) => void;
 }
@@ -44,6 +45,7 @@ export const ManagerList: React.FC<Props> = ({
   onScheduleSelect,
   onStatusFilterSelect,
   onOpenExpenseTab,
+  onOpenRouteMap,
   onAddSchedule,
   onEditSchedule,
 }) => {
@@ -623,11 +625,27 @@ export const ManagerList: React.FC<Props> = ({
                         ({(manager.dayEstimatedKm || 0).toFixed(1)}km)
                       </span>
                     </span>
-                    <span>
-                      當月加總：
-                      <strong className="text-emerald-700">
-                        ${(manager.monthEstimatedSubsidy || 0).toLocaleString()}
-                      </strong>
+                    <span className="flex items-center gap-1.5">
+                      <span>
+                        當月加總：
+                        <strong className="text-emerald-700">
+                          ${(manager.monthEstimatedSubsidy || 0).toLocaleString()}
+                        </strong>
+                      </span>
+                      {onOpenRouteMap && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={e => {
+                            e.stopPropagation();
+                            onOpenRouteMap(manager.areaManagerName);
+                          }}
+                          className="px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] transition-colors cursor-pointer"
+                          title="在地圖上查看此主管巡店路線與最佳化建議"
+                        >
+                          🗺️ 地圖
+                        </span>
+                      )}
                     </span>
                   </div>
                 )}
