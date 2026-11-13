@@ -133,6 +133,18 @@ export const AuditApp = () => {
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
   const [multiDrafts, setMultiDrafts] = useState<Record<string, any>>({});
 
+  // 監聽 Escape 鍵快速關閉照片全螢幕預覽燈箱
+  useEffect(() => {
+    if (!previewPhotoUrl) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPreviewPhotoUrl(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewPhotoUrl]);
+
   // 監聽離線與上線事件
   useEffect(() => {
     const handleOnline = () => {
@@ -912,7 +924,7 @@ export const AuditApp = () => {
     } else {
       setCurrentStep(prev => Math.min(prev + 1, totalSteps));
     }
-    window.scrollTo(0, 0);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handlePrev = () => {
@@ -921,7 +933,7 @@ export const AuditApp = () => {
     } else {
       setCurrentStep(prev => Math.max(prev - 1, 1));
     }
-    window.scrollTo(0, 0);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // --- Render Sections ---
@@ -2446,11 +2458,11 @@ export const AuditApp = () => {
                     if (item.step > 2 && Object.keys(coreChecks).length < 3) {
                       alert('請先完成步驟 2 必看核心底線（共 3 項）');
                       setCurrentStep(2);
-                      window.scrollTo(0, 0);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
                       return;
                     }
                     setCurrentStep(item.step);
-                    window.scrollTo(0, 0);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
                   className={`py-1.5 px-1 rounded-lg text-[11px] sm:text-xs font-bold border transition-all cursor-pointer truncate ${
                     isSkipped || (taskType !== '實地巡店' && item.step > 1)

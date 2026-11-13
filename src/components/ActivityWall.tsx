@@ -97,6 +97,19 @@ export const ActivityWall: React.FC<Props> = ({
     }
   }, [externalFilter]);
 
+  // 按下 Escape 鍵快速關閉照片放大燈箱
+  useEffect(() => {
+    if (!lightboxImage && !lightboxPair) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setLightboxImage(null);
+        setLightboxPair(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxImage, lightboxPair]);
+
   const toggleExpand = (id: string) => {
     setExpandAll(false);
     setExpandedId(prev => prev === id ? null : id);

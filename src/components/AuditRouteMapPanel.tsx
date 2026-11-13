@@ -366,6 +366,61 @@ export const AuditRouteMapPanel: React.FC<Props> = ({
                 </div>
               )}
             </div>
+
+            {/* 實際順序 vs 建議最佳順序 直觀對比列（僅在有優化空間時顯示，點選站點可連動定位） */}
+            {canOptimize && (
+              <div className="mt-3 pt-3 border-t border-amber-200/70 grid grid-cols-1 xl:grid-cols-2 gap-2.5">
+                <div className="bg-white/85 border border-blue-100 rounded-xl px-3 py-2 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md shrink-0">
+                    實際順序
+                  </span>
+                  {analysis.actualStops.map((stop, idx) => (
+                    <React.Fragment key={`cmp-act-${stop.id}`}>
+                      {idx > 0 && <ArrowRight size={11} className="text-slate-300 shrink-0" />}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setViewMode('actual');
+                          setSelectedStopId(stop.id);
+                        }}
+                        className={`text-[11px] px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer ${
+                          selectedStopId === stop.id && !isOptimalView
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700'
+                        }`}
+                      >
+                        {stop.orderIndex}. {stop.storeName}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+
+                <div className="bg-white/85 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md shrink-0">
+                    建議最佳順序
+                  </span>
+                  {analysis.optimalStops.map((stop, idx) => (
+                    <React.Fragment key={`cmp-opt-${stop.id}`}>
+                      {idx > 0 && <ArrowRight size={11} className="text-emerald-300 shrink-0" />}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setViewMode('optimal');
+                          setSelectedStopId(stop.id);
+                        }}
+                        className={`text-[11px] px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer ${
+                          selectedStopId === stop.id && isOptimalView
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100'
+                        }`}
+                      >
+                        {stop.orderIndex}. {stop.storeName}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 主畫面：左側無水印真實街道地圖 (7 Cols) + 右側巡店時間軸 (5 Cols) */}
@@ -379,6 +434,7 @@ export const AuditRouteMapPanel: React.FC<Props> = ({
                 color={routeColor}
                 selectedStopId={selectedStopId}
                 onSelectStop={setSelectedStopId}
+                onJumpToActivity={onJumpToActivity}
                 height={580}
               />
               <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">

@@ -7,7 +7,7 @@ import { ManagerList, type ManagerStatusFilter } from '../components/ManagerList
 import { OrganizationMap } from '../components/OrganizationMap';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
 import { getDashboardData } from '../api/api';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ArrowUp } from 'lucide-react';
 import { CoverageRadarChart } from '../components/charts/CoverageRadarChart';
 import { IssuePieChart } from '../components/charts/IssuePieChart';
 import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
@@ -80,6 +80,8 @@ export const DashboardPage: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string>('');
+  const [showBackToTop, setShowBackToTop] = useState<boolean>(false);
   const [resolvingStore, setResolvingStore] = useState<ResolvingStoreInfo | null>(null);
   const [isSubmittingResolve, setIsSubmittingResolve] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
@@ -264,6 +266,15 @@ export const DashboardPage: React.FC = () => {
         setManagers(validManagers);
         setAllActivities(validActivities);
         setActionItems(validActionItems);
+        setLastUpdatedAt(
+          new Date().toLocaleTimeString('zh-TW', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            timeZone: 'Asia/Taipei',
+          })
+        );
       }
     } catch (err) {
       console.error("Failed to load dashboard data", err);
@@ -282,6 +293,15 @@ export const DashboardPage: React.FC = () => {
     }, 300000);
 
     return () => clearInterval(intervalId);
+  }, []);
+
+  // 監聽頁面捲動距離，顯示快速回到頂部懸浮按鈕
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowBackToTop(window.scrollY > 400);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   const adminExpenseReport = useMemo(() => {
@@ -1040,26 +1060,34 @@ export const DashboardPage: React.FC = () => {
             ))}
           </div>
 
-          {/* Refresh Button */}
-          <button
-            onClick={() => fetchData(true)}
-            disabled={isRefreshing}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-lg text-xs font-semibold mb-1.5 shrink-0 whitespace-nowrap"
-            style={{
-              background: '#f9fafb',
-              color: isRefreshing ? '#d1d5db' : '#6b7280',
-              border: '1px solid #e5e7eb',
-              cursor: isRefreshing ? 'not-allowed' : 'pointer',
-              transition: 'all 0.15s',
-            }}
-          >
-            <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
-            {isRefreshing ? '更新中...' : '立即更新'}
-          </button>
+          {/* Refresh Button & Updated Timestamp */}
+          <div className="flex items-center gap-2 mb-1.5 shrink-0">
+            {lastUpdatedAt && (
+              <span className="text-[11px] text-gray-400 font-medium hidden sm:inline whitespace-nowrap">
+                更新於 {lastUpdatedAt}
+              </span>
+            )}
+            <button
+              onClick={() => fetchData(true)}
+              disabled={isRefreshing}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-lg text-xs font-semibold shrink-0 whitespace-nowrap"
+              style={{
+                background: '#f9fafb',
+                color: isRefreshing ? '#d1d5db' : '#6b7280',
+                border: '1px solid #e5e7eb',
+                cursor: isRefreshing ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+              {isRefreshing ? '更新中...' : '立即更新'}
+            </button>
+          </div>
         </div>
 
-        {/* 時間區間（今日／本週／上週／本月／全部）與自選日期快速篩選列 */}
-        <div className="mb-3.5 sm:mb-4 bg-white border border-gray-200 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
+        {/* 僅在「巡店與異常戰情儀表板」分頁顯示全域時間篩選列，避免與地圖／車資分頁的單日選擇器重複混淆 */}
+        {activeTab === 'dashboard' && (
+          <div className="mb-3.5 sm:mb-4 bg-white border border-gray-200 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
           {/* 左側：今日 / 本週 / 上週 / 本月 / 自選日期 / 所有紀錄 快速切換 */}
           <div className="flex items-center gap-1.5 flex-wrap w-full sm:w-auto">
             {([
@@ -1183,6 +1211,7 @@ export const DashboardPage: React.FC = () => {
             )}
           </div>
         </div>
+        )}
 
         {loading ? (
           <DashboardSkeleton />
@@ -1648,6 +1677,20 @@ export const DashboardPage: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* 長頁面快速回到頂部懸浮按鈕 */}
+      {showBackToTop && (
+        <button
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="fixed bottom-6 right-5 z-40 flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-slate-900/90 hover:bg-slate-900 text-white text-xs font-extrabold shadow-lg border border-slate-700/60 backdrop-blur-xs transition-all cursor-pointer"
+          title="回到頁面頂部"
+          aria-label="回到頂部"
+        >
+          <ArrowUp size={14} />
+          <span>回到頂部</span>
+        </button>
+      )}
     </div>
   );
 };
