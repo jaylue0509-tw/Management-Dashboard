@@ -31,9 +31,11 @@ export const formatStopForGoogleMaps = (label: string, fallbackPt?: GeoPoint): s
     if (detail) return detail;
   }
 
-  const looksLikeAddress = /[市縣區鄉鎮路街道段巷弄號車站機場大樓館中心]/.test(clean);
-  if (!looksLikeAddress && clean.length <= 12) {
-    return `東森寵物 ${clean}`;
+  // 僅當文字包含實際門牌路名或交通地標詞彙時才視為完整地址（避免「中正」「中山」等字誤判為地址而漏加「東森寵物」）
+  const looksLikeAddress = /(?:路|街|大道|段|巷|弄|號|車站|高鐵|捷運|機場|大樓|中心|園區|醫院|學校|大學)/.test(clean);
+  if (!looksLikeAddress && clean.length <= 14) {
+    const storeLabel = clean.endsWith('店') ? clean : `${clean}店`;
+    return `東森寵物 ${storeLabel}`;
   }
 
   return clean;

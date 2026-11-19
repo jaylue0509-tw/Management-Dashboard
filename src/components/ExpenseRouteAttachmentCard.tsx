@@ -8,17 +8,12 @@ import {
   ZoomIn,
   Loader2,
   Plus,
-  RefreshCw,
-  Map as MapIcon,
-  Image as ImageIcon,
 } from 'lucide-react';
 import type { GeoPoint } from '../data/storeCoordinates';
 import {
   buildGoogleMapsDirectionsUrl,
-  buildGoogleMapsEmbedUrl,
   captureScreenSnapshot,
   compressScreenshotFile,
-  verifyRouteViaGoogleMapsApi,
 } from '../utils/road-routing';
 
 export type VerificationStatus = 'pending_screenshot' | 'google_verified';
@@ -54,7 +49,8 @@ interface ExpenseRouteAttachmentCardProps {
 }
 
 /**
- * 報核單極簡附件卡：直接內嵌連動真實 Google Maps，並支援一鍵同步官方距離與貼上截圖
+ * 報核單極簡附件卡：
+ * 一鍵開啟真實 Google Maps 完整路線視窗（含左側路線時間公里＋右側地圖）並一鍵截圖存為正式附件
  */
 export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProps> = ({
   index,
@@ -69,30 +65,17 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
   onUpdateEvidence,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const popupRef = useRef<Window | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
-  const [isSyncingApi, setIsSyncingApi] = useState(false);
-  const [viewMode, setViewMode] = useState<'auto' | 'embed' | 'screenshot'>('auto');
-  const [notice, setNotice] = useState<string>('');
+  const [hasOpenedMap, setHasOpenedMap] = useState(false);
 
   const googleUrl = useMemo(
     () => buildGoogleMapsDirectionsUrl(evidence.waypoints, vehicleType, evidence.stopLabels),
     [evidence.waypoints, vehicleType, evidence.stopLabels]
   );
 
-  const googleEmbedUrl = useMemo(
-    () => buildGoogleMapsEmbedUrl(evidence.waypoints, evidence.stopLabels),
-    [evidence.waypoints, evidence.stopLabels]
-  );
-
   const hasScreenshots = evidence.googleScreenshots.length > 0;
-  const showScreenshot =
-    hasScreenshots && (viewMode === 'screenshot' || viewMode === 'auto');
-
-  const showTempNotice = (text: string) => {
-    setNotice(text);
-    window.setTimeout(() => setNotice(''), 4500);
-  };
 
   const handleFiles = async (files: FileList | File[]) => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
@@ -107,7 +90,6 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
         googleScreenshots: nextList,
         verificationStatus: 'google_verified',
       });
-      setViewMode('screenshot');
     } catch {
       // 忽略無效圖檔
     }
@@ -129,45 +111,23 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
     }
   };
 
-  const handleSyncGoogleMapsApi = async () => {
-    const stops = evidence.stopLabels.map(s => s.trim()).filter(Boolean);
-    if (stops.length < 2) {
-      showTempNotice('此行程缺少起訖地點，請先於主表確認地址');
-      return;
-    }
-    setIsSyncingApi(true);
-    setNotice('');
-    try {
-      const res = await verifyRouteViaGoogleMapsApi(stops, vehicleType);
-      if (!res.ok) {
-        showTempNotice(
-          res.missingKey
-            ? '後端尚未設定 GOOGLE_MAPS_API_KEY，已可直接從下方即時 Google 地圖查看或按「Google Maps ↗」核對'
-            : res.message
-        );
-        return;
-      }
-
-      const nextShots = res.data.staticMapDataUrl
-        ? [res.data.staticMapDataUrl, ...evidence.googleScreenshots.filter(s => s !== res.data.staticMapDataUrl)]
-        : evidence.googleScreenshots;
-
-      onUpdateEvidence({
-        actualKm: res.data.distanceKm,
-        durationMin: res.data.durationMin,
-        viaRoad: res.data.viaRoad,
-        googleScreenshots: nextShots,
-        verificationStatus: 'google_verified',
-      });
-      if (res.data.staticMapDataUrl) setViewMode('screenshot');
-      showTempNotice(`已同步 Google Maps 官方距離：${res.data.distanceKm} 公里（約 ${res.data.durationMin} 分）`);
-    } finally {
-      setIsSyncingApi(false);
-    }
+  /**
+   * 以最佳比例 (1360×820) 開啟完整 Google Maps 路線視窗（左側起訖時間公里面板＋右側地圖）
+   */
+  const handleOpenGoogleMapsPopup = () => {
+    const win = window.open(
+      googleUrl,
+      `gmap_verify_${dateStr}`,
+      'width=1360,height=820,left=60,top=40,noopener=no'
+    );
+    popupRef.current = win;
+    setHasOpenedMap(true);
   };
 
-  const handleOneClickCapture = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  /**
+   * 一鍵截圖 Google Maps 視窗／分頁並自動存入本筆附件（完成後自動關閉剛開啟之視窗）
+   */
+  const handleOneClickCapture = async () => {
     setIsCapturing(true);
     try {
       const dataUrl = await captureScreenSnapshot();
@@ -176,10 +136,17 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
           googleScreenshots: [...evidence.googleScreenshots, dataUrl],
           verificationStatus: 'google_verified',
         });
-        setViewMode('screenshot');
+        setHasOpenedMap(false);
+        if (popupRef.current && !popupRef.current.closed) {
+          try {
+            popupRef.current.close();
+          } catch {
+            // 跨網域視窗若無法自動關閉則忽略
+          }
+        }
       }
     } catch {
-      // 使用者取消視窗選擇
+      // 使用者取消視窗選擇時靜默返回
     } finally {
       setIsCapturing(false);
     }
@@ -203,7 +170,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
           : 'border-slate-200 hover:border-blue-300 focus:border-blue-500'
       }`}
     >
-      {/* 極簡標題與 Google Maps 連動工具列 */}
+      {/* 極簡單行標題與連動公里數列 */}
       <div className="bg-slate-50 border-b border-slate-200 px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="px-2 py-0.5 rounded bg-slate-900 text-white text-xs font-extrabold shrink-0">
@@ -213,7 +180,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
             {dateStr}
           </span>
           {routeSummaryText && (
-            <span className="text-xs text-slate-500 truncate max-w-[300px]" title={routeSummaryText}>
+            <span className="text-xs text-slate-500 truncate max-w-[360px]" title={routeSummaryText}>
               {routeSummaryText}
             </span>
           )}
@@ -221,7 +188,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          {/* 公里數與油資連動 */}
+          {/* 實際公里數輸入（即時連動報核單主表油資與大寫金額） */}
           <div className="inline-flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-2 py-0.5">
             <input
               type="number"
@@ -234,7 +201,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
                 })
               }
               className="w-14 text-right text-xs font-extrabold text-blue-700 outline-none tabular-nums"
-              title="實際公里數（修改即即時連動主報核單）"
+              title="依 Google Maps 截圖輸入公里數（立即連動主報核單）"
             />
             <span className="text-[11px] font-bold text-slate-500">km</span>
             <span className="text-[11px] font-extrabold text-emerald-700 pl-1 border-l border-slate-200">
@@ -243,53 +210,30 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
             <span className="text-[10px] text-slate-400">(@{ratePerKm})</span>
           </div>
 
-          {/* 切換即時 Google 地圖 / 已貼截圖 */}
-          {hasScreenshots && googleEmbedUrl && (
-            <div className="inline-flex rounded-lg bg-slate-200/70 p-0.5">
-              <button
-                type="button"
-                onClick={() => setViewMode('screenshot')}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                  showScreenshot ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                <ImageIcon size={11} />
-                <span>截圖</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('embed')}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                  !showScreenshot ? 'bg-white text-blue-700 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                <MapIcon size={11} />
-                <span>即時地圖</span>
-              </button>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={handleOpenGoogleMapsPopup}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold cursor-pointer transition-colors"
+            title="開啟完整 Google Maps 路線視窗（含左側路線時間公里＋右側地圖）"
+          >
+            <ExternalLink size={12} />
+            <span>開啟 Google Maps</span>
+          </button>
 
           <button
             type="button"
-            onClick={handleSyncGoogleMapsApi}
-            disabled={isSyncingApi}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60 text-emerald-800 border border-emerald-200 text-xs font-bold cursor-pointer transition-colors"
-            title="透過後端 Google Maps Directions API 自動抓取官方距離與路線圖"
+            onClick={handleOneClickCapture}
+            disabled={isCapturing}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-white text-xs font-extrabold cursor-pointer transition-all ${
+              hasOpenedMap
+                ? 'bg-indigo-600 hover:bg-indigo-700 ring-2 ring-indigo-300'
+                : 'bg-slate-900 hover:bg-slate-800'
+            }`}
+            title="點選剛開啟的 Google Maps 視窗／分頁，一鍵截圖存成附件"
           >
-            {isSyncingApi ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-            <span>自動抓距離</span>
+            {isCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+            <span>{isCapturing ? '截圖中...' : '一鍵截圖'}</span>
           </button>
-
-          <a
-            href={googleUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition-colors"
-            title="於新分頁開啟完整 Google Maps 路線"
-          >
-            <ExternalLink size={12} />
-            <span>Google Maps</span>
-          </a>
 
           <input
             ref={fileInputRef}
@@ -305,15 +249,15 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer transition-colors"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold cursor-pointer"
+            title="上傳圖片檔"
           >
             <Upload size={12} />
-            <span>{hasScreenshots ? '加貼截圖' : '上傳截圖'}</span>
           </button>
         </div>
       </div>
 
-      {/* 主體附件區：直接呈現真實 Google Maps 內嵌地圖，或顯示已貼上／API 抓回之截圖 */}
+      {/* 純粹附件截圖展示／擷取區 */}
       <div
         onDragOver={e => {
           e.preventDefault();
@@ -325,15 +269,9 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
           setIsDragging(false);
           if (e.dataTransfer.files) handleFiles(e.dataTransfer.files);
         }}
-        className={`p-3 space-y-2 transition-colors ${isDragging ? 'bg-blue-50' : 'bg-white'}`}
+        className={`p-3 transition-colors ${isDragging ? 'bg-blue-50' : 'bg-white'}`}
       >
-        {notice && (
-          <div className="text-[11px] font-bold text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
-            {notice}
-          </div>
-        )}
-
-        {showScreenshot ? (
+        {hasScreenshots ? (
           <div
             className={`grid gap-3 ${
               evidence.googleScreenshots.length > 1 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'
@@ -348,14 +286,14 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
                   src={dataUrl}
                   alt={`附件_${index + 1}_${dateStr}_${imgIdx + 1}`}
                   onClick={() => onPreviewImage?.(dataUrl)}
-                  className="w-full max-h-[420px] object-contain cursor-zoom-in mx-auto"
+                  className="w-full max-h-[440px] object-contain cursor-zoom-in mx-auto"
                 />
                 <div className="absolute top-2 right-2 flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-1.5 rounded-lg bg-slate-900/70 hover:bg-slate-900 text-white shadow cursor-pointer"
-                    title="加貼一張截圖"
+                    onClick={handleOneClickCapture}
+                    className="p-1.5 rounded-lg bg-indigo-600/85 hover:bg-indigo-700 text-white shadow cursor-pointer"
+                    title="再一鍵截圖一張"
                   >
                     <Plus size={13} />
                   </button>
@@ -381,41 +319,38 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
               </div>
             ))}
           </div>
-        ) : googleEmbedUrl ? (
-          /* 直接內嵌真實 Google Maps 路線視窗 */
-          <div className="space-y-2">
-            <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
-              <iframe
-                src={googleEmbedUrl}
-                title={`Google Maps 路線_${dateStr}`}
-                className="w-full h-[360px] border-0 block"
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-                allowFullScreen
-              />
-            </div>
+        ) : (
+          <div className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/60 py-7 px-4 flex flex-col items-center justify-center gap-3 text-center">
+            <div className="flex flex-wrap items-center justify-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleOpenGoogleMapsPopup}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold shadow-xs cursor-pointer transition-colors"
+              >
+                <ExternalLink size={14} />
+                <span>① 開啟 Google Maps 路線視窗</span>
+              </button>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 px-0.5">
-              <span>
-                點選本卡片按 <kbd className="px-1 bg-slate-100 border border-slate-300 rounded text-slate-700 font-bold">Ctrl+V</kbd> 或拖曳圖片，即可將截圖存為列印／Word 附件原圖
-              </span>
               <button
                 type="button"
                 onClick={handleOneClickCapture}
                 disabled={isCapturing}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold cursor-pointer"
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-extrabold shadow-xs cursor-pointer transition-all ${
+                  hasOpenedMap
+                    ? 'bg-emerald-600 hover:bg-emerald-700 ring-4 ring-emerald-200'
+                    : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}
               >
-                {isCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
-                <span>{isCapturing ? '擷取中...' : '擷取此畫面為附件圖'}</span>
+                {isCapturing ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                <span>{isCapturing ? '擷取中...' : '② 一鍵截圖 Google Maps 放進附件'}</span>
               </button>
             </div>
-          </div>
-        ) : (
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/60 hover:border-blue-400 py-8 px-4 text-center text-xs font-bold text-slate-500 cursor-pointer"
-          >
-            點擊上傳、拖曳圖片，或按 Ctrl+V 直接貼上 Google Maps 截圖
+
+            <div className="text-[11px] text-slate-500">
+              待 Google Maps 顯示路線公里數後按「<strong>② 一鍵截圖</strong>」選擇該視窗即可自動存為附件；或直接按{' '}
+              <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-slate-700 font-bold">Ctrl+V</kbd>{' '}
+              貼上／拖曳圖片至此
+            </div>
           </div>
         )}
       </div>
