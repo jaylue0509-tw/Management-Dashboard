@@ -152,6 +152,9 @@ export const MileageExpensePanel: React.FC<Props> = ({
   onOpenRouteMap,
 }) => {
   const { user } = useAuth();
+  const isManagerOnly = user?.role === 'manager';
+  const restrictToManagerName = isManagerOnly ? user?.name : undefined;
+
   const [targetDateStr, setTargetDateStr] = useState<string>(initialDateStr);
   const [targetMonthKey, setTargetMonthKey] = useState<string>(initialDateStr.slice(0, 7));
   const [ratePerKm, setRatePerKm] = useState<number>(DEFAULT_SUBSIDY_PER_KM);
@@ -159,13 +162,23 @@ export const MileageExpensePanel: React.FC<Props> = ({
   const [includeSchedule, setIncludeSchedule] = useState<boolean>(true);
   const [selectedRegion, setSelectedRegion] = useState<string>(ALL_REGIONS);
   const [keyword, setKeyword] = useState<string>('');
-  const [expandedManager, setExpandedManager] = useState<string | null>(null);
+  const [expandedManager, setExpandedManager] = useState<string | null>(() =>
+    user?.role === 'manager' ? user.name : null
+  );
   const [onlyShowActive, setOnlyShowActive] = useState<boolean>(false);
 
-  // 自訂出發起始點地址狀態（支援全體通用或個別主管專屬設定，自動持久化至 localStorage）
+  // 自訂出發起始點地址狀態（區主管僅能設定與檢視本人專屬起點）
   const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
-  const [hubTargetScope, setHubTargetScope] = useState<string>('__global__');
-  const [addressInput, setAddressInput] = useState<string>(() => loadCustomHubPoints().global?.address || '');
+  const [hubTargetScope, setHubTargetScope] = useState<string>(() =>
+    user?.role === 'manager' && user.name ? user.name : '__global__'
+  );
+  const [addressInput, setAddressInput] = useState<string>(() => {
+    const hubs = loadCustomHubPoints();
+    if (user?.role === 'manager' && user.name) {
+      return hubs.byManager[user.name]?.address || '';
+    }
+    return hubs.global?.address || '';
+  });
   const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
   const [geocodeStatus, setGeocodeStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -302,6 +315,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
         includeSchedule,
         customHubPointsByManager,
         globalCustomHubPoint,
+        restrictToManagerName,
       }),
     [
       allActivities,
@@ -315,6 +329,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
       includeSchedule,
       customHubPointsByManager,
       globalCustomHubPoint,
+      restrictToManagerName,
     ]
   );
 
@@ -329,9 +344,11 @@ export const MileageExpensePanel: React.FC<Props> = ({
   const visibleManagers = useMemo(() => {
     const q = keyword.trim().toLowerCase();
     return report.managersReport.filter(m => {
-      if (selectedRegion !== ALL_REGIONS && m.region !== selectedRegion) return false;
-      if (onlyShowActive && m.dayKm === 0 && m.monthKm === 0) return false;
+      if (isManagerOnly && m.managerName !== user?.name) return false;
+      if (!isManagerOnly && selectedRegion !== ALL_REGIONS && m.region !== selectedRegion) return false;
+      if (!isManagerOnly && onlyShowActive && m.dayKm === 0 && m.monthKm === 0) return false;
       if (
+        !isManagerOnly &&
         q &&
         !m.managerName.toLowerCase().includes(q) &&
         !m.region.toLowerCase().includes(q) &&
@@ -341,10 +358,9 @@ export const MileageExpensePanel: React.FC<Props> = ({
       }
       return true;
     });
-  }, [report.managersReport, selectedRegion, onlyShowActive, keyword]);
+  }, [report.managersReport, isManagerOnly, user?.name, selectedRegion, onlyShowActive, keyword]);
 
-  // 嚴格權限防護：僅最高管理員 (admin) 可見
-  if (user?.role !== 'admin') return null;
+  if (!user) return null;
 
   const handleExportCsv = () => {
     const headers = [
@@ -425,38 +441,43 @@ export const MileageExpensePanel: React.FC<Props> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-400 text-slate-950">
-                  <ShieldCheck size={13} /> 最高管理權限專屬
+                  <ShieldCheck size={13} /> {isManagerOnly ? '區主管個人專屬' : '最高管理權限'}
                 </span>
-                <h2 className="text-lg sm:text-xl font-extrabold tracking-tight text-white">
-                  區主管巡店車程里程與預估車資補助中心
+                <h2 className="text-base sm:text-xl font-extrabold tracking-tight text-white">
+                  {isManagerOnly
+                    ? `${user.name} 個人巡店車程里程與零用金單據黏存單中心`
+                    : '區主管巡店車程里程與零用金單據黏存單中心'}
                 </h2>
               </div>
               <p className="text-xs sm:text-sm text-indigo-200 mt-1">
-                依據每位區主管每日巡店先後順序與台灣各門市實際地理座標，自動推算行車路線里程 × 汽車每公里補助{' '}
+                依據每日巡店先後順序與台灣各門市實際地理座標，自動推算點對點行車路線里程 × 每公里補助{' '}
                 <strong className="text-amber-300">{ratePerKm} 元</strong>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
             <button
               type="button"
               onClick={() =>
                 setReimbursementModal({
                   open: true,
-                  managerName: visibleManagers[0]?.managerName || report.managersReport[0]?.managerName || '',
+                  managerName:
+                    (isManagerOnly ? user.name : visibleManagers[0]?.managerName) ||
+                    report.managersReport[0]?.managerName ||
+                    '',
                   scope: 'month',
                 })
               }
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs sm:text-sm font-extrabold shadow-md cursor-pointer transition-all"
+              className="flex-1 sm:flex-initial justify-center inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs sm:text-sm font-extrabold shadow-md cursor-pointer transition-all"
             >
               <FileSpreadsheet size={16} />
-              <span>產生《國內出差旅費報核單》</span>
+              <span>產生《零用金單據黏存單》</span>
             </button>
             <button
               type="button"
               onClick={handleExportCsv}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs sm:text-sm font-extrabold shadow-md cursor-pointer transition-all"
+              className="flex-1 sm:flex-initial justify-center inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs sm:text-sm font-extrabold shadow-md cursor-pointer transition-all"
             >
               <Download size={16} />
               <span>匯出 CSV 報表</span>
@@ -600,18 +621,24 @@ export const MileageExpensePanel: React.FC<Props> = ({
             </div>
 
             <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
-              <select
-                value={hubTargetScope}
-                onChange={e => handleSelectHubTargetScope(e.target.value)}
-                className="bg-slate-900/90 text-white text-xs font-bold rounded-lg px-3 py-2 border border-white/20 outline-none focus:border-amber-400 cursor-pointer md:w-56 shrink-0"
-              >
-                <option value="__global__">🌐 套用對象：全體主管通用起點</option>
-                {report.managersReport.map(m => (
-                  <option key={`hub-opt-${m.managerName}`} value={m.managerName}>
-                    👤 專屬起點：{m.managerName}（{m.region}）
-                  </option>
-                ))}
-              </select>
+              {isManagerOnly ? (
+                <div className="bg-slate-900/90 text-amber-300 text-xs font-extrabold rounded-lg px-3 py-2.5 border border-white/20 md:w-52 shrink-0 flex items-center gap-1.5">
+                  <span>👤 專屬起點：{user.name}</span>
+                </div>
+              ) : (
+                <select
+                  value={hubTargetScope}
+                  onChange={e => handleSelectHubTargetScope(e.target.value)}
+                  className="bg-slate-900/90 text-white text-xs font-bold rounded-lg px-3 py-2.5 border border-white/20 outline-none focus:border-amber-400 cursor-pointer md:w-56 shrink-0"
+                >
+                  <option value="__global__">🌐 套用對象：全體主管通用起點</option>
+                  {report.managersReport.map(m => (
+                    <option key={`hub-opt-${m.managerName}`} value={m.managerName}>
+                      👤 專屬起點：{m.managerName}（{m.region}）
+                    </option>
+                  ))}
+                </select>
+              )}
 
               <div className="flex-1 relative">
                 <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-300 pointer-events-none" />
@@ -626,7 +653,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                     }
                   }}
                   placeholder="輸入起始點地址（例：新北市板橋區文化路一段188號、桃園中壢火車站、或門市名稱）..."
-                  className="w-full pl-9 pr-3 py-2 bg-slate-900/90 text-white placeholder-indigo-300/60 text-xs sm:text-sm font-medium rounded-lg border border-white/20 outline-none focus:border-amber-400"
+                  className="w-full pl-9 pr-3 py-2.5 bg-slate-900/90 text-white placeholder-indigo-300/60 text-xs sm:text-sm font-medium rounded-lg border border-white/20 outline-none focus:border-amber-400"
                 />
               </div>
 
@@ -634,7 +661,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                 type="button"
                 onClick={() => handleApplyStartAddress()}
                 disabled={isGeocoding}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-white text-xs font-extrabold cursor-pointer transition-colors shrink-0 shadow-xs"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-white text-xs font-extrabold cursor-pointer transition-colors shrink-0 shadow-xs"
               >
                 {isGeocoding ? (
                   <>
@@ -664,11 +691,13 @@ export const MileageExpensePanel: React.FC<Props> = ({
               </div>
             )}
 
-            {/* 已生效的自訂起始點列表（一鍵清除可恢復預設區域中心） */}
-            {(customHubs.global || Object.keys(customHubs.byManager).length > 0) && (
+            {/* 已生效的自訂起始點列表（區主管僅顯示本人之自訂起點） */}
+            {(isManagerOnly
+              ? Boolean(customHubs.byManager[user.name] || customHubs.global)
+              : Boolean(customHubs.global || Object.keys(customHubs.byManager).length > 0)) && (
               <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                 <span className="text-[11px] font-bold text-indigo-200">已套用自訂起點：</span>
-                {customHubs.global && (
+                {!isManagerOnly && customHubs.global && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/50 text-amber-200 text-[11px] font-bold">
                     <span>🌐 全體通用：{customHubs.global.address}</span>
                     <button
@@ -681,22 +710,24 @@ export const MileageExpensePanel: React.FC<Props> = ({
                     </button>
                   </span>
                 )}
-                {Object.entries(customHubs.byManager).map(([mgrName, cfg]) => (
-                  <span
-                    key={`chip-${mgrName}`}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-400/20 border border-sky-300/50 text-sky-100 text-[11px] font-bold"
-                  >
-                    <span>👤 {mgrName}：{cfg.address}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveCustomHub(mgrName)}
-                      className="hover:text-white cursor-pointer"
-                      title={`移除 ${mgrName} 專屬起點`}
+                {Object.entries(customHubs.byManager)
+                  .filter(([mgrName]) => !isManagerOnly || mgrName === user.name)
+                  .map(([mgrName, cfg]) => (
+                    <span
+                      key={`chip-${mgrName}`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-400/20 border border-sky-300/50 text-sky-100 text-[11px] font-bold"
                     >
-                      <X size={12} />
-                    </button>
-                  </span>
-                ))}
+                      <span>👤 {mgrName}：{cfg.address}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCustomHub(mgrName)}
+                        className="hover:text-white cursor-pointer"
+                        title={`移除 ${mgrName} 專屬起點`}
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
               </div>
             )}
           </div>
@@ -788,89 +819,95 @@ export const MileageExpensePanel: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 各區主管費用總表（每一位區主管的當天推算費用 ＋ 每月車程費用加總） */}
+      {/* 各區主管費用總表（區主管登入時僅顯示自己本人） */}
       <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-xs flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-base sm:text-lg font-extrabold text-gray-900 flex items-center gap-2">
-              <span>👥 每一位區主管巡店里程與車資補助總表</span>
-              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                共 {visibleManagers.length} 位主管
-              </span>
+              <span>{isManagerOnly ? `👤 ${user.name} 個人巡店里程與車資明細` : '👥 每一位區主管巡店里程與車資補助總表'}</span>
+              {!isManagerOnly && (
+                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                  共 {visibleManagers.length} 位主管
+                </span>
+              )}
             </h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              同時呈現每位區主管之「指定當日（{targetDateStr}）推算費用」與「{targetMonthKey} 整月車程費用加總」；點擊任一主管可展開每日行車路線與分段公里數明細
+              呈現「指定當日（{targetDateStr}）推算費用」與「{targetMonthKey} 整月車程費用加總」；點擊「黏存單」可一鍵開出連動之《零用金單據黏存單》與點對點 Google Maps 距離圖
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <label className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-600 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-xl cursor-pointer">
-              <input
-                type="checkbox"
-                checked={onlyShowActive}
-                onChange={e => setOnlyShowActive(e.target.checked)}
-                className="rounded text-blue-600 cursor-pointer"
-              />
-              <span>僅顯示有出勤紀錄主管</span>
-            </label>
+          {!isManagerOnly && (
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <label className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-600 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={onlyShowActive}
+                  onChange={e => setOnlyShowActive(e.target.checked)}
+                  className="rounded text-blue-600 cursor-pointer"
+                />
+                <span>僅顯示有出勤紀錄主管</span>
+              </label>
 
-            <div className="relative">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                value={keyword}
-                onChange={e => setKeyword(e.target.value)}
-                placeholder="搜尋區主管或區域..."
-                className="pl-8 pr-7 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {keyword && (
-                <button
-                  type="button"
-                  onClick={() => setKeyword('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
-                >
-                  ✕
-                </button>
-              )}
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={keyword}
+                  onChange={e => setKeyword(e.target.value)}
+                  placeholder="搜尋區主管或區域..."
+                  className="pl-8 pr-7 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {keyword && (
+                  <button
+                    type="button"
+                    onClick={() => setKeyword('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        {/* 分區快選膠囊列 */}
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-center gap-1.5 flex-wrap">
-          <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mr-0.5">
-            <MapPin size={12} className="text-blue-600" />
-            分區篩選：
-          </span>
-          <button
-            type="button"
-            onClick={() => setSelectedRegion(ALL_REGIONS)}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-              selectedRegion === ALL_REGIONS
-                ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
-                : 'bg-white text-gray-700 border-gray-200 hover:bg-blue-50'
-            }`}
-          >
-            {ALL_REGIONS} ({report.managersReport.length})
-          </button>
-          {regionOptions.map(r => {
-            const active = selectedRegion === r.region;
-            return (
-              <button
-                key={r.region}
-                type="button"
-                onClick={() => setSelectedRegion(active ? ALL_REGIONS : r.region)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                  active
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
-                    : 'bg-white text-gray-700 border-gray-200 hover:bg-blue-50'
-                }`}
-              >
-                {r.region} ({r.count})
-              </button>
-            );
-          })}
-        </div>
+        {/* 分區快選膠囊列（僅管理員顯示） */}
+        {!isManagerOnly && (
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mr-0.5">
+              <MapPin size={12} className="text-blue-600" />
+              分區篩選：
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedRegion(ALL_REGIONS)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                selectedRegion === ALL_REGIONS
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-blue-50'
+              }`}
+            >
+              {ALL_REGIONS} ({report.managersReport.length})
+            </button>
+            {regionOptions.map(r => {
+              const active = selectedRegion === r.region;
+              return (
+                <button
+                  key={r.region}
+                  type="button"
+                  onClick={() => setSelectedRegion(active ? ALL_REGIONS : r.region)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                    active
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                      : 'bg-white text-gray-700 border-gray-200 hover:bg-blue-50'
+                  }`}
+                >
+                  {r.region} ({r.count})
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* 每位區主管卡片／明細列 */}
         <div className="flex flex-col gap-3">
@@ -1022,8 +1059,8 @@ export const MileageExpensePanel: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* 右側：產生報核單、設定起點與展開每日明細按鈕 */}
-                  <div className="flex items-center justify-end gap-1.5 flex-wrap shrink-0">
+                  {/* 右側：產生零用金黏存單、設定起點與展開每日明細按鈕（手機端滿版等寬好按） */}
+                  <div className="grid grid-cols-3 sm:flex items-center justify-end gap-1.5 w-full lg:w-auto shrink-0">
                     <button
                       type="button"
                       onClick={e => {
@@ -1034,11 +1071,11 @@ export const MileageExpensePanel: React.FC<Props> = ({
                           scope: 'month',
                         });
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-extrabold bg-amber-50 hover:bg-amber-400 text-amber-900 hover:text-slate-950 border border-amber-300 transition-colors cursor-pointer"
-                      title={`開啟 ${m.managerName} 的《國內出差旅費報核單》（自動連動本月路線與公里數）`}
+                      className="inline-flex items-center justify-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-xl text-xs font-extrabold bg-amber-50 hover:bg-amber-400 text-amber-900 hover:text-slate-950 border border-amber-300 transition-colors cursor-pointer"
+                      title={`開啟 ${m.managerName} 的《零用金單據黏存單》（自動連動本月路線與點對點 Google Maps 距離圖）`}
                     >
                       <FileSpreadsheet size={13} />
-                      <span>報核單</span>
+                      <span>黏存單</span>
                     </button>
                     <button
                       type="button"
@@ -1047,14 +1084,14 @@ export const MileageExpensePanel: React.FC<Props> = ({
                         handleSelectHubTargetScope(m.managerName);
                         window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 transition-colors cursor-pointer"
+                      className="inline-flex items-center justify-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 transition-colors cursor-pointer"
                       title={`為 ${m.managerName} 設定專屬起始點地址`}
                     >
                       <Home size={13} />
                       <span>設起點</span>
                     </button>
-                    <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 transition-colors">
-                      <span>{isExpanded ? '收合路線明細' : `明細 (${m.monthDailyRoutes.length}日)`}</span>
+                    <span className="inline-flex items-center justify-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 transition-colors">
+                      <span>{isExpanded ? '收合' : `明細(${m.monthDailyRoutes.length})`}</span>
                       {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                     </span>
                   </div>

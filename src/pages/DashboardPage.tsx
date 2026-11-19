@@ -357,7 +357,7 @@ export const DashboardPage: React.FC = () => {
   }, []);
 
   const adminExpenseReport = useMemo(() => {
-    if (user?.role !== 'admin') return null;
+    if (!user) return null;
     const baseDate = customStartDate || getTaipeiTodayStr();
     const byMgr: Record<string, GeoPoint> = {};
     for (const [k, v] of Object.entries(customHubs.byManager || {})) {
@@ -374,6 +374,8 @@ export const DashboardPage: React.FC = () => {
       ratePerKm: DEFAULT_SUBSIDY_PER_KM,
       customHubPointsByManager: byMgr,
       globalCustomHubPoint: customHubToGeoPoint(customHubs.global),
+      // 區主管僅能看到自己本人的車資與報核資料
+      restrictToManagerName: user.role === 'manager' ? user.name : undefined,
     });
   }, [user, allActivities, activities, managers, selectedDepartment, customStartDate, customHubs]);
 
@@ -1092,9 +1094,13 @@ export const DashboardPage: React.FC = () => {
             {[
               { id: 'dashboard', label: '即時動態牆' },
               { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
-              ...(user?.role === 'admin'
-                ? [{ id: 'expense', label: '🚗 巡店車資與里程核算（最高權限）' }]
-                : []),
+              {
+                id: 'expense',
+                label:
+                  user?.role === 'admin'
+                    ? '🚗 巡店車資與黏存單（全區）'
+                    : '🚗 個人車資與零用金黏存單',
+              },
               { id: 'org_map', label: '組織架構配置' },
             ].map(tab => (
               <button
@@ -1557,11 +1563,12 @@ export const DashboardPage: React.FC = () => {
                   />
                 </Suspense>
 
-                {/* 最高管理權限專屬：當天推算車資與每月車程費用加總速覽橫幅（按權限懶載入） */}
-                {user?.role === 'admin' && adminExpenseReport && (
+                {/* 巡店車資與零用金報銷速覽橫幅（管理員看全區，區主管僅看自己本人） */}
+                {adminExpenseReport && (
                   <Suspense fallback={null}>
                     <AdminExpenseBanner
                       report={adminExpenseReport}
+                      isManager={user?.role === 'manager'}
                       onOpenExpenseTab={() => setActiveTab('expense')}
                     />
                   </Suspense>
@@ -1649,7 +1656,7 @@ export const DashboardPage: React.FC = () => {
                   </main>
                 </div>
               </>
-            ) : activeTab === 'expense' && user?.role === 'admin' ? (
+            ) : activeTab === 'expense' ? (
               <Suspense fallback={<TabLoadingFallback />}>
                 <MileageExpensePanel
                   allActivities={allActivities}

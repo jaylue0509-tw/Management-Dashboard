@@ -109,19 +109,36 @@ const toTimestamp = (iso?: string): number => {
 
 const SORTED_STORE_NAMES = Object.keys(RAW_STORE_COORDINATES).sort((a, b) => b.length - a.length);
 
+/** 常見公務／會議／受訓地點關鍵字座標對照，確保特殊行程不會與出發點重疊為 0 公里 */
+const SCHEDULE_LANDMARK_COORDS: { keywords: string[]; lat: number; lng: number; label: string }[] = [
+  { keywords: ['流行音樂中心', '北流', '南港'], lat: 25.0525, lng: 121.5985, label: '臺北流行音樂中心（台北市南港區市民大道八段99號）' },
+  { keywords: ['台北車站', '北車', '中正區'], lat: 25.0478, lng: 121.517, label: '台北車站（台北市中正區北平西路3號）' },
+  { keywords: ['信義', '101', '世貿'], lat: 25.033, lng: 121.5654, label: '台北市信義區世貿中心' },
+  { keywords: ['內湖'], lat: 25.0697, lng: 121.5885, label: '台北市內湖科技園區' },
+  { keywords: ['板橋車站', '新板'], lat: 25.0143, lng: 121.4637, label: '板橋車站（新北市板橋區縣民大道二段7號）' },
+  { keywords: ['桃園高鐵', '青埔', '中壢'], lat: 25.0132, lng: 121.2148, label: '高鐵桃園站（桃園市中壢區高鐵北路一段6號）' },
+  { keywords: ['新竹高鐵', '竹北'], lat: 24.8084, lng: 121.0402, label: '高鐵新竹站（新竹縣竹北市高鐵七路6號）' },
+  { keywords: ['台中高鐵', '烏日'], lat: 24.1118, lng: 120.6158, label: '高鐵台中站（台中市烏日區站區二路8號）' },
+  { keywords: ['左營高鐵', '左營'], lat: 22.6873, lng: 120.3077, label: '高鐵左營站（高雄市左營區高鐵路105號）' },
+];
+
 /**
  * 判斷單一紀錄對應的地理座標點
- * 針對「特殊行程／會議行程」亦會自動掃描文字中提及之門市名稱（例如「在彰化中正處理事務」），避免誤判為 0 公里
+ * 針對「特殊行程／會議行程」自動掃描門市名稱與地標關鍵字，並確保目的地座標不與出發基準點完全重疊為 0 公里
  */
-const resolveActivityPoint = (activity: VisitRecord, region: string): GeoPoint => {
+const resolveActivityPoint = (activity: VisitRecord, region: string, hubPoint?: GeoPoint): GeoPoint => {
+  const hub = hubPoint || getRegionHubPoint(region);
+
   if (activity.actionType === '總部行程') {
     return HEADQUARTERS_POINT;
   }
   if (SCHEDULE_TYPES.has(activity.actionType)) {
     const text = `${activity.storeName || ''} ${activity.highlightDescription || ''}`;
-    if (text.includes('總部')) return HEADQUARTERS_POINT;
+    if (text.includes('總部') || text.includes('月會') || text.includes('雙週會') || text.includes('行營採')) {
+      return HEADQUARTERS_POINT;
+    }
 
-    // 檢查公務／特殊行程內容是否明確提及任一門市名稱
+    // 1. 檢查公務／特殊行程內容是否提及任一門市名稱（如「在彰化中正處理事務」）
     for (const storeKey of SORTED_STORE_NAMES) {
       if (storeKey.length >= 2 && text.includes(storeKey)) {
         const pt = RAW_STORE_COORDINATES[storeKey];
@@ -134,8 +151,32 @@ const resolveActivityPoint = (activity: VisitRecord, region: string): GeoPoint =
       }
     }
 
-    const hub = getRegionHubPoint(region);
-    return { ...hub, label: `${activity.actionType}（${activity.highlightDescription || hub.label}）` };
+    // 2. 檢查是否提及常見受訓／高鐵／會展地標
+    for (const lm of SCHEDULE_LANDMARK_COORDS) {
+      if (lm.keywords.some(kw => text.includes(kw))) {
+        return { lat: lm.lat, lng: lm.lng, label: lm.label };
+      }
+    }
+
+    // 3. 若未提及特定地點，預設以總部大樓作為公務目的地；若出發點已極接近總部，則以台北市中心為公務點，確保點對點距離 > 0
+    const distToHq = estimateDrivingKm(hub, HEADQUARTERS_POINT, region);
+    if (distToHq >= 2.0) {
+      return {
+        lat: HEADQUARTERS_POINT.lat,
+        lng: HEADQUARTERS_POINT.lng,
+        label: activity.highlightDescription
+          ? `${activity.highlightDescription}（新北市中和區景平路258號）`
+          : HEADQUARTERS_POINT.label,
+      };
+    }
+
+    return {
+      lat: 25.0525,
+      lng: 121.5985,
+      label: activity.highlightDescription
+        ? `${activity.highlightDescription}（台北市南港區市民大道八段99號）`
+        : '台北市區公務地點',
+    };
   }
   return getStoreGeoPoint(activity.storeName, region);
 };
@@ -197,12 +238,10 @@ export const calculateDailyRoute = (
     let currentPoint = hub;
     waypoints.push(hub);
     for (const stop of distinctStops) {
-      const nextPoint = resolveActivityPoint(stop, region);
+      const nextPoint = resolveActivityPoint(stop, region, hub);
       waypoints.push({
         ...nextPoint,
-        label: SCHEDULE_TYPES.has(stop.actionType)
-          ? `${stop.actionType}${stop.highlightDescription ? `：${stop.highlightDescription}` : ''}`
-          : stop.storeName || nextPoint.label,
+        label: nextPoint.label || stop.storeName || stop.actionType,
       });
       const km = estimateDrivingKm(currentPoint, nextPoint, region);
       const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
@@ -236,10 +275,10 @@ export const calculateDailyRoute = (
     // 僅計門市間跨店移動（若單日僅 1 站，以區域中心單趟移動估算）
     if (distinctStops.length === 1) {
       const stop = distinctStops[0];
-      const nextPoint = resolveActivityPoint(stop, region);
+      const nextPoint = resolveActivityPoint(stop, region, hub);
       waypoints.push(hub, {
         ...nextPoint,
-        label: SCHEDULE_TYPES.has(stop.actionType) ? stop.actionType : stop.storeName || nextPoint.label,
+        label: nextPoint.label || stop.storeName || stop.actionType,
       });
       const km = estimateDrivingKm(hub, nextPoint, region);
       const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
@@ -256,17 +295,17 @@ export const calculateDailyRoute = (
       for (let i = 0; i < distinctStops.length - 1; i++) {
         const fromStop = distinctStops[i];
         const toStop = distinctStops[i + 1];
-        const fromPt = resolveActivityPoint(fromStop, region);
-        const toPt = resolveActivityPoint(toStop, region);
+        const fromPt = resolveActivityPoint(fromStop, region, hub);
+        const toPt = resolveActivityPoint(toStop, region, hub);
         if (i === 0) {
           waypoints.push({
             ...fromPt,
-            label: SCHEDULE_TYPES.has(fromStop.actionType) ? fromStop.actionType : fromStop.storeName || fromPt.label,
+            label: fromPt.label || fromStop.storeName || fromStop.actionType,
           });
         }
         waypoints.push({
           ...toPt,
-          label: SCHEDULE_TYPES.has(toStop.actionType) ? toStop.actionType : toStop.storeName || toPt.label,
+          label: toPt.label || toStop.storeName || toStop.actionType,
         });
         const km = estimateDrivingKm(fromPt, toPt, region);
         const timeStr = formatTaipeiReportTime(toStop.createdAt).split(' ')[1] || '';
@@ -302,7 +341,7 @@ export const calculateDailyRoute = (
 };
 
 /**
- * 彙整全體區主管「當天推算費用」、「每月車程費用加總」與「所選區間費用」
+ * 彙整全體區主管（或指定單一區主管）「當天推算費用」、「每月車程費用加總」與「所選區間費用」
  */
 export const buildExpenseDashboardReport = (params: {
   allActivities: VisitRecord[];
@@ -316,6 +355,7 @@ export const buildExpenseDashboardReport = (params: {
   includeSchedule?: boolean;
   customHubPointsByManager?: Record<string, GeoPoint>;
   globalCustomHubPoint?: GeoPoint;
+  restrictToManagerName?: string;
 }): ExpenseDashboardReport => {
   const {
     allActivities,
@@ -329,11 +369,12 @@ export const buildExpenseDashboardReport = (params: {
     includeSchedule = true,
     customHubPointsByManager,
     globalCustomHubPoint,
+    restrictToManagerName,
   } = params;
 
   const deptKeyword = selectedDepartment === 'all' ? '' : selectedDepartment.replace('營業', '');
   const filteredRawManagers =
-    selectedDepartment === 'all'
+    selectedDepartment === 'all' || restrictToManagerName
       ? managers
       : managers.filter(
           m => m.department.includes(deptKeyword) || m.department === selectedDepartment
@@ -355,30 +396,34 @@ export const buildExpenseDashboardReport = (params: {
     const reg = normalizeRegionName(m.region) || '其他區域';
     if (m.areaManagerName) {
       const name = m.areaManagerName.trim();
-      if (!rosterMap.has(name)) {
-        rosterMap.set(name, {
-          managerName: name,
-          roleLabel: '區主管',
-          region: reg,
-          department: m.department || '',
-          stores: new Set(),
-        });
+      if (!restrictToManagerName || name === restrictToManagerName.trim()) {
+        if (!rosterMap.has(name)) {
+          rosterMap.set(name, {
+            managerName: name,
+            roleLabel: '區主管',
+            region: reg,
+            department: m.department || '',
+            stores: new Set(),
+          });
+        }
+        if (m.storeName) rosterMap.get(name)!.stores.add(m.storeName);
       }
-      if (m.storeName) rosterMap.get(name)!.stores.add(m.storeName);
     }
     if (m.deputyManagerName) {
       const depName = m.deputyManagerName.trim();
-      if (depName && !rosterMap.has(depName)) {
-        rosterMap.set(depName, {
-          managerName: depName,
-          roleLabel: '副區主管',
-          region: reg,
-          department: m.department || '',
-          stores: new Set(),
-        });
-      }
-      if (depName && m.storeName) {
-        rosterMap.get(depName)!.stores.add(m.storeName);
+      if (depName && (!restrictToManagerName || depName === restrictToManagerName.trim())) {
+        if (!rosterMap.has(depName)) {
+          rosterMap.set(depName, {
+            managerName: depName,
+            roleLabel: '副區主管',
+            region: reg,
+            department: m.department || '',
+            stores: new Set(),
+          });
+        }
+        if (m.storeName) {
+          rosterMap.get(depName)!.stores.add(m.storeName);
+        }
       }
     }
   }
