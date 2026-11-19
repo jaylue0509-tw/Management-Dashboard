@@ -1657,49 +1657,29 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
               </div>
             </div>
           ) : (
-            /* =================== 分頁二：真實 Google Maps 距離截圖附件 =================== */
-            <div className="max-w-[1260px] mx-auto space-y-4">
-              <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white rounded-2xl p-4 shadow-md flex flex-wrap items-center justify-between gap-3 border border-indigo-500/30">
-                <div className="space-y-1">
-                  <div className="text-sm sm:text-base font-extrabold flex items-center gap-2">
-                    <Camera size={18} className="text-amber-300" />
-                    <span>報核單附件：真實 Google Maps 官方距離截圖佐證</span>
-                  </div>
-                  <p className="text-xs text-blue-100 leading-relaxed">
-                    本附件區直接呈現您從 Google Maps 取得的<strong>真實原版截圖</strong>（列印 PDF 與匯出 Word 時原圖高清輸出）：
-                    ① 點「開啟真實 Google Maps 路線頁面」➔ ② 點「一鍵擷取視窗」或截圖後按 <strong>Ctrl+V 貼上</strong> ➔ ③ 填入 Google Maps 公里數，主報核單立刻同步重算！
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="px-3 py-1.5 rounded-xl bg-white/15 border border-white/25 text-xs font-extrabold">
-                    已附真實截圖：{calculated.attachedCount} / {calculated.computedRows.length} 筆（共 {calculated.totalScreenshotsCount} 張）
-                  </span>
-                </div>
-              </div>
-
+            /* =================== 分頁二：極簡附件截圖區 =================== */
+            <div className="max-w-[1160px] mx-auto space-y-3">
               {calculated.computedRows.length === 0 ? (
-                <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">
-                  目前尚無任何出差日期明細，請先切換其他月份或點擊上方「新增列」。
+                <div className="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">
+                  目前尚無出差明細，請先切換其他月份或點擊上方「新增列」。
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {calculated.computedRows.map((row, idx) => (
-                    <ExpenseRouteAttachmentCard
-                      key={row.id}
-                      index={idx}
-                      dateStr={row.dateStr}
-                      applicantName={applicantName}
-                      vehicleType={vehicleType}
-                      ratePerKm={ratePerKm}
-                      actualKm={row.actualKm}
-                      fuelSubsidy={row.fuelSubsidy}
-                      evidence={row.evidence}
-                      onPreviewImage={setPreviewImageUrl}
-                      onUpdateEvidence={patch => updateRowEvidence(row.id, patch)}
-                    />
-                  ))}
-                </div>
+                calculated.computedRows.map((row, idx) => (
+                  <ExpenseRouteAttachmentCard
+                    key={row.id}
+                    index={idx}
+                    dateStr={row.dateStr}
+                    applicantName={applicantName}
+                    routeSummaryText={row.routeAndKmText}
+                    vehicleType={vehicleType}
+                    ratePerKm={ratePerKm}
+                    actualKm={row.actualKm}
+                    fuelSubsidy={row.fuelSubsidy}
+                    evidence={row.evidence}
+                    onPreviewImage={setPreviewImageUrl}
+                    onUpdateEvidence={patch => updateRowEvidence(row.id, patch)}
+                  />
+                ))
               )}
             </div>
           )}

@@ -1,8 +1,15 @@
 import type { GeoPoint } from '../data/storeCoordinates';
+import { API_BASE_URL, getAuthHeaders } from '../api/api';
+
+export interface GoogleMapsApiVerifyResult {
+  distanceKm: number;
+  durationMin: number;
+  viaRoad: string;
+  staticMapDataUrl?: string | null;
+}
 
 /**
  * 將站點名稱轉為 Google Maps 友善搜尋字串
- * 優先保留完整中文地址或地標名稱，避免純經緯度被 Google Maps 解析為鄰近無關商號
  */
 export const formatStopForGoogleMaps = (label: string, fallbackPt?: GeoPoint): string => {
   const clean = (label || '').trim();
@@ -10,24 +17,20 @@ export const formatStopForGoogleMaps = (label: string, fallbackPt?: GeoPoint): s
     return fallbackPt ? `${fallbackPt.lat.toFixed(6)},${fallbackPt.lng.toFixed(6)}` : '';
   }
 
-  // 若為系統預設區域中心（如「新北區中心（板橋）」），取括號內區名搭配台灣地名
   const hubMatch = clean.match(/中心[（(]([^）)]+)[）)]/);
   if (hubMatch && hubMatch[1]) {
     return `${hubMatch[1].split('／')[0]}車站`;
   }
 
-  // 若為總部大樓
   if (clean.includes('總部大樓') || clean === '總部') {
     return '新北市中和區景平路258號';
   }
 
-  // 若為系統公務行程前綴（如「特殊行程：XXX」），取冒號後真實地點描述
   if (/^(總部行程|會議行程|特殊行程)[：:]/.test(clean)) {
     const detail = clean.replace(/^(總部行程|會議行程|特殊行程)[：:]/, '').trim();
     if (detail) return detail;
   }
 
-  // 若為門市名稱（不含縣市路街號，且以「店」結尾或為簡短門市名），冠上「東森寵物」讓 Google Maps 精準定位門市門牌
   const looksLikeAddress = /[市縣區鄉鎮路街道段巷弄號車站機場大樓館中心]/.test(clean);
   if (!looksLikeAddress && clean.length <= 12) {
     return `東森寵物 ${clean}`;
@@ -37,7 +40,7 @@ export const formatStopForGoogleMaps = (label: string, fallbackPt?: GeoPoint): s
 };
 
 /**
- * 產生 Google Maps 官方多停靠點距離驗證連結（採用可讀中文地址／門市名，讓畫面如原版 Google Maps 清晰呈現）
+ * 產生 Google Maps 外部新分頁多停靠點路線連結
  */
 export const buildGoogleMapsDirectionsUrl = (
   waypoints: GeoPoint[],
@@ -49,16 +52,13 @@ export const buildGoogleMapsDirectionsUrl = (
       ? customStopLabels.map(s => s.trim()).filter(Boolean)
       : waypoints.map(wp => formatStopForGoogleMaps(wp.label, wp));
 
-  if (labels.length === 0) {
-    return 'https://www.google.com/maps/dir/';
-  }
+  if (labels.length === 0) return 'https://www.google.com/maps/dir/';
   if (labels.length === 1) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(labels[0])}`;
   }
 
   const origin = labels[0];
   const destination = labels[labels.length - 1];
-  // Google Maps 通用 URL 支援最多 9 個中繼站 (waypoints)
   const middle = labels.slice(1, -1).slice(0, 9);
 
   const params = new URLSearchParams({
@@ -74,18 +74,99 @@ export const buildGoogleMapsDirectionsUrl = (
 };
 
 /**
- * 透過瀏覽器原生螢幕擷取 API（getDisplayMedia）一鍵拍攝 Google Maps 分頁／視窗的真實截圖
- * 擷取單張高解析度畫面後立即關閉螢幕共享串流，不錄影、不外傳
+ * 產生可直接內嵌於網頁 <iframe> 的真實 Google Maps 路線地圖網址
+ * - 若設定 VITE_GOOGLE_MAPS_API_KEY，採用官方免費無限量 Google Maps Embed API v1 (支援完整多停靠點藍線)
+ * - 未設定金鑰時自動採用 Google Maps 公開路線內嵌模式，即開即看真實 Google 地圖
+ */
+export const buildGoogleMapsEmbedUrl = (
+  waypoints: GeoPoint[],
+  customStopLabels?: string[]
+): string | null => {
+  const labels =
+    customStopLabels && customStopLabels.length > 0
+      ? customStopLabels.map(s => s.trim()).filter(Boolean)
+      : waypoints.map(wp => formatStopForGoogleMaps(wp.label, wp));
+
+  if (labels.length === 0) return null;
+
+  const embedKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+  if (embedKey && labels.length >= 2) {
+    const params = new URLSearchParams({
+      key: embedKey,
+      origin: labels[0],
+      destination: labels[labels.length - 1],
+      mode: 'driving',
+      language: 'zh-TW',
+      region: 'TW',
+    });
+    const middle = labels.slice(1, -1).slice(0, 9);
+    if (middle.length > 0) {
+      params.set('waypoints', middle.join('|'));
+    }
+    return `https://www.google.com/maps/embed/v1/directions?${params.toString()}`;
+  }
+
+  if (labels.length === 1) {
+    return `https://maps.google.com/maps?hl=zh-TW&q=${encodeURIComponent(labels[0])}&output=embed`;
+  }
+
+  // Google Maps 公開路線內嵌格式（支援起點 saddr 與多站 daddr 以 "+to:" 串接）
+  const origin = encodeURIComponent(labels[0]);
+  const destChain = labels
+    .slice(1, 10)
+    .map(stop => encodeURIComponent(stop))
+    .join('+to:');
+  return `https://maps.google.com/maps?hl=zh-TW&saddr=${origin}&daddr=${destChain}&dirflg=d&output=embed`;
+};
+
+/**
+ * 呼叫後端 /api/google-maps/verify-route 取得官方 Google Maps 實際距離與路線圖
+ */
+export const verifyRouteViaGoogleMapsApi = async (
+  stops: string[],
+  vehicle: 'car' | 'motorcycle' = 'car'
+): Promise<{ ok: true; data: GoogleMapsApiVerifyResult } | { ok: false; message: string; missingKey?: boolean }> => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/google-maps/verify-route`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ stops, vehicle }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        missingKey: res.status === 503,
+        message: String(json?.detail || `Google Maps 查詢失敗 (HTTP ${res.status})`),
+      };
+    }
+    return {
+      ok: true,
+      data: {
+        distanceKm: Number(json.distanceKm) || 0,
+        durationMin: Number(json.durationMin) || 0,
+        viaRoad: String(json.viaRoad || ''),
+        staticMapDataUrl: json.staticMapDataUrl || null,
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      message: '連線後端 Google Maps 驗證服務失敗，請檢查網路狀態',
+    };
+  }
+};
+
+/**
+ * 透過瀏覽器原生螢幕擷取 API 一鍵拍攝 Google Maps 分頁截圖
  */
 export const captureScreenSnapshot = async (): Promise<string | null> => {
   if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
-    throw new Error('目前瀏覽器不支援視窗擷取功能，請直接於 Google Maps 截圖後按 Ctrl+V 貼上或上傳圖檔。');
+    throw new Error('目前瀏覽器不支援視窗擷取，請直接截圖後按 Ctrl+V 貼上或上傳圖檔。');
   }
 
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: {
-      cursor: 'never',
-    } as MediaTrackConstraints,
+    video: { cursor: 'never' } as MediaTrackConstraints,
     audio: false,
   });
 
@@ -95,7 +176,6 @@ export const captureScreenSnapshot = async (): Promise<string | null> => {
     video.muted = true;
     await video.play();
 
-    // 等待視訊影格穩定渲染
     await new Promise<void>(resolve => {
       if (video.readyState >= 2 && video.videoWidth > 0) {
         setTimeout(resolve, 160);
