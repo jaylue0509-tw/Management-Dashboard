@@ -39,6 +39,8 @@ export interface DailyRouteRecord {
   scheduleCount: number;
   visitedStores: string[];
   legs: RouteLeg[];
+  /** 依序排列之地理座標站點（含起點、各巡店停靠站與返程點），供地圖路線驗證與 Google Maps 導航使用 */
+  waypoints: GeoPoint[];
   totalKm: number;
   totalSubsidy: number;
 }
@@ -157,6 +159,7 @@ export const calculateDailyRoute = (
 
   const hub = customHubPoint || getRegionHubPoint(region);
   const legs: RouteLeg[] = [];
+  const waypoints: GeoPoint[] = [];
   const visitedStores: string[] = [];
   let storeVisitCount = 0;
   let scheduleCount = 0;
@@ -174,8 +177,15 @@ export const calculateDailyRoute = (
 
   if (mode === 'round_trip') {
     let currentPoint = hub;
+    waypoints.push(hub);
     for (const stop of distinctStops) {
       const nextPoint = resolveActivityPoint(stop, region);
+      waypoints.push({
+        ...nextPoint,
+        label: SCHEDULE_TYPES.has(stop.actionType)
+          ? `${stop.actionType}${stop.highlightDescription ? `：${stop.highlightDescription}` : ''}`
+          : stop.storeName || nextPoint.label,
+      });
       const km = estimateDrivingKm(currentPoint, nextPoint, region);
       const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
       legs.push({
@@ -192,9 +202,10 @@ export const calculateDailyRoute = (
       currentPoint = nextPoint;
     }
 
-    // 末站返回區域中心
+    // 末站返回區域中心或自訂起始點
     const returnKm = estimateDrivingKm(currentPoint, hub, region);
     if (returnKm > 0) {
+      waypoints.push(hub);
       legs.push({
         fromLabel: currentPoint.label,
         toLabel: hub.label,
@@ -208,6 +219,10 @@ export const calculateDailyRoute = (
     if (distinctStops.length === 1) {
       const stop = distinctStops[0];
       const nextPoint = resolveActivityPoint(stop, region);
+      waypoints.push(hub, {
+        ...nextPoint,
+        label: SCHEDULE_TYPES.has(stop.actionType) ? stop.actionType : stop.storeName || nextPoint.label,
+      });
       const km = estimateDrivingKm(hub, nextPoint, region);
       const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
       legs.push({
@@ -225,6 +240,16 @@ export const calculateDailyRoute = (
         const toStop = distinctStops[i + 1];
         const fromPt = resolveActivityPoint(fromStop, region);
         const toPt = resolveActivityPoint(toStop, region);
+        if (i === 0) {
+          waypoints.push({
+            ...fromPt,
+            label: SCHEDULE_TYPES.has(fromStop.actionType) ? fromStop.actionType : fromStop.storeName || fromPt.label,
+          });
+        }
+        waypoints.push({
+          ...toPt,
+          label: SCHEDULE_TYPES.has(toStop.actionType) ? toStop.actionType : toStop.storeName || toPt.label,
+        });
         const km = estimateDrivingKm(fromPt, toPt, region);
         const timeStr = formatTaipeiReportTime(toStop.createdAt).split(' ')[1] || '';
         legs.push({
@@ -252,6 +277,7 @@ export const calculateDailyRoute = (
     scheduleCount,
     visitedStores,
     legs,
+    waypoints,
     totalKm,
     totalSubsidy,
   };
