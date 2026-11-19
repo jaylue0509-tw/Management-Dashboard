@@ -1,34 +1,36 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  Car,
-  Bike,
   ExternalLink,
-  RefreshCw,
   Upload,
   CheckCircle2,
   MapPin,
   Trash2,
   ClipboardPaste,
-  Image as ImageIcon,
-  Map as MapIcon,
+  Camera,
+  Plus,
+  X,
+  AlertCircle,
+  ZoomIn,
   Loader2,
 } from 'lucide-react';
 import type { GeoPoint } from '../data/storeCoordinates';
 import {
   buildGoogleMapsDirectionsUrl,
-  computeStaticMapLayout,
+  captureScreenSnapshot,
+  compressScreenshotFile,
 } from '../utils/road-routing';
 
-export type VerificationStatus = 'estimated' | 'osrm' | 'google_verified';
+export type VerificationStatus = 'pending_screenshot' | 'google_verified';
 
 export interface RouteEvidenceData {
   waypoints: GeoPoint[];
-  geometry: [number, number][];
+  /** 可直接編修之 Google Maps 站點名稱／地址清單（開啟 Google Maps 時直接帶入這些可讀地址） */
+  stopLabels: string[];
   durationMin: number;
   viaRoad: string;
   verificationStatus: VerificationStatus;
-  googleScreenshotDataUrl?: string;
-  googleMapsUrl: string;
+  /** 真實 Google Maps 官方截圖清單（支援單日附 1 至多張截圖，例如去程＋回程或總覽＋明細） */
+  googleScreenshots: string[];
 }
 
 interface ExpenseRouteAttachmentCardProps {
@@ -39,25 +41,22 @@ interface ExpenseRouteAttachmentCardProps {
   ratePerKm: number;
   actualKm: number;
   fuelSubsidy: number;
-  routeSummaryText: string;
   evidence: RouteEvidenceData;
-  isFetchingRoad: boolean;
-  onFetchRealRoad: () => void;
-  onUpdateKmAndMeta: (patch: {
+  onPreviewImage?: (dataUrl: string) => void;
+  onUpdateEvidence: (patch: {
     actualKm?: number;
     durationMin?: number;
     viaRoad?: string;
+    stopLabels?: string[];
     verificationStatus?: VerificationStatus;
-    googleScreenshotDataUrl?: string;
+    googleScreenshots?: string[];
   }) => void;
 }
 
-const MAP_WIDTH = 520;
-const MAP_HEIGHT = 310;
-
 /**
- * 國內出差旅費報核單附件：單日路線與 Google Maps 距離驗證佐證卡
- * 版面參照 Google Maps 左右雙欄樣式（左側起訖站點、時間、公里數與核對區；右側真實道路地圖或官方截圖）
+ * 國內出差旅費報核單附件：真實 Google Maps 官方截圖佐證卡
+ * 設計目標：直接呈現使用者從 Google Maps 取得的真實官方截圖（支援一鍵開啟 Google Maps、一鍵視窗截圖、Ctrl+V 貼上與拖曳上傳），
+ * 並將核對後的 Google Maps 實際公里數即時連動回主報核單金額計算。
  */
 export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProps> = ({
   index,
@@ -67,85 +66,126 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
   ratePerKm,
   actualKm,
   fuelSubsidy,
-  routeSummaryText,
   evidence,
-  isFetchingRoad,
-  onFetchRealRoad,
-  onUpdateKmAndMeta,
+  onPreviewImage,
+  onUpdateEvidence,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [preferScreenshotView, setPreferScreenshotView] = useState<boolean>(true);
-  const [pasteNotice, setPasteNotice] = useState<string>('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   const googleUrl = useMemo(
-    () => evidence.googleMapsUrl || buildGoogleMapsDirectionsUrl(evidence.waypoints, vehicleType),
-    [evidence.googleMapsUrl, evidence.waypoints, vehicleType]
+    () => buildGoogleMapsDirectionsUrl(evidence.waypoints, vehicleType, evidence.stopLabels),
+    [evidence.waypoints, vehicleType, evidence.stopLabels]
   );
 
-  const mapLayout = useMemo(
-    () => computeStaticMapLayout(evidence.waypoints, evidence.geometry, MAP_WIDTH, MAP_HEIGHT),
-    [evidence.waypoints, evidence.geometry]
-  );
+  const hasScreenshots = evidence.googleScreenshots.length > 0;
 
-  // 將上傳或貼上的 Google Maps 截圖壓縮轉存為 Data URL（確保列印與 Word 匯出清晰且不膨脹）
-  const processScreenshotFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new window.Image();
-      img.onload = () => {
-        const maxW = 1280;
-        const scale = img.width > maxW ? maxW / img.width : 1;
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const compressed = canvas.toDataURL('image/jpeg', 0.85);
-        onUpdateKmAndMeta({
-          googleScreenshotDataUrl: compressed,
-          verificationStatus: 'google_verified',
-        });
-        setPreferScreenshotView(true);
-        setPasteNotice('已成功附加 Google Maps 距離佐證截圖！');
-        setTimeout(() => setPasteNotice(''), 3000);
-      };
-      img.src = String(reader.result || '');
-    };
-    reader.readAsDataURL(file);
+  const showTempMessage = (type: 'ok' | 'err', text: string) => {
+    setStatusMessage({ type, text });
+    window.setTimeout(() => setStatusMessage(null), 3800);
   };
 
-  const handlePasteScreenshot = (e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith('image/')) {
-        const file = items[i].getAsFile();
-        if (file) {
-          e.preventDefault();
-          processScreenshotFile(file);
-          return;
-        }
+  const appendScreenshotDataUrl = (dataUrl: string) => {
+    const nextList = [...evidence.googleScreenshots, dataUrl];
+    onUpdateEvidence({
+      googleScreenshots: nextList,
+      verificationStatus: 'google_verified',
+    });
+    showTempMessage('ok', '已成功附加真實 Google Maps 截圖！列印與匯出 Word 將直接呈現此原圖。');
+  };
+
+  const handleFiles = async (files: FileList | File[]) => {
+    const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      showTempMessage('err', '請選擇圖片檔案（PNG / JPG / WebP）');
+      return;
+    }
+    try {
+      const nextList = [...evidence.googleScreenshots];
+      for (const file of imageFiles) {
+        const dataUrl = await compressScreenshotFile(file);
+        nextList.push(dataUrl);
       }
+      onUpdateEvidence({
+        googleScreenshots: nextList,
+        verificationStatus: 'google_verified',
+      });
+      showTempMessage('ok', `已附加 ${imageFiles.length} 張真實 Google Maps 截圖！`);
+    } catch {
+      showTempMessage('err', '截圖讀取失敗，請重新嘗試');
     }
   };
 
-  const statusBadge =
-    evidence.verificationStatus === 'google_verified'
-      ? { label: 'Google Maps 已核驗', cls: 'bg-emerald-100 text-emerald-800 border-emerald-300' }
-      : evidence.verificationStatus === 'osrm'
-      ? { label: '真實道路路網已驗證', cls: 'bg-blue-100 text-blue-800 border-blue-300' }
-      : { label: '系統推估（建議點右側驗證）', cls: 'bg-amber-100 text-amber-800 border-amber-300' };
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const f = items[i].getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      await handleFiles(files);
+    }
+  };
 
-  const showingScreenshot = Boolean(evidence.googleScreenshotDataUrl && preferScreenshotView);
+  const handleOneClickCapture = async () => {
+    setIsCapturing(true);
+    try {
+      const dataUrl = await captureScreenSnapshot();
+      if (dataUrl) {
+        appendScreenshotDataUrl(dataUrl);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (!msg.toLowerCase().includes('cancel') && !msg.toLowerCase().includes('permission')) {
+        showTempMessage('err', msg || '擷取已取消，您也可以直接截圖後按 Ctrl+V 貼上');
+      }
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const handleUpdateStopLabel = (stopIdx: number, value: string) => {
+    const next = [...evidence.stopLabels];
+    next[stopIdx] = value;
+    onUpdateEvidence({ stopLabels: next });
+  };
+
+  const handleAddStop = () => {
+    onUpdateEvidence({ stopLabels: [...evidence.stopLabels, ''] });
+  };
+
+  const handleRemoveStop = (stopIdx: number) => {
+    onUpdateEvidence({
+      stopLabels: evidence.stopLabels.filter((_, idx) => idx !== stopIdx),
+    });
+  };
+
+  const handleRemoveScreenshot = (imgIdx: number) => {
+    const next = evidence.googleScreenshots.filter((_, idx) => idx !== imgIdx);
+    onUpdateEvidence({
+      googleScreenshots: next,
+      verificationStatus: next.length > 0 ? 'google_verified' : 'pending_screenshot',
+    });
+  };
 
   return (
     <div
-      onPaste={handlePasteScreenshot}
+      onPaste={handlePaste}
       tabIndex={0}
-      className="bg-white rounded-2xl border-2 border-slate-200 hover:border-blue-300 focus:border-blue-500 outline-none shadow-sm overflow-hidden transition-colors"
+      className={`bg-white rounded-2xl border-2 outline-none shadow-sm overflow-hidden transition-all ${
+        hasScreenshots
+          ? 'border-emerald-300 focus:border-emerald-500'
+          : 'border-slate-200 hover:border-blue-300 focus:border-blue-500'
+      }`}
     >
-      {/* 卡片標頭：附件編號、出差日期、里程、油資與驗證徽章 */}
+      {/* 卡片標頭：附件編號、日期、截圖驗證狀態與連動計價 */}
       <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="px-2.5 py-0.5 rounded-md bg-slate-900 text-white text-xs font-extrabold">
@@ -154,13 +194,20 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
           <span className="text-sm font-extrabold text-slate-900">
             {dateStr}（{applicantName}）
           </span>
-          <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border inline-flex items-center gap-1 ${statusBadge.cls}`}>
-            <CheckCircle2 size={12} />
-            {statusBadge.label}
-          </span>
+          {hasScreenshots ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+              <CheckCircle2 size={12} />
+              已附真實 Google Maps 截圖（{evidence.googleScreenshots.length} 張）
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+              <AlertCircle size={12} />
+              尚未附上真實 Google Maps 截圖
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center gap-3 text-xs font-bold">
+        <div className="flex items-center gap-2.5 text-xs font-bold flex-wrap">
           <span className="text-slate-600">
             計價公里：<strong className="text-blue-700 text-sm">{actualKm.toFixed(1)} 公里</strong>
           </span>
@@ -170,365 +217,312 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
         </div>
       </div>
 
-      {/* 主內容：仿 Google Maps 左右雙欄驗證版面 */}
+      {/* 主體雙欄：左側「步驟設定與核對輸入」＋ 右側「真實 Google Maps 官方截圖展示區」 */}
       <div className="grid grid-cols-1 lg:grid-cols-12">
-        {/* 左側面板：交通方式、起訖站點列表、路線摘要與 Google Maps 核驗工具 */}
-        <div className="lg:col-span-5 p-4 border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col justify-between gap-3 bg-white">
+        {/* 左側：起訖地址微調 + 三步驟開啟與擷取真實 Google Maps */}
+        <div className="lg:col-span-5 p-4 border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col justify-between gap-3.5 bg-white">
           <div className="space-y-3">
-            {/* 交通方式頂部列（呼應 Google Maps 頂部切換列） */}
-            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold ${
-                    vehicleType === 'car'
-                      ? 'bg-sky-100 text-sky-900 border border-sky-200'
-                      : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  <Car size={14} />
-                  <span>{vehicleType === 'car' ? `${evidence.durationMin} 分` : '汽車'}</span>
+            {/* 步驟 1：確認起訖地址並開啟真實 Google Maps */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-slate-800">
+                  ① 確認起訖地點（可直接改為實際出差地址）
                 </span>
-                <span
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold ${
-                    vehicleType === 'motorcycle'
-                      ? 'bg-sky-100 text-sky-900 border border-sky-200'
-                      : 'bg-slate-100 text-slate-500'
-                  }`}
+                <button
+                  type="button"
+                  onClick={handleAddStop}
+                  className="inline-flex items-center gap-0.5 text-[11px] font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
                 >
-                  <Bike size={14} />
-                  <span>{vehicleType === 'motorcycle' ? `${evidence.durationMin} 分` : '機車'}</span>
-                </span>
+                  <Plus size={12} />
+                  <span>新增停靠點</span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={onFetchRealRoad}
-                disabled={isFetchingRoad || evidence.waypoints.length < 2}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 disabled:opacity-50 text-blue-700 border border-blue-200 text-[11px] font-bold cursor-pointer transition-colors"
-                title="從開源道路路網重新抓取貼合街道的真實導航距離與路線"
-              >
-                {isFetchingRoad ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                <span>{isFetchingRoad ? '抓取路網中...' : '抓取真實路網'}</span>
-              </button>
-            </div>
-
-            {/* 起訖站點清單（仿 Google Maps 圓圈虛線＋終點紅標） */}
-            <div className="space-y-1.5">
-              {evidence.waypoints.length > 0 ? (
-                evidence.waypoints.map((wp, idx) => {
-                  const isFirst = idx === 0;
-                  const isLast = idx === evidence.waypoints.length - 1 && evidence.waypoints.length > 1;
+              <div className="space-y-1.5">
+                {evidence.stopLabels.map((label, sIdx) => {
+                  const isFirst = sIdx === 0;
+                  const isLast = sIdx === evidence.stopLabels.length - 1 && evidence.stopLabels.length > 1;
                   return (
-                    <div key={`wp-${idx}`} className="flex items-center gap-2.5">
-                      <div className="w-5 flex flex-col items-center shrink-0">
+                    <div key={`stop-${sIdx}`} className="flex items-center gap-1.5">
+                      <span className="w-5 flex justify-center shrink-0">
                         {isLast ? (
-                          <MapPin size={15} className="text-rose-600 fill-rose-100" />
+                          <MapPin size={14} className="text-rose-600" />
                         ) : (
                           <span
-                            className={`w-3.5 h-3.5 rounded-full border-2 ${
+                            className={`w-4 h-4 rounded-full text-[9px] font-extrabold flex items-center justify-center ${
                               isFirst
-                                ? 'bg-white border-slate-800'
-                                : 'bg-blue-600 border-blue-600 text-white text-[8px] flex items-center justify-center font-bold'
+                                ? 'bg-slate-900 text-white'
+                                : 'bg-blue-600 text-white'
                             }`}
                           >
-                            {!isFirst && idx}
+                            {isFirst ? '起' : sIdx}
                           </span>
                         )}
-                      </div>
-                      <div className="flex-1 text-xs font-semibold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 truncate" title={wp.label}>
-                        {wp.label}
-                      </div>
+                      </span>
+                      <input
+                        type="text"
+                        value={label}
+                        onChange={e => handleUpdateStopLabel(sIdx, e.target.value)}
+                        placeholder={isFirst ? '輸入出發地址（如：新北市板橋區...）' : '輸入目的地地址或門市名（如：臺北流行音樂中心）'}
+                        className="flex-1 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white border border-slate-200 focus:border-blue-500 rounded-lg px-2.5 py-1.5 outline-none"
+                      />
+                      {evidence.stopLabels.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStop(sIdx)}
+                          className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                          title="移除此站點"
+                        >
+                          <X size={13} />
+                        </button>
+                      )}
                     </div>
                   );
-                })
-              ) : (
-                <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
-                  {routeSummaryText || '手動新增之出差行程（無內建座標，可直接貼上 Google Maps 截圖與輸入公里數）'}
-                </div>
-              )}
-            </div>
-
-            {/* Google Maps 風格路線結論列（途經道路 · XX 分 · XX.X 公里） */}
-            <div className="rounded-xl border-l-4 border-l-blue-600 border border-slate-200 bg-slate-50/80 px-3 py-2.5 flex items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900">
-                  {vehicleType === 'motorcycle' ? <Bike size={14} className="text-slate-700 shrink-0" /> : <Car size={14} className="text-slate-700 shrink-0" />}
-                  <input
-                    type="text"
-                    value={evidence.viaRoad}
-                    onChange={e => onUpdateKmAndMeta({ viaRoad: e.target.value })}
-                    placeholder="途經主要道路（例：途經台64線）"
-                    className="w-full bg-transparent hover:bg-white focus:bg-white px-1 py-0.5 rounded outline-none text-xs font-extrabold text-slate-900"
-                  />
-                </div>
-                <div className="text-[10px] text-slate-500 pl-5 mt-0.5">
-                  {evidence.verificationStatus === 'google_verified'
-                    ? '已與 Google Maps 官方距離完成核對'
-                    : evidence.verificationStatus === 'osrm'
-                    ? '依真實道路路網計算之建議行車路線'
-                    : '系統座標推估路線，建議開啟 Google Maps 核驗'}
-                </div>
+                })}
               </div>
-              <div className="text-right shrink-0">
-                <div className="text-sm font-black text-amber-700 tabular-nums">
-                  {evidence.durationMin} 分
-                </div>
-                <div className="text-xs font-extrabold text-slate-700 tabular-nums">
-                  {actualKm.toFixed(1)} 公里
-                </div>
-              </div>
-            </div>
-          </div>
 
-          {/* 底部：Google Maps 實景核對連結、手動核對輸入與截圖上傳／Ctrl+V 貼上 */}
-          <div className="pt-2.5 border-t border-slate-200 space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex flex-col gap-0.5 bg-blue-50/70 border border-blue-200 rounded-lg px-2.5 py-1.5">
-                <span className="text-[10px] font-extrabold text-blue-800">
-                  Google Maps 驗證公里數（連動主表）
-                </span>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    value={actualKm}
-                    onChange={e =>
-                      onUpdateKmAndMeta({
-                        actualKm: Math.max(0, Number(e.target.value) || 0),
-                        verificationStatus: 'google_verified',
-                      })
-                    }
-                    className="w-full text-sm font-black text-blue-700 bg-white border border-blue-300 rounded px-1.5 py-0.5 outline-none tabular-nums"
-                  />
-                  <span className="text-[11px] font-bold text-slate-600 shrink-0">公里</span>
-                </div>
-              </label>
-
-              <label className="flex flex-col gap-0.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                <span className="text-[10px] font-extrabold text-slate-600">
-                  預估行車時間
-                </span>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    min="0"
-                    value={evidence.durationMin}
-                    onChange={e =>
-                      onUpdateKmAndMeta({
-                        durationMin: Math.max(0, Math.round(Number(e.target.value) || 0)),
-                      })
-                    }
-                    className="w-full text-sm font-black text-slate-800 bg-white border border-slate-300 rounded px-1.5 py-0.5 outline-none tabular-nums"
-                  />
-                  <span className="text-[11px] font-bold text-slate-600 shrink-0">分鐘</span>
-                </div>
-              </label>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
               <a
                 href={googleUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold transition-colors shadow-2xs"
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold transition-colors shadow-xs"
               >
-                <ExternalLink size={13} />
-                <span>開啟 Google Maps 驗證距離</span>
+                <ExternalLink size={14} />
+                <span>步驟 1：開啟真實 Google Maps 路線頁面</span>
               </a>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={e => {
-                  const f = e.target.files?.[0];
-                  if (f) processScreenshotFile(f);
-                  e.target.value = '';
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold cursor-pointer transition-colors"
-                title="上傳 Google Maps 截圖作為報核單附件（亦支援點選此卡片後直接按 Ctrl+V 貼上截圖）"
-              >
-                <Upload size={13} />
-                <span>上傳截圖</span>
-              </button>
             </div>
 
-            <div className="flex items-center justify-between text-[10px] text-slate-400">
-              <span className="inline-flex items-center gap-1">
-                <ClipboardPaste size={11} />
-                點選本卡片後按 <kbd className="px-1 py-0.2 bg-slate-100 border border-slate-300 rounded text-slate-600 font-bold">Ctrl+V</kbd> 可直接貼上 Google Maps 截圖
-              </span>
-              {pasteNotice && <span className="text-emerald-600 font-bold">{pasteNotice}</span>}
-            </div>
-          </div>
-        </div>
+            {/* 步驟 2：擷取或貼上真實 Google Maps 截圖 */}
+            <div className="pt-2.5 border-t border-slate-100 space-y-2">
+              <div className="text-xs font-extrabold text-slate-800">
+                ② 放入真實 Google Maps 距離截圖（3 種方式任選）
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handleOneClickCapture}
+                  disabled={isCapturing}
+                  className="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-extrabold cursor-pointer transition-colors shadow-xs"
+                  title="選擇剛剛打開的 Google Maps 分頁，一鍵直接拍下真實截圖放進附件"
+                >
+                  {isCapturing ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                  <span>{isCapturing ? '擷取中...' : '一鍵擷取視窗'}</span>
+                </button>
 
-        {/* 右側面板：真實街道地圖＋藍紫色導航路徑＋「🚗 XX分 / XX.X公里」氣泡（或顯示已上傳之 Google Maps 原版截圖） */}
-        <div className="lg:col-span-7 p-3 bg-slate-100/80 flex flex-col gap-2 justify-between">
-          {/* 右上模式切換（當已有 Google Maps 截圖時可自由切換檢視） */}
-          <div className="flex items-center justify-between gap-2 px-1">
-            <span className="text-[11px] font-extrabold text-slate-700">
-              {showingScreenshot
-                ? '📸 Google Maps 官方路線距離截圖（附件佐證原圖）'
-                : '🗺️ 真實道路導航路線預覽（列印附件將自動輸出此視覺卡片）'}
-            </span>
-            {evidence.googleScreenshotDataUrl && (
-              <div className="flex items-center gap-1">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={e => {
+                    if (e.target.files) handleFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
                 <button
                   type="button"
-                  onClick={() => setPreferScreenshotView(true)}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
-                    showingScreenshot ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 border border-slate-200'
-                  }`}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold cursor-pointer transition-colors shadow-xs"
                 >
-                  <ImageIcon size={11} />
-                  <span>Google 截圖</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreferScreenshotView(false)}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
-                    !showingScreenshot ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200'
-                  }`}
-                >
-                  <MapIcon size={11} />
-                  <span>系統路網圖</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateKmAndMeta({
-                      googleScreenshotDataUrl: undefined,
-                      verificationStatus: evidence.geometry.length > evidence.waypoints.length ? 'osrm' : 'estimated',
-                    })
-                  }
-                  className="p-1 rounded bg-rose-50 text-rose-600 hover:bg-rose-100 cursor-pointer"
-                  title="移除已上傳之 Google Maps 截圖"
-                >
-                  <Trash2 size={11} />
+                  <Upload size={14} />
+                  <span>上傳截圖檔案</span>
                 </button>
               </div>
-            )}
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                <ClipboardPaste size={13} className="text-blue-600 shrink-0" />
+                <span>
+                  或用 <kbd className="px-1 bg-white border border-slate-300 rounded text-slate-700 font-bold">Win+Shift+S</kbd> 截圖 Google Maps 後，點此卡片按 <kbd className="px-1 bg-white border border-slate-300 rounded text-slate-700 font-bold">Ctrl+V</kbd> 秒貼！
+                </span>
+              </div>
+            </div>
+
+            {/* 步驟 3：填入 Google Maps 顯示之官方公里數（即時連動主表費用） */}
+            <div className="pt-2.5 border-t border-slate-100 space-y-2">
+              <div className="text-xs font-extrabold text-slate-800">
+                ③ 依 Google Maps 截圖填入核定公里數（即時連動主表）
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-0.5 bg-blue-50/70 border border-blue-200 rounded-xl px-2.5 py-1.5">
+                  <span className="text-[10px] font-extrabold text-blue-800">Google Maps 實際公里數</span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={actualKm}
+                      onChange={e =>
+                        onUpdateEvidence({
+                          actualKm: Math.max(0, Number(e.target.value) || 0),
+                          verificationStatus: hasScreenshots ? 'google_verified' : evidence.verificationStatus,
+                        })
+                      }
+                      className="w-full text-base font-black text-blue-700 bg-white border border-blue-300 rounded-lg px-2 py-0.5 outline-none tabular-nums"
+                    />
+                    <span className="text-xs font-bold text-slate-600 shrink-0">公里</span>
+                  </div>
+                </label>
+
+                <label className="flex flex-col gap-0.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+                  <span className="text-[10px] font-extrabold text-slate-600">Google Maps 行車時間</span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min="0"
+                      value={evidence.durationMin || ''}
+                      placeholder="39"
+                      onChange={e =>
+                        onUpdateEvidence({
+                          durationMin: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                        })
+                      }
+                      className="w-full text-base font-black text-slate-800 bg-white border border-slate-300 rounded-lg px-2 py-0.5 outline-none tabular-nums"
+                    />
+                    <span className="text-xs font-bold text-slate-600 shrink-0">分鐘</span>
+                  </div>
+                </label>
+              </div>
+            </div>
           </div>
 
-          {showingScreenshot && evidence.googleScreenshotDataUrl ? (
-            <div className="relative rounded-xl overflow-hidden border border-slate-300 bg-white flex items-center justify-center min-h-[310px] max-h-[360px]">
-              <img
-                src={evidence.googleScreenshotDataUrl}
-                alt={`Google Maps 距離佐證_${dateStr}`}
-                className="w-full h-full object-contain max-h-[350px]"
-              />
-              <span className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-full bg-emerald-600/95 text-white text-[11px] font-extrabold shadow-md">
-                ✓ Google Maps 官方截圖佐證
-              </span>
+          {statusMessage && (
+            <div
+              className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${
+                statusMessage.type === 'ok'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-700'
+              }`}
+            >
+              {statusMessage.type === 'ok' ? '✅ ' : '⚠️ '}
+              {statusMessage.text}
+            </div>
+          )}
+        </div>
+
+        {/* 右側：真實 Google Maps 官方截圖展示／拖曳上傳主畫面（列印附件將直接輸出此真實截圖） */}
+        <div
+          onDragOver={e => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={e => {
+            e.preventDefault();
+            setIsDragging(false);
+            if (e.dataTransfer.files) handleFiles(e.dataTransfer.files);
+          }}
+          className={`lg:col-span-7 p-4 flex flex-col justify-between gap-3 transition-colors ${
+            isDragging ? 'bg-blue-50/90' : 'bg-slate-100/70'
+          }`}
+        >
+          {hasScreenshots ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-emerald-800 flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-emerald-600" />
+                  真實 Google Maps 距離佐證截圖（列印 PDF／Word 將原圖輸出此附件）
+                </span>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+                >
+                  ＋ 再加貼一張截圖
+                </button>
+              </div>
+
+              <div
+                className={`grid gap-3 ${
+                  evidence.googleScreenshots.length > 1 ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'
+                }`}
+              >
+                {evidence.googleScreenshots.map((dataUrl, imgIdx) => (
+                  <div
+                    key={`gm-shot-${imgIdx}`}
+                    className="relative group rounded-xl overflow-hidden border-2 border-emerald-200 bg-white shadow-sm"
+                  >
+                    <img
+                      src={dataUrl}
+                      alt={`Google Maps 真實截圖_${dateStr}_${imgIdx + 1}`}
+                      onClick={() => onPreviewImage?.(dataUrl)}
+                      className="w-full max-h-[380px] object-contain bg-slate-50 cursor-zoom-in"
+                    />
+                    <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                      {onPreviewImage && (
+                        <button
+                          type="button"
+                          onClick={() => onPreviewImage(dataUrl)}
+                          className="p-1.5 rounded-lg bg-slate-900/75 hover:bg-slate-900 text-white shadow cursor-pointer"
+                          title="放大檢視原圖"
+                        >
+                          <ZoomIn size={14} />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveScreenshot(imgIdx)}
+                        className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-700 text-white shadow cursor-pointer"
+                        title="刪除此截圖"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="px-3 py-1.5 bg-emerald-50 border-t border-emerald-100 flex items-center justify-between text-[11px] font-bold text-emerald-900">
+                      <span>真實 Google Maps 官方截圖 #{imgIdx + 1}</span>
+                      <span>
+                        {actualKm.toFixed(1)} 公里
+                        {evidence.durationMin > 0 ? ` · ${evidence.durationMin} 分` : ''}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <div
-              className="relative mx-auto rounded-xl overflow-hidden border border-slate-300 bg-slate-200 shadow-inner select-none"
-              style={{ width: '100%', maxWidth: `${MAP_WIDTH}px`, height: `${MAP_HEIGHT}px` }}
+              onClick={() => fileInputRef.current?.click()}
+              className={`flex-1 min-h-[300px] rounded-2xl border-2 border-dashed flex flex-col items-center justify-center text-center p-6 cursor-pointer transition-all ${
+                isDragging
+                  ? 'border-blue-500 bg-blue-50 text-blue-800'
+                  : 'border-slate-300 bg-white/90 hover:border-blue-400 hover:bg-blue-50/30 text-slate-600'
+              }`}
             >
-              {/* ESRI 無浮水印街道底圖圖磚 */}
-              {mapLayout.tiles.map((t, i) => (
-                <img
-                  key={`${mapLayout.zoom}-${i}`}
-                  src={t.url}
-                  alt=""
-                  draggable={false}
-                  className="absolute max-w-none pointer-events-none"
-                  style={{ left: t.left, top: t.top, width: 256, height: 256 }}
-                />
-              ))}
-
-              {/* 貼合真實街道的 Google Maps 藍紫色導航路線 */}
-              <svg
-                width={MAP_WIDTH}
-                height={MAP_HEIGHT}
-                className="absolute inset-0 pointer-events-none z-10"
-              >
-                {mapLayout.polylineSvgPoints && (
-                  <>
-                    <polyline
-                      points={mapLayout.polylineSvgPoints}
-                      fill="none"
-                      stroke="#ffffff"
-                      strokeWidth={8.5}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      opacity={0.94}
-                    />
-                    <polyline
-                      points={mapLayout.polylineSvgPoints}
-                      fill="none"
-                      stroke="#4338ca"
-                      strokeWidth={5}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </>
-                )}
-              </svg>
-
-              {/* 起點、停靠站與終點圖釘 */}
-              {mapLayout.markers.map((m, idx) => (
-                <div
-                  key={`mk-${idx}`}
-                  className="absolute z-20 pointer-events-none"
-                  style={{
-                    left: m.x,
-                    top: m.y,
-                    transform: m.isEnd && mapLayout.markers.length > 1 ? 'translate(-50%, -100%)' : 'translate(-50%, -50%)',
+              <div className="w-14 h-14 rounded-2xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center mb-3">
+                <Camera size={28} />
+              </div>
+              <div className="text-sm font-extrabold text-slate-800">
+                請附上【真實 Google Maps 路線距離截圖】
+              </div>
+              <p className="text-xs text-slate-500 mt-1.5 max-w-md leading-relaxed">
+                為符合會計核銷正式要求，本附件區僅呈現金流核對用之<strong>真實 Google Maps 官方截圖</strong>（不再以網頁模擬地圖替代）。
+                <br />
+                請先點左側「<strong>開啟真實 Google Maps 路線頁面</strong>」，再用「<strong>一鍵擷取視窗</strong>」或截圖後直接於此處按 <strong>Ctrl+V 貼上</strong>／拖曳圖檔！
+              </p>
+              <div className="mt-4 flex items-center gap-2 flex-wrap justify-center">
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    handleOneClickCapture();
                   }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold cursor-pointer shadow-xs"
                 >
-                  {m.isStart ? (
-                    <div className="w-4 h-4 rounded-full bg-white border-[3.5px] border-slate-900 shadow-md" />
-                  ) : m.isEnd && mapLayout.markers.length > 1 ? (
-                    <div className="w-6 h-6 rounded-full bg-rose-600 text-white border-2 border-white shadow-md text-[10px] font-black flex items-center justify-center">
-                      終
-                    </div>
-                  ) : (
-                    <div className="w-5 h-5 rounded-full bg-blue-600 text-white border-2 border-white shadow-md text-[10px] font-extrabold flex items-center justify-center">
-                      {m.idx}
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {/* 還原 Google Maps 懸浮藍色行車時間與公里氣泡（「🚗 40 分 / 18.8 公里」） */}
-              {evidence.waypoints.length >= 2 && (
-                <div
-                  className="absolute z-30 bg-blue-700 text-white px-2.5 py-1 rounded-lg shadow-lg border-2 border-white pointer-events-none leading-tight"
-                  style={{
-                    left: mapLayout.midPoint.x,
-                    top: mapLayout.midPoint.y,
-                    transform: 'translate(-50%, -115%)',
-                  }}
-                >
-                  <div className="flex items-center gap-1 text-xs font-extrabold whitespace-nowrap">
-                    {vehicleType === 'motorcycle' ? <Bike size={12} /> : <Car size={12} />}
-                    <span>{evidence.durationMin} 分</span>
-                  </div>
-                  <div className="text-[11px] font-bold opacity-95 whitespace-nowrap">
-                    {actualKm.toFixed(1)} 公里
-                  </div>
-                </div>
-              )}
-
-              <div className="absolute bottom-1.5 right-2 z-30 px-2 py-0.5 rounded bg-white/85 text-[9px] font-semibold text-slate-600 pointer-events-none">
-                ESRI World Street Map · {evidence.verificationStatus === 'osrm' ? 'OSRM 真實路網' : '座標推估'}
+                  <Camera size={14} />
+                  <span>一鍵擷取 Google Maps 分頁</span>
+                </button>
+                <span className="text-xs text-slate-400 font-bold">或</span>
+                <span className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold">
+                  <Upload size={13} />
+                  <span>點擊上傳 / 拖曳圖片 / Ctrl+V 貼上</span>
+                </span>
               </div>
             </div>
           )}
 
-          {/* Google Maps 官方驗證網址顯示條（列印附件亦會附上供會計掃描或點開稽核） */}
-          <div className="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center justify-between gap-2 text-[10px] text-slate-500">
+          {/* 底部：Google Maps 核驗連結供會計點選複查 */}
+          <div className="bg-white rounded-lg border border-slate-200 px-3 py-1.5 flex items-center justify-between gap-2 text-[10px] text-slate-500">
             <span className="truncate font-mono" title={googleUrl}>
-              Google Maps 核驗連結：{googleUrl}
+              Google Maps 路線核驗連結：{googleUrl}
             </span>
             <a
               href={googleUrl}
@@ -536,7 +530,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
               rel="noopener noreferrer"
               className="text-blue-600 hover:underline font-bold shrink-0"
             >
-              點此開啟 ↗
+              開啟 Google Maps ↗
             </a>
           </div>
         </div>

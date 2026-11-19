@@ -9,10 +9,8 @@ import {
   Car,
   Bike,
   CheckCircle2,
-  Map as MapIcon,
+  Camera,
   FileSpreadsheet,
-  RefreshCw,
-  Loader2,
   ExternalLink,
 } from 'lucide-react';
 import {
@@ -23,8 +21,7 @@ import {
 } from '../utils/mileage-calculator';
 import {
   buildGoogleMapsDirectionsUrl,
-  buildPrintableRouteMapHtml,
-  fetchRealRoadRoute,
+  formatStopForGoogleMaps,
 } from '../utils/road-routing';
 import {
   ExpenseRouteAttachmentCard,
@@ -49,7 +46,7 @@ interface ExpenseFormRow {
   specialDesc: string; // 特別費/臨時費 過路費/停車費 內容說明
   specialFee: number; // 特別費/臨時費 金額
   receiptCount: number; // 單據張數
-  evidence: RouteEvidenceData; // 每日路線與 Google Maps 距離驗證附件資料
+  evidence: RouteEvidenceData; // 真實 Google Maps 截圖佐證資料
 }
 
 interface TravelExpenseReimbursementModalProps {
@@ -63,7 +60,34 @@ interface TravelExpenseReimbursementModalProps {
   initialScope?: 'month' | 'day';
 }
 
+interface StoredEvidencePatch {
+  actualKm?: number;
+  durationMin?: number;
+  stopLabels?: string[];
+  googleScreenshots?: string[];
+}
+
+const SCREENSHOT_CACHE_KEY = 'expense_google_screenshots_v1';
 const UPPER_DIGITS = ['零', '壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖'] as const;
+
+const loadStoredEvidenceMap = (): Record<string, StoredEvidencePatch> => {
+  try {
+    const raw = localStorage.getItem(SCREENSHOT_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+const saveStoredEvidenceItem = (key: string, patch: StoredEvidencePatch): void => {
+  try {
+    const map = loadStoredEvidenceMap();
+    map[key] = { ...(map[key] || {}), ...patch };
+    localStorage.setItem(SCREENSHOT_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // 超過瀏覽器本機暫存配額時僅保留於記憶體，不影響列印與匯出
+  }
+};
 
 /**
  * 將金額拆解為國內出差旅費報核單右側直書收據欄之各位數大寫中文（拾萬、萬、仟、佰、拾、元）
@@ -92,12 +116,12 @@ const toRocYear = (yearStr: string): string => {
 };
 
 /**
- * 依據單日路線紀錄轉成報核單預設明細列（附帶完整站點座標與 Google Maps 距離驗證連結）
+ * 依據單日路線紀錄轉成報核單明細列，並合併已暫存之真實 Google Maps 截圖與核定公里數
  */
 const buildRowFromDailyRoute = (
   route: DailyRouteRecord,
   idx: number,
-  vehicle: VehicleType
+  storedMap: Record<string, StoredEvidencePatch>
 ): ExpenseFormRow => {
   const [, mm = '', dd = ''] = route.dateStr.split('-');
   const routeChain =
@@ -116,8 +140,18 @@ const buildRowFromDailyRoute = (
   }
 
   const waypoints = route.waypoints || [];
-  const estimatedKm = Number(route.totalKm.toFixed(1));
-  const estimatedMin = Math.max(5, Math.round((estimatedKm / 34) * 60));
+  const defaultStopLabels = waypoints.map(wp => formatStopForGoogleMaps(wp.label, wp));
+  const cacheKey = `${route.managerName}_${route.dateStr}`;
+  const saved = storedMap[cacheKey];
+
+  const initialKm = saved?.actualKm !== undefined ? saved.actualKm : Number(route.totalKm.toFixed(1));
+  const initialScreenshots = Array.isArray(saved?.googleScreenshots) ? saved.googleScreenshots : [];
+  const initialStopLabels =
+    Array.isArray(saved?.stopLabels) && saved.stopLabels.length > 0
+      ? saved.stopLabels
+      : defaultStopLabels.length >= 2
+      ? defaultStopLabels
+      : ['', ''];
 
   return {
     id: `route-${route.dateStr}-${idx}`,
@@ -125,7 +159,7 @@ const buildRowFromDailyRoute = (
     month: String(Number(mm) || mm),
     day: String(Number(dd) || dd),
     routeAndKmText: routeChain || '轄區門市巡店',
-    actualKm: estimatedKm,
+    actualKm: initialKm,
     workSummary: workParts.join('；') || '巡店督導與營運輔導',
     ticketFee: 0,
     taxiFee: 0,
@@ -136,11 +170,11 @@ const buildRowFromDailyRoute = (
     receiptCount: 0,
     evidence: {
       waypoints,
-      geometry: waypoints.map(w => [w.lat, w.lng] as [number, number]),
-      durationMin: estimatedMin,
-      viaRoad: '依門市座標推估路線（點擊抓取真實路網）',
-      verificationStatus: 'estimated',
-      googleMapsUrl: buildGoogleMapsDirectionsUrl(waypoints, vehicle),
+      stopLabels: initialStopLabels,
+      durationMin: saved?.durationMin ?? Math.max(0, Math.round((initialKm / 34) * 60)),
+      viaRoad: '',
+      verificationStatus: initialScreenshots.length > 0 ? 'google_verified' : 'pending_screenshot',
+      googleScreenshots: initialScreenshots,
     },
   };
 };
@@ -157,7 +191,7 @@ const escapeHtml = (str: string | number | undefined | null): string =>
     .replace(/'/g, '&#39;');
 
 /**
- * 東森寵物雲股份有限公司 — 國內出差旅費報核單 ＋ 附件（每日路線與 Google Maps 距離驗證佐證頁）
+ * 東森寵物雲股份有限公司 — 國內出差旅費報核單 ＋ 真實 Google Maps 截圖佐證附件
  */
 export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursementModalProps> = ({
   isOpen,
@@ -171,6 +205,8 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
 }) => {
   const [activeViewTab, setActiveViewTab] = useState<'form' | 'attachments'>('form');
   const [includeAttachmentsInExport, setIncludeAttachmentsInExport] = useState<boolean>(true);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+
   const [selectedManagerName, setSelectedManagerName] = useState<string>(initialManagerName);
   const [scope, setScope] = useState<'month' | 'day'>(initialScope);
   const [vehicleType, setVehicleType] = useState<VehicleType>(
@@ -189,10 +225,8 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
   const [endDateInput, setEndDateInput] = useState<string>('');
   const [endHour, setEndHour] = useState<string>('18');
 
-  // 明細列（每列包含對應之路線附件驗證資料）
+  // 明細列（每列綁定真實 Google Maps 截圖佐證）
   const [rows, setRows] = useState<ExpenseFormRow[]>([]);
-  const [fetchingRowIds, setFetchingRowIds] = useState<Record<string, boolean>>({});
-  const [isBatchFetchingRoad, setIsBatchFetchingRoad] = useState<boolean>(false);
 
   // 支付方式與備註
   const [paymentModeAutoCash, setPaymentModeAutoCash] = useState<boolean>(true);
@@ -201,15 +235,18 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
   const [otherPaymentAmount, setOtherPaymentAmount] = useState<number>(0);
   const [paymentNote, setPaymentNote] = useState<string>('');
 
-  // ESC 快捷鍵關閉視窗
+  // ESC 快捷鍵（若有放大預覽圖先關預覽圖，否則關閉報核單）
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (previewImageUrl) setPreviewImageUrl(null);
+        else onClose();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, previewImageUrl]);
 
   // 外部選定主管或單價變更時同步初始化
   useEffect(() => {
@@ -227,127 +264,55 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     [managersReport, selectedManagerName]
   );
 
-  /**
-   * 針對單筆明細抓取真實道路路網（OSRM），取得貼合道路的幾何折線、預估時間、途經道路與真實公里數
-   */
-  const fetchRoadForSingleRow = useCallback(
-    async (rowId: string, waypoints: RouteEvidenceData['waypoints'], region: string, applyKm = true) => {
-      if (!waypoints || waypoints.length < 2) return;
-      setFetchingRowIds(prev => ({ ...prev, [rowId]: true }));
-      try {
-        const result = await fetchRealRoadRoute(waypoints, region);
-        setRows(prev =>
-          prev.map(r => {
-            if (r.id !== rowId) return r;
-            const keepGoogleVerified = r.evidence.verificationStatus === 'google_verified';
-            return {
-              ...r,
-              actualKm: applyKm && !keepGoogleVerified && result.distanceKm > 0 ? result.distanceKm : r.actualKm,
-              evidence: {
-                ...r.evidence,
-                geometry: result.geometry,
-                durationMin: keepGoogleVerified ? r.evidence.durationMin : result.durationMin,
-                viaRoad: result.viaRoad,
-                verificationStatus: keepGoogleVerified ? 'google_verified' : result.source,
-              },
-            };
-          })
-        );
-      } finally {
-        setFetchingRowIds(prev => ({ ...prev, [rowId]: false }));
+  // 依據主管與統計範圍（全月／單日）重新連動填入表單與已保存之 Google Maps 截圖
+  const syncFromSystemData = useCallback(
+    (ignoreSavedCache = false) => {
+      if (!activeManager) return;
+      setApplicantName(activeManager.managerName);
+      setJobTitle(activeManager.roleLabel || '區主管');
+      setDepartmentText([activeManager.department, activeManager.region].filter(Boolean).join(' '));
+
+      const sourceRoutes: DailyRouteRecord[] =
+        scope === 'day'
+          ? activeManager.dayRoute
+            ? [activeManager.dayRoute]
+            : []
+          : [...activeManager.monthDailyRoutes].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+
+      const storedMap = ignoreSavedCache ? {} : loadStoredEvidenceMap();
+      const generatedRows = sourceRoutes.map((route, idx) =>
+        buildRowFromDailyRoute(route, idx, storedMap)
+      );
+      setRows(generatedRows);
+
+      const [yStr = '', mStr = ''] = targetMonthKey.split('-');
+      const rocY = toRocYear(yStr);
+      const periodLabel = scope === 'day' ? targetDateStr : `${rocY}年${Number(mStr)}月`;
+      setTripPurpose(`${periodLabel} ${activeManager.region}門市巡店查核與營運輔導`);
+
+      if (sourceRoutes.length > 0) {
+        setStartDateInput(sourceRoutes[0].dateStr);
+        setEndDateInput(sourceRoutes[sourceRoutes.length - 1].dateStr);
+      } else {
+        const fallbackDate = scope === 'day' ? targetDateStr : `${targetMonthKey}-01`;
+        setStartDateInput(fallbackDate);
+        setEndDateInput(fallbackDate);
       }
+      setPaymentModeAutoCash(true);
+      setCreditCardAmount(0);
+      setOtherPaymentAmount(0);
+      setAdvancePayment('');
+      setPaymentNote('');
     },
-    []
+    [activeManager, scope, targetMonthKey, targetDateStr]
   );
-
-  // 依據主管與統計範圍（全月／單日）重新連動填入表單與附件資料
-  const syncFromSystemData = useCallback(() => {
-    if (!activeManager) return;
-    setApplicantName(activeManager.managerName);
-    setJobTitle(activeManager.roleLabel || '區主管');
-    setDepartmentText([activeManager.department, activeManager.region].filter(Boolean).join(' '));
-
-    const sourceRoutes: DailyRouteRecord[] =
-      scope === 'day'
-        ? activeManager.dayRoute
-          ? [activeManager.dayRoute]
-          : []
-        : [...activeManager.monthDailyRoutes].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
-
-    const generatedRows = sourceRoutes.map((route, idx) =>
-      buildRowFromDailyRoute(route, idx, vehicleType)
-    );
-    setRows(generatedRows);
-
-    const [yStr = '', mStr = ''] = targetMonthKey.split('-');
-    const rocY = toRocYear(yStr);
-    const periodLabel = scope === 'day' ? targetDateStr : `${rocY}年${Number(mStr)}月`;
-    setTripPurpose(`${periodLabel} ${activeManager.region}門市巡店查核與營運輔導`);
-
-    if (sourceRoutes.length > 0) {
-      setStartDateInput(sourceRoutes[0].dateStr);
-      setEndDateInput(sourceRoutes[sourceRoutes.length - 1].dateStr);
-    } else {
-      const fallbackDate = scope === 'day' ? targetDateStr : `${targetMonthKey}-01`;
-      setStartDateInput(fallbackDate);
-      setEndDateInput(fallbackDate);
-    }
-    setPaymentModeAutoCash(true);
-    setCreditCardAmount(0);
-    setOtherPaymentAmount(0);
-    setAdvancePayment('');
-    setPaymentNote('');
-  }, [activeManager, scope, targetMonthKey, targetDateStr, vehicleType]);
 
   useEffect(() => {
     if (isOpen && activeManager) {
-      syncFromSystemData();
+      syncFromSystemData(false);
     }
-    // 僅於切換視窗開關、主管、統計範圍與年月時重新載入系統紀錄
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, selectedManagerName, scope, targetMonthKey, targetDateStr]);
-
-  // 切換至「附件」分頁時，若尚有未抓取真實路網折線的行程，自動於背景抓取前 6 筆道路軌跡讓地圖貼合街道
-  useEffect(() => {
-    if (!isOpen || activeViewTab !== 'attachments' || !activeManager) return;
-    const pending = rows.filter(
-      r =>
-        r.evidence.waypoints.length >= 2 &&
-        r.evidence.geometry.length <= r.evidence.waypoints.length &&
-        !fetchingRowIds[r.id]
-    );
-    if (pending.length === 0) return;
-
-    let cancelled = false;
-    (async () => {
-      for (const item of pending.slice(0, 6)) {
-        if (cancelled) break;
-        await fetchRoadForSingleRow(item.id, item.evidence.waypoints, activeManager.region, false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeViewTab]);
-
-  /**
-   * 一鍵批次抓取全部行程的真實道路距離、時間、途經道路與街道折線，並同步更新主表計價公里數
-   */
-  const handleBatchFetchRealRoads = async () => {
-    if (!activeManager || rows.length === 0 || isBatchFetchingRoad) return;
-    setIsBatchFetchingRoad(true);
-    try {
-      for (const r of rows) {
-        if (r.evidence.waypoints.length >= 2) {
-          await fetchRoadForSingleRow(r.id, r.evidence.waypoints, activeManager.region, true);
-        }
-      }
-    } finally {
-      setIsBatchFetchingRoad(false);
-    }
-  };
 
   // 切換汽／機車時同步調整每公里補助單價（汽車 6.5 元、機車 3 元）
   const handleVehicleSwitch = (nextType: VehicleType) => {
@@ -356,17 +321,29 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
   };
 
   const updateRow = <K extends keyof ExpenseFormRow>(id: string, key: K, value: ExpenseFormRow[K]) => {
-    setRows(prev => prev.map(r => (r.id === id ? { ...r, [key]: value } : r)));
+    setRows(prev =>
+      prev.map(r => {
+        if (r.id !== id) return r;
+        const nextRow = { ...r, [key]: value };
+        if (key === 'actualKm' && activeManager) {
+          saveStoredEvidenceItem(`${activeManager.managerName}_${r.dateStr}`, {
+            actualKm: Number(value) || 0,
+          });
+        }
+        return nextRow;
+      })
+    );
   };
 
-  const updateRowEvidenceAndKm = (
+  const updateRowEvidence = (
     id: string,
     patch: {
       actualKm?: number;
       durationMin?: number;
       viaRoad?: string;
+      stopLabels?: string[];
       verificationStatus?: VerificationStatus;
-      googleScreenshotDataUrl?: string;
+      googleScreenshots?: string[];
     }
   ) => {
     setRows(prev =>
@@ -376,14 +353,29 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
           ...r.evidence,
           ...(patch.durationMin !== undefined ? { durationMin: patch.durationMin } : {}),
           ...(patch.viaRoad !== undefined ? { viaRoad: patch.viaRoad } : {}),
+          ...(patch.stopLabels !== undefined ? { stopLabels: patch.stopLabels } : {}),
           ...(patch.verificationStatus !== undefined ? { verificationStatus: patch.verificationStatus } : {}),
-          ...('googleScreenshotDataUrl' in patch
-            ? { googleScreenshotDataUrl: patch.googleScreenshotDataUrl }
-            : {}),
+          ...(patch.googleScreenshots !== undefined ? { googleScreenshots: patch.googleScreenshots } : {}),
         };
+        const nextKm = patch.actualKm !== undefined ? patch.actualKm : r.actualKm;
+        const nextRouteText =
+          patch.stopLabels !== undefined && patch.stopLabels.filter(Boolean).length >= 2
+            ? patch.stopLabels.filter(Boolean).join('→')
+            : r.routeAndKmText;
+
+        if (activeManager) {
+          saveStoredEvidenceItem(`${activeManager.managerName}_${r.dateStr}`, {
+            actualKm: nextKm,
+            durationMin: nextEvidence.durationMin,
+            stopLabels: nextEvidence.stopLabels,
+            googleScreenshots: nextEvidence.googleScreenshots,
+          });
+        }
+
         return {
           ...r,
-          ...(patch.actualKm !== undefined ? { actualKm: patch.actualKm } : {}),
+          actualKm: nextKm,
+          routeAndKmText: nextRouteText,
           evidence: nextEvidence,
         };
       })
@@ -411,11 +403,11 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
         receiptCount: 0,
         evidence: {
           waypoints: [],
-          geometry: [],
+          stopLabels: ['', ''],
           durationMin: 0,
-          viaRoad: '手動新增行程',
-          verificationStatus: 'estimated',
-          googleMapsUrl: 'https://www.google.com/maps',
+          viaRoad: '',
+          verificationStatus: 'pending_screenshot',
+          googleScreenshots: [],
         },
       },
     ]);
@@ -425,7 +417,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     setRows(prev => prev.filter(r => r.id !== id));
   };
 
-  // 即時計算各列油資與橫向小計、直向總計、驗證統計
+  // 即時計算各列油資、橫向小計、直向總計與截圖附件完成數
   const calculated = useMemo(() => {
     const computedRows = rows.map(row => {
       const fuelSubsidy = Math.round((Number(row.actualKm) || 0) * ratePerKm);
@@ -464,23 +456,20 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       }
     );
 
-    const googleVerifiedCount = computedRows.filter(
-      r => r.evidence.verificationStatus === 'google_verified'
-    ).length;
-    const roadVerifiedCount = computedRows.filter(
-      r => r.evidence.verificationStatus === 'osrm' || r.evidence.verificationStatus === 'google_verified'
-    ).length;
-
+    const attachedCount = computedRows.filter(r => r.evidence.googleScreenshots.length > 0).length;
+    const totalScreenshotsCount = computedRows.reduce(
+      (sum, r) => sum + r.evidence.googleScreenshots.length,
+      0
+    );
     const upperDigits = splitAmountToUpperDigits(totals.grandTotal);
-    return { computedRows, totals, upperDigits, googleVerifiedCount, roadVerifiedCount };
+
+    return { computedRows, totals, upperDigits, attachedCount, totalScreenshotsCount };
   }, [rows, ratePerKm]);
 
-  // 預設現金支付金額自動連動總計
   const effectiveCashAmount = paymentModeAutoCash
     ? Math.max(0, calculated.totals.grandTotal - creditCardAmount - otherPaymentAmount)
     : cashAmount;
 
-  // 解析民國起訖日期與共計日數
   const dateHeaderInfo = useMemo(() => {
     const parse = (dStr: string) => {
       const [y = '', m = '', d = ''] = (dStr || '').split('-');
@@ -488,12 +477,13 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     };
     const s = parse(startDateInput);
     const e = parse(endDateInput);
-    const daysCount = rows.length > 0 ? rows.length : 0;
-    return { s, e, daysCount };
+    return { s, e, daysCount: rows.length };
   }, [startDateInput, endDateInput, rows.length]);
 
   /**
-   * 產生精準還原公司原版面之正式 HTML 文件（主表 + 附件：每日路線與 Google Maps 距離驗證頁）
+   * 產生正式 HTML 文件：
+   * 第 1 頁：東森寵物雲股份有限公司《國內出差旅費報核單》主表
+   * 第 2 頁起：每日【真實 Google Maps 官方截圖】佐證附件頁（原圖高清呈現，絕不使用網頁模擬地圖）
    */
   const buildPrintableDocumentHtml = (forWord = false, withAttachments = true): string => {
     const minDisplayRows = Math.max(5, calculated.computedRows.length);
@@ -524,13 +514,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                </td>`
             : '';
 
-        const verifyTag =
-          r.evidence.verificationStatus === 'google_verified'
-            ? ' [GM驗證]'
-            : r.evidence.verificationStatus === 'osrm'
-            ? ' [路網驗證]'
-            : '';
-
+        const verifyTag = r.evidence.googleScreenshots.length > 0 ? ' [附GM截圖]' : '';
         const routeDisplay =
           r.actualKm > 0
             ? `${escapeHtml(r.routeAndKmText)}<br/><span class="km-badge">(${r.actualKm.toFixed(1)} 公里${verifyTag})</span>`
@@ -582,105 +566,69 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       })
       .join('');
 
-    // 附件頁 HTML（每筆出差路線佐證卡片，比照 Google Maps 左站點＋右地圖雙欄格式）
+    // 附件頁：直接以滿版高畫質呈現「真實 Google Maps 官方截圖」
     const attachmentsPagesHtml =
       withAttachments && calculated.computedRows.length > 0
         ? calculated.computedRows
             .map((r, idx) => {
-              const gUrl =
-                r.evidence.googleMapsUrl ||
-                buildGoogleMapsDirectionsUrl(r.evidence.waypoints, vehicleType);
-              const statusLabel =
-                r.evidence.verificationStatus === 'google_verified'
-                  ? '✓ Google Maps 已核驗'
-                  : r.evidence.verificationStatus === 'osrm'
-                  ? '✓ 真實道路路網已驗證'
-                  : '系統座標推估路線';
-              const vehicleText = vehicleType === 'motorcycle' ? '機車 (3元/km)' : '汽車 (6.5元/km)';
+              const gUrl = buildGoogleMapsDirectionsUrl(
+                r.evidence.waypoints,
+                vehicleType,
+                r.evidence.stopLabels
+              );
+              const vehicleText = vehicleType === 'motorcycle' ? '機車（3元/km）' : '汽車（6.5元/km）';
+              const shots = r.evidence.googleScreenshots;
 
-              const waypointsListHtml =
-                r.evidence.waypoints.length > 0
-                  ? r.evidence.waypoints
-                      .map((wp, wIdx) => {
-                        const isFirst = wIdx === 0;
-                        const isLast =
-                          wIdx === r.evidence.waypoints.length - 1 && r.evidence.waypoints.length > 1;
-                        const badge = isFirst ? '起' : isLast ? '終' : String(wIdx);
-                        const bg = isFirst ? '#0f172a' : isLast ? '#dc2626' : '#2563eb';
-                        return `<div class="att-stop"><span class="att-pin" style="background:${bg};">${badge}</span><span>${escapeHtml(wp.label)}</span></div>`;
-                      })
+              const screenshotsHtml =
+                shots.length > 0
+                  ? shots
+                      .map(
+                        (src, sIdx) => `
+                          <div class="att-shot-box">
+                            <img src="${src}" alt="Google Maps 真實截圖 ${sIdx + 1}" class="att-shot-img" />
+                          </div>
+                        `
+                      )
                       .join('')
-                  : `<div class="att-stop"><span>${escapeHtml(r.routeAndKmText)}</span></div>`;
-
-              // 右側視覺佐證：優先採用使用者貼上的 Google Maps 官方截圖，否則輸出真實街道地圖＋藍紫導航路線＋時間公里氣泡
-              const rightVisualHtml = r.evidence.googleScreenshotDataUrl
-                ? `<div style="text-align:center;">
-                     <img src="${r.evidence.googleScreenshotDataUrl}" alt="Google Maps 路線距離截圖" style="max-width:100%;max-height:320px;border:1px solid #cbd5e1;border-radius:8px;object-fit:contain;" />
-                     <div style="font-size:9pt;color:#047857;font-weight:700;margin-top:4px;">▲ Google Maps 官方路線距離佐證截圖</div>
-                   </div>`
-                : forWord
-                ? `<div style="border:1px dashed #94a3b8;border-radius:8px;padding:14px;background:#f8fafc;font-size:10pt;line-height:1.6;">
-                     <div style="font-weight:700;color:#1e3a8a;margin-bottom:6px;">📍 Google Maps 線上距離驗證連結（請按 Ctrl+點擊 開啟比對）：</div>
-                     <div style="word-break:break-all;font-size:8.5pt;"><a href="${escapeHtml(gUrl)}">${escapeHtml(gUrl)}</a></div>
-                     <div style="margin-top:8px;color:#475569;font-size:9pt;">（若需在 Word 內嵌地圖圖片，建議先於系統「附件」分頁按 Ctrl+V 貼上 Google Maps 截圖後再匯出 Word，或直接使用「列印 / 另存 A4 橫式 PDF」輸出完整街道地圖）</div>
-                   </div>`
-                : buildPrintableRouteMapHtml({
-                    waypoints: r.evidence.waypoints,
-                    geometry: r.evidence.geometry,
-                    distanceKm: r.actualKm,
-                    durationMin: r.evidence.durationMin,
-                    vehicle: vehicleType,
-                    width: 540,
-                    height: 310,
-                  });
+                  : `<div class="att-empty-box">
+                       <div style="font-size:12pt;font-weight:800;color:#b45309;margin-bottom:6px;">
+                         ⚠ 尚未附加本筆日期之真實 Google Maps 官方截圖
+                       </div>
+                       <div style="font-size:9.5pt;color:#475569;margin-bottom:8px;">
+                         請開啟下方 Google Maps 路線連結截圖後，於報核單「附件」分頁按 Ctrl+V 貼上，或列印後黏貼紙本 Google Maps 截圖於此處。
+                       </div>
+                       <div style="font-size:8.5pt;word-break:break-all;color:#1d4ed8;">
+                         ${escapeHtml(gUrl)}
+                       </div>
+                     </div>`;
 
               return `
                 <div class="att-page">
                   <div class="att-header">
                     <div>
-                      <div class="att-title">東森寵物雲股份有限公司 — 國內出差旅費報核單【附件 ${idx + 1}：路線與 Google Maps 距離佐證】</div>
+                      <div class="att-title">
+                        東森寵物雲股份有限公司 — 國內出差旅費報核單【附件 ${idx + 1}：Google Maps 路線距離佐證】
+                      </div>
                       <div class="att-sub">
-                        申請人：<strong>${escapeHtml(applicantName)}</strong>（${escapeHtml(departmentText)}） ｜ 出差日期：<strong>${escapeHtml(r.dateStr)}</strong> ｜ 交通工具：<strong>${vehicleText}</strong>
+                        申請人：<strong>${escapeHtml(applicantName)}</strong>（${escapeHtml(departmentText)}）
+                        ｜ 出差日期：<strong>${escapeHtml(r.dateStr)}</strong>
+                        ｜ 起訖地點：<strong>${escapeHtml(r.routeAndKmText)}</strong>
                       </div>
                     </div>
-                    <div class="att-badge">${statusLabel}</div>
+                    <div class="att-metric">
+                      <div>核定距離：<strong>${r.actualKm.toFixed(1)} 公里</strong>${r.evidence.durationMin > 0 ? `（約 ${r.evidence.durationMin} 分）` : ''}</div>
+                      <div>油資補助：<strong>NT$ ${r.fuelSubsidy.toLocaleString('zh-TW')}</strong>（${vehicleText}）</div>
+                    </div>
                   </div>
 
-                  <table class="att-layout-table">
-                    <tr>
-                      <td class="att-left-col">
-                        <div class="att-panel-title">一、當日起訖站點與停靠順序</div>
-                        <div class="att-stops-box">
-                          ${waypointsListHtml}
-                        </div>
+                  <div class="${shots.length > 1 ? 'att-grid-2' : 'att-grid-1'}">
+                    ${screenshotsHtml}
+                  </div>
 
-                        <div class="att-summary-box">
-                          <div style="font-weight:700;font-size:10.5pt;color:#0f172a;">
-                            ${vehicleType === 'motorcycle' ? '🛵' : '🚗'} ${escapeHtml(r.evidence.viaRoad)}
-                          </div>
-                          <div style="margin-top:6px;display:flex;justify-content:space-between;align-items:baseline;">
-                            <span style="font-size:13pt;font-weight:900;color:#b45309;">${r.evidence.durationMin} 分</span>
-                            <span style="font-size:14pt;font-weight:900;color:#1d4ed8;">${r.actualKm.toFixed(1)} 公里</span>
-                          </div>
-                          <div style="margin-top:6px;padding-top:6px;border-top:1px dashed #cbd5e1;font-size:10pt;">
-                            油資補助試算：<strong>${r.actualKm.toFixed(1)} 公里 × ${ratePerKm} 元 = NT$ ${r.fuelSubsidy.toLocaleString('zh-TW')} 元</strong>
-                          </div>
-                        </div>
-
-                        <div class="att-work-box">
-                          <strong>工作記要：</strong>${escapeHtml(r.workSummary)}
-                        </div>
-
-                        <div class="att-gmap-link">
-                          <strong>Google Maps 距離驗證連結：</strong><br/>
-                          <a href="${escapeHtml(gUrl)}">${escapeHtml(gUrl)}</a>
-                        </div>
-                      </td>
-                      <td class="att-right-col">
-                        ${rightVisualHtml}
-                      </td>
-                    </tr>
-                  </table>
+                  <div class="att-footer">
+                    <span>工作記要：${escapeHtml(r.workSummary)}</span>
+                    <span>Google Maps 核驗連結：<a href="${escapeHtml(gUrl)}">${escapeHtml(gUrl)}</a></span>
+                  </div>
                 </div>
               `;
             })
@@ -780,19 +728,9 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       letter-spacing: 0.08em;
       line-height: 1.4;
     }
-    .v-amount span {
-      font-weight: 700;
-      text-decoration: underline;
-    }
-    .v-sign {
-      margin-top: 8px;
-    }
-    .notes {
-      margin-top: 6px;
-      font-size: 9.5pt;
-      font-weight: 700;
-      line-height: 1.5;
-    }
+    .v-amount span { font-weight: 700; text-decoration: underline; }
+    .v-sign { margin-top: 8px; }
+    .notes { margin-top: 6px; font-size: 9.5pt; font-weight: 700; line-height: 1.5; }
     .sign-row {
       margin-top: 12px;
       width: 100%;
@@ -801,16 +739,12 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       font-size: 11pt;
       font-weight: 700;
     }
-    .sign-cell {
-      display: table-cell;
-      text-align: left;
-      padding-left: 6px;
-    }
-    /* 附件頁樣式 */
+    .sign-cell { display: table-cell; text-align: left; padding-left: 6px; }
+
+    /* 真實 Google Maps 截圖附件頁樣式 */
     .att-page {
       page-break-before: always;
       break-before: page;
-      padding-top: 4px;
       font-family: "Microsoft JhengHei", "Noto Sans TC", sans-serif;
     }
     .att-header {
@@ -818,106 +752,58 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       justify-content: space-between;
       align-items: center;
       border-bottom: 2px solid #0f172a;
-      padding-bottom: 8px;
-      margin-bottom: 12px;
+      padding-bottom: 7px;
+      margin-bottom: 10px;
+      gap: 12px;
     }
-    .att-title {
-      font-size: 13pt;
-      font-weight: 800;
-      color: #0f172a;
-    }
-    .att-sub {
+    .att-title { font-size: 12.5pt; font-weight: 800; color: #0f172a; }
+    .att-sub { font-size: 9pt; color: #334155; margin-top: 3px; }
+    .att-metric {
+      text-align: right;
+      background: #eff6ff;
+      border: 1.5px solid #2563eb;
+      border-radius: 8px;
+      padding: 5px 10px;
       font-size: 9.5pt;
-      color: #334155;
-      margin-top: 3px;
-    }
-    .att-badge {
-      padding: 4px 12px;
-      border-radius: 999px;
-      background: #ecfdf5;
-      border: 1.5px solid #10b981;
-      color: #065f46;
-      font-size: 9.5pt;
-      font-weight: 800;
+      color: #1e3a8a;
       white-space: nowrap;
     }
-    table.att-layout-table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }
-    .att-left-col {
-      width: 44%;
-      vertical-align: top;
-      padding-right: 14px;
-    }
-    .att-right-col {
-      width: 56%;
-      vertical-align: top;
-    }
-    .att-panel-title {
-      font-size: 10pt;
-      font-weight: 800;
-      color: #1e293b;
-      margin-bottom: 6px;
-    }
-    .att-stops-box {
-      border: 1px solid #cbd5e1;
+    .att-grid-1 { text-align: center; }
+    .att-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .att-shot-box {
+      border: 1.5px solid #cbd5e1;
       border-radius: 8px;
-      padding: 8px;
+      padding: 6px;
+      background: #ffffff;
+      text-align: center;
+    }
+    .att-shot-img {
+      max-width: 100%;
+      max-height: 145mm;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
+    }
+    .att-empty-box {
+      border: 2px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 40px 24px;
+      text-align: center;
       background: #f8fafc;
-      margin-bottom: 10px;
+      min-height: 120mm;
     }
-    .att-stop {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 9.5pt;
-      font-weight: 600;
-      color: #0f172a;
-      margin-bottom: 5px;
-    }
-    .att-stop:last-child { margin-bottom: 0; }
-    .att-pin {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 18px;
-      height: 18px;
-      border-radius: 999px;
-      color: #fff;
-      font-size: 8.5pt;
-      font-weight: 800;
-      flex-shrink: 0;
-    }
-    .att-summary-box {
-      border: 1.5px solid #2563eb;
-      border-left: 5px solid #2563eb;
-      border-radius: 8px;
-      padding: 10px 12px;
-      background: #eff6ff;
-      margin-bottom: 10px;
-    }
-    .att-work-box {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 8px 10px;
-      font-size: 9pt;
-      color: #334155;
-      margin-bottom: 10px;
-    }
-    .att-gmap-link {
-      border: 1px dashed #94a3b8;
-      border-radius: 8px;
-      padding: 7px 9px;
+    .att-footer {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px dashed #cbd5e1;
       font-size: 8pt;
       color: #475569;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
       word-break: break-all;
     }
-    .att-gmap-link a {
-      color: #1d4ed8;
-      text-decoration: underline;
-    }
+    .att-footer a { color: #1d4ed8; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -1027,7 +913,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
 
   <div class="notes">
     註1：駕駛自用汽、機車出差者，請註明往返目的地之實際公里數。<br/>
-    註2：汽車每公里補助<u>6.5</u>元，機車每公里補助<u>3</u>元（本次計價基準：${vehicleType === 'motorcycle' ? '機車' : '汽車'} ${ratePerKm} 元／公里${withAttachments ? '，另檢附每日路線與 Google Maps 距離佐證附件共 ' + calculated.computedRows.length + ' 頁' : ''}）
+    註2：汽車每公里補助<u>6.5</u>元，機車每公里補助<u>3</u>元（本次計價基準：${vehicleType === 'motorcycle' ? '機車' : '汽車'} ${ratePerKm} 元／公里${withAttachments ? '，另檢附 Google Maps 距離佐證截圖附件共 ' + calculated.computedRows.length + ' 頁' : ''}）
   </div>
 
   <div class="sign-row">
@@ -1047,7 +933,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
   };
 
   /**
-   * 開啟 A4 橫式列印／另存 PDF 視窗（自動等候地圖圖磚與截圖載入完畢後再啟動列印，避免地圖空白）
+   * 開啟 A4 橫式列印／另存 PDF 視窗（等待全部真實截圖載入後再啟動列印）
    */
   const handlePrintPdf = () => {
     const html = buildPrintableDocumentHtml(false, includeAttachmentsInExport);
@@ -1061,7 +947,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     printWin.document.close();
     printWin.focus();
 
-    const triggerPrintWhenImagesReady = () => {
+    const triggerPrintWhenReady = () => {
       const imgs = Array.from(printWin.document.images || []);
       if (imgs.length === 0) {
         printWin.print();
@@ -1073,29 +959,27 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
         settled = true;
         setTimeout(() => printWin.print(), 180);
       };
-      // 最多等待 4 秒避免單張慢圖磚卡住列印視窗
-      const fallbackTimer = setTimeout(done, 4000);
+      const timer = setTimeout(done, 3500);
       Promise.all(
-        imgs.map(
-          img =>
-            img.complete
-              ? Promise.resolve()
-              : new Promise<void>(resolve => {
-                  img.onload = () => resolve();
-                  img.onerror = () => resolve();
-                })
+        imgs.map(img =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>(resolve => {
+                img.onload = () => resolve();
+                img.onerror = () => resolve();
+              })
         )
       ).then(() => {
-        clearTimeout(fallbackTimer);
+        clearTimeout(timer);
         done();
       });
     };
 
-    setTimeout(triggerPrintWhenImagesReady, 220);
+    setTimeout(triggerPrintWhenReady, 200);
   };
 
   /**
-   * 匯出可由 Microsoft Word 開啟編輯之橫式 A4 報核單（含附件頁與已上傳之 Google Maps 截圖）
+   * 匯出 Word (.doc)，內嵌完整真實 Google Maps 官方截圖原圖
    */
   const handleExportWord = () => {
     const html = buildPrintableDocumentHtml(true, includeAttachmentsInExport);
@@ -1103,7 +987,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `東森寵物雲_國內出差旅費報核單含附件_${applicantName || '區主管'}_${targetMonthKey}.doc`;
+    link.download = `東森寵物雲_國內出差旅費報核單含GoogleMaps截圖_${applicantName || '區主管'}_${targetMonthKey}.doc`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -1128,7 +1012,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
               系統自動連動
             </span>
             <h2 className="text-sm sm:text-base font-extrabold tracking-wide">
-              東森寵物雲股份有限公司 — 國內出差旅費報核單＆路線距離附件
+              東森寵物雲股份有限公司 — 國內出差旅費報核單＆真實 Google Maps 截圖附件
             </h2>
           </div>
 
@@ -1140,7 +1024,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                 onChange={e => setIncludeAttachmentsInExport(e.target.checked)}
                 className="rounded text-amber-400 focus:ring-0 cursor-pointer"
               />
-              <span>含距離驗證附件頁 ({rows.length}頁)</span>
+              <span>含真實截圖附件 ({calculated.attachedCount}/{rows.length})</span>
             </label>
 
             <button
@@ -1171,9 +1055,8 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
           </div>
         </div>
 
-        {/* 主表 / 附件雙分頁切換 ＋ 快速連動篩選條 */}
+        {/* 主表 / 附件雙分頁切換 ＋ 快速控制列 */}
         <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
-          {/* 左側：主表 vs 附件分頁切換 */}
           <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
             <button
               type="button"
@@ -1196,19 +1079,22 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                   : 'text-blue-700 hover:bg-blue-50'
               }`}
             >
-              <MapIcon size={14} />
-              <span>附件：路線與 Google Maps 距離驗證</span>
+              <Camera size={14} />
+              <span>附件：真實 Google Maps 距離截圖</span>
               <span
                 className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                  activeViewTab === 'attachments' ? 'bg-white/25 text-white' : 'bg-blue-100 text-blue-800'
+                  activeViewTab === 'attachments'
+                    ? 'bg-white/25 text-white'
+                    : calculated.attachedCount === rows.length && rows.length > 0
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-amber-100 text-amber-800'
                 }`}
               >
-                {calculated.roadVerifiedCount}/{rows.length}
+                {calculated.attachedCount}/{rows.length}
               </span>
             </button>
           </div>
 
-          {/* 右側：切換主管、範圍、汽機車單價與批次抓取真實路網 */}
           <div className="flex items-center gap-2 flex-wrap">
             <select
               value={selectedManagerName}
@@ -1277,17 +1163,6 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
 
             <button
               type="button"
-              onClick={handleBatchFetchRealRoads}
-              disabled={isBatchFetchingRoad || rows.length === 0}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-xs font-extrabold cursor-pointer transition-colors shadow-2xs"
-              title="批次抓取全部出差日之真實道路公里數、行車分鐘數與街道導航軌跡，並同步更新主表計價"
-            >
-              {isBatchFetchingRoad ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-              <span>{isBatchFetchingRoad ? '抓取路網中...' : '批次抓取真實路網距離'}</span>
-            </button>
-
-            <button
-              type="button"
               onClick={handleAddRow}
               className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold cursor-pointer"
             >
@@ -1296,9 +1171,9 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
             </button>
             <button
               type="button"
-              onClick={syncFromSystemData}
+              onClick={() => syncFromSystemData(true)}
               className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-bold cursor-pointer"
-              title="重設為系統原始巡店紀錄"
+              title="重設為系統原始巡店紀錄（清除本機暫存公里數與截圖）"
             >
               <RotateCcw size={13} />
             </button>
@@ -1501,178 +1376,175 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                       </td>
                     </tr>
                   ) : (
-                    calculated.computedRows.map((row, idx) => (
-                      <tr key={row.id} className="hover:bg-blue-50/30 transition-colors group">
-                        <td className="border border-black p-0.5 text-center">
-                          <input
-                            type="text"
-                            value={row.month}
-                            onChange={e => updateRow(row.id, 'month', e.target.value)}
-                            className="w-full text-center bg-transparent outline-none"
-                          />
-                        </td>
-                        <td className="border border-black p-0.5 text-center">
-                          <input
-                            type="text"
-                            value={row.day}
-                            onChange={e => updateRow(row.id, 'day', e.target.value)}
-                            className="w-full text-center bg-transparent outline-none"
-                          />
-                        </td>
-                        <td className="border border-black p-1 align-top">
-                          <textarea
-                            rows={2}
-                            value={row.routeAndKmText}
-                            onChange={e => updateRow(row.id, 'routeAndKmText', e.target.value)}
-                            className="w-full text-[11px] leading-snug bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 outline-none resize-none rounded px-1"
-                          />
-                          <div className="flex items-center justify-between gap-1 mt-0.5 pt-0.5 border-t border-dashed border-slate-200 font-sans">
-                            <button
-                              type="button"
-                              onClick={() => setActiveViewTab('attachments')}
-                              className={`text-[9.5px] px-1.5 py-0.5 rounded font-bold cursor-pointer border ${
-                                row.evidence.verificationStatus === 'google_verified'
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                  : row.evidence.verificationStatus === 'osrm'
-                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                  : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                              }`}
-                              title="點此前往附件頁檢視地圖路線與 Google Maps 距離驗證"
-                            >
-                              {row.evidence.verificationStatus === 'google_verified'
-                                ? '✓ GM驗證'
-                                : row.evidence.verificationStatus === 'osrm'
-                                ? '✓ 路網驗證'
-                                : '📎 驗證附件'}
-                            </button>
-                            <div className="flex items-center gap-0.5">
-                              <input
-                                type="number"
-                                step="0.1"
-                                min="0"
-                                value={row.actualKm}
-                                onChange={e => updateRow(row.id, 'actualKm', Math.max(0, Number(e.target.value) || 0))}
-                                className="w-13 text-right text-[11px] font-extrabold text-blue-700 bg-blue-50/60 border border-blue-200 rounded px-1 py-0.5 outline-none tabular-nums"
-                              />
-                              <span className="text-[10px] font-bold text-slate-600">km</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="border border-black p-1 align-top relative">
-                          <textarea
-                            rows={3}
-                            value={row.workSummary}
-                            onChange={e => updateRow(row.id, 'workSummary', e.target.value)}
-                            className="w-full text-[11px] leading-snug bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 outline-none resize-none rounded px-1"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteRow(row.id)}
-                            className="opacity-0 group-hover:opacity-100 absolute top-1 right-1 p-0.5 rounded bg-rose-50 text-rose-500 hover:bg-rose-100 cursor-pointer transition-opacity"
-                            title="刪除此列"
-                          >
-                            <Trash2 size={11} />
-                          </button>
-                        </td>
-                        <td className="border border-black p-0.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.ticketFee || ''}
-                            placeholder="-"
-                            onChange={e => updateRow(row.id, 'ticketFee', Math.max(0, Number(e.target.value) || 0))}
-                            className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
-                          />
-                        </td>
-                        <td className="border border-black p-0.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.taxiFee || ''}
-                            placeholder="-"
-                            onChange={e => updateRow(row.id, 'taxiFee', Math.max(0, Number(e.target.value) || 0))}
-                            className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
-                          />
-                        </td>
-                        <td className="border border-black px-1.5 py-1 text-right font-bold text-emerald-700 bg-emerald-50/40 tabular-nums font-sans">
-                          {row.fuelSubsidy > 0 ? row.fuelSubsidy.toLocaleString('zh-TW') : '-'}
-                        </td>
-                        <td className="border border-black p-0.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.lodgingFee || ''}
-                            placeholder="-"
-                            onChange={e => updateRow(row.id, 'lodgingFee', Math.max(0, Number(e.target.value) || 0))}
-                            className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
-                          />
-                        </td>
-                        <td className="border border-black p-0.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.mealMiscFee || ''}
-                            placeholder="-"
-                            onChange={e => updateRow(row.id, 'mealMiscFee', Math.max(0, Number(e.target.value) || 0))}
-                            className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
-                          />
-                        </td>
-                        <td className="border border-black p-0.5">
-                          <input
-                            type="text"
-                            value={row.specialDesc}
-                            placeholder="過路/停車"
-                            onChange={e => updateRow(row.id, 'specialDesc', e.target.value)}
-                            className="w-full text-left text-[11px] bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none"
-                          />
-                        </td>
-                        <td className="border border-black p-0.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.specialFee || ''}
-                            placeholder="-"
-                            onChange={e => updateRow(row.id, 'specialFee', Math.max(0, Number(e.target.value) || 0))}
-                            className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
-                          />
-                        </td>
-                        <td className="border border-black p-0.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={row.receiptCount || ''}
-                            placeholder="0"
-                            onChange={e => updateRow(row.id, 'receiptCount', Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                            className="w-full text-center bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
-                          />
-                        </td>
-                        <td className="border border-black px-1.5 py-1 text-right font-black text-slate-900 bg-slate-50/70 tabular-nums font-sans">
-                          {row.rowTotal.toLocaleString('zh-TW')}
-                        </td>
-
-                        {idx === 0 && (
-                          <td rowSpan={calculated.computedRows.length + 1} className="border border-black align-top p-2 bg-amber-50/20">
-                            <div className="flex flex-row-reverse justify-around items-stretch min-h-[210px] text-[12px] leading-snug select-none">
-                              <div style={{ writingMode: 'vertical-rl' }} className="tracking-widest">
-                                茲收到本人出差旅費共計新台幣
-                              </div>
-                              <div style={{ writingMode: 'vertical-rl' }} className="tracking-widest">
-                                <strong className="text-blue-800 underline">{calculated.upperDigits.shiWan}</strong>拾
-                                <strong className="text-blue-800 underline">{calculated.upperDigits.wan}</strong>萬
-                                <strong className="text-blue-800 underline">{calculated.upperDigits.qian}</strong>仟
-                                <strong className="text-blue-800 underline">{calculated.upperDigits.bai}</strong>佰
-                                <strong className="text-blue-800 underline">{calculated.upperDigits.shi}</strong>拾
-                                <strong className="text-blue-800 underline">{calculated.upperDigits.yuan}</strong>元
-                                零角整　此據
-                              </div>
-                              <div style={{ writingMode: 'vertical-rl' }} className="tracking-widest">
-                                出差人：　　　（簽章）
+                    calculated.computedRows.map((row, idx) => {
+                      const hasShot = row.evidence.googleScreenshots.length > 0;
+                      return (
+                        <tr key={row.id} className="hover:bg-blue-50/30 transition-colors group">
+                          <td className="border border-black p-0.5 text-center">
+                            <input
+                              type="text"
+                              value={row.month}
+                              onChange={e => updateRow(row.id, 'month', e.target.value)}
+                              className="w-full text-center bg-transparent outline-none"
+                            />
+                          </td>
+                          <td className="border border-black p-0.5 text-center">
+                            <input
+                              type="text"
+                              value={row.day}
+                              onChange={e => updateRow(row.id, 'day', e.target.value)}
+                              className="w-full text-center bg-transparent outline-none"
+                            />
+                          </td>
+                          <td className="border border-black p-1 align-top">
+                            <textarea
+                              rows={2}
+                              value={row.routeAndKmText}
+                              onChange={e => updateRow(row.id, 'routeAndKmText', e.target.value)}
+                              className="w-full text-[11px] leading-snug bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 outline-none resize-none rounded px-1"
+                            />
+                            <div className="flex items-center justify-between gap-1 mt-0.5 pt-0.5 border-t border-dashed border-slate-200 font-sans">
+                              <button
+                                type="button"
+                                onClick={() => setActiveViewTab('attachments')}
+                                className={`text-[9.5px] px-1.5 py-0.5 rounded font-bold cursor-pointer border ${
+                                  hasShot
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                }`}
+                                title="點此前往附件頁貼上或檢視真實 Google Maps 截圖"
+                              >
+                                {hasShot ? `✓ 已附截圖(${row.evidence.googleScreenshots.length})` : '📸 補附GM截圖'}
+                              </button>
+                              <div className="flex items-center gap-0.5">
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  value={row.actualKm}
+                                  onChange={e => updateRow(row.id, 'actualKm', Math.max(0, Number(e.target.value) || 0))}
+                                  className="w-13 text-right text-[11px] font-extrabold text-blue-700 bg-blue-50/60 border border-blue-200 rounded px-1 py-0.5 outline-none tabular-nums"
+                                />
+                                <span className="text-[10px] font-bold text-slate-600">km</span>
                               </div>
                             </div>
                           </td>
-                        )}
-                      </tr>
-                    ))
+                          <td className="border border-black p-1 align-top relative">
+                            <textarea
+                              rows={3}
+                              value={row.workSummary}
+                              onChange={e => updateRow(row.id, 'workSummary', e.target.value)}
+                              className="w-full text-[11px] leading-snug bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 outline-none resize-none rounded px-1"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRow(row.id)}
+                              className="opacity-0 group-hover:opacity-100 absolute top-1 right-1 p-0.5 rounded bg-rose-50 text-rose-500 hover:bg-rose-100 cursor-pointer transition-opacity"
+                              title="刪除此列"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </td>
+                          <td className="border border-black p-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={row.ticketFee || ''}
+                              placeholder="-"
+                              onChange={e => updateRow(row.id, 'ticketFee', Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
+                            />
+                          </td>
+                          <td className="border border-black p-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={row.taxiFee || ''}
+                              placeholder="-"
+                              onChange={e => updateRow(row.id, 'taxiFee', Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
+                            />
+                          </td>
+                          <td className="border border-black px-1.5 py-1 text-right font-bold text-emerald-700 bg-emerald-50/40 tabular-nums font-sans">
+                            {row.fuelSubsidy > 0 ? row.fuelSubsidy.toLocaleString('zh-TW') : '-'}
+                          </td>
+                          <td className="border border-black p-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={row.lodgingFee || ''}
+                              placeholder="-"
+                              onChange={e => updateRow(row.id, 'lodgingFee', Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
+                            />
+                          </td>
+                          <td className="border border-black p-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={row.mealMiscFee || ''}
+                              placeholder="-"
+                              onChange={e => updateRow(row.id, 'mealMiscFee', Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
+                            />
+                          </td>
+                          <td className="border border-black p-0.5">
+                            <input
+                              type="text"
+                              value={row.specialDesc}
+                              placeholder="過路/停車"
+                              onChange={e => updateRow(row.id, 'specialDesc', e.target.value)}
+                              className="w-full text-left text-[11px] bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none"
+                            />
+                          </td>
+                          <td className="border border-black p-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={row.specialFee || ''}
+                              placeholder="-"
+                              onChange={e => updateRow(row.id, 'specialFee', Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full text-right bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
+                            />
+                          </td>
+                          <td className="border border-black p-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={row.receiptCount || ''}
+                              placeholder="0"
+                              onChange={e => updateRow(row.id, 'receiptCount', Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                              className="w-full text-center bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1 py-1 outline-none tabular-nums font-sans"
+                            />
+                          </td>
+                          <td className="border border-black px-1.5 py-1 text-right font-black text-slate-900 bg-slate-50/70 tabular-nums font-sans">
+                            {row.rowTotal.toLocaleString('zh-TW')}
+                          </td>
+
+                          {idx === 0 && (
+                            <td rowSpan={calculated.computedRows.length + 1} className="border border-black align-top p-2 bg-amber-50/20">
+                              <div className="flex flex-row-reverse justify-around items-stretch min-h-[210px] text-[12px] leading-snug select-none">
+                                <div style={{ writingMode: 'vertical-rl' }} className="tracking-widest">
+                                  茲收到本人出差旅費共計新台幣
+                                </div>
+                                <div style={{ writingMode: 'vertical-rl' }} className="tracking-widest">
+                                  <strong className="text-blue-800 underline">{calculated.upperDigits.shiWan}</strong>拾
+                                  <strong className="text-blue-800 underline">{calculated.upperDigits.wan}</strong>萬
+                                  <strong className="text-blue-800 underline">{calculated.upperDigits.qian}</strong>仟
+                                  <strong className="text-blue-800 underline">{calculated.upperDigits.bai}</strong>佰
+                                  <strong className="text-blue-800 underline">{calculated.upperDigits.shi}</strong>拾
+                                  <strong className="text-blue-800 underline">{calculated.upperDigits.yuan}</strong>元
+                                  零角整　此據
+                                </div>
+                                <div style={{ writingMode: 'vertical-rl' }} className="tracking-widest">
+                                  出差人：　　　（簽章）
+                                </div>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
                   )}
 
                   <tr className="bg-amber-50/70 font-bold">
@@ -1785,33 +1657,24 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
               </div>
             </div>
           ) : (
-            /* =================== 分頁二：附件（每日路線與 Google Maps 距離驗證） =================== */
+            /* =================== 分頁二：真實 Google Maps 距離截圖附件 =================== */
             <div className="max-w-[1260px] mx-auto space-y-4">
-              {/* 附件說明與批次驗證導引橫幅 */}
-              <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-2xl p-4 shadow-md flex flex-wrap items-center justify-between gap-3">
+              <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white rounded-2xl p-4 shadow-md flex flex-wrap items-center justify-between gap-3 border border-indigo-500/30">
                 <div className="space-y-1">
                   <div className="text-sm sm:text-base font-extrabold flex items-center gap-2">
-                    <MapIcon size={18} />
-                    <span>報核單附件：每日路線與 Google Maps 距離佐證（共 {calculated.computedRows.length} 筆）</span>
+                    <Camera size={18} className="text-amber-300" />
+                    <span>報核單附件：真實 Google Maps 官方距離截圖佐證</span>
                   </div>
-                  <p className="text-xs text-blue-100">
-                    每張附件皆對應主表一筆出差日期。您可以：① 點「批次抓取真實路網距離」自動繪製貼合道路的藍紫色導航線與時間公里氣泡；② 點「開啟 Google Maps 驗證距離」核對後輸入精準公里數或直接按 <strong>Ctrl+V</strong> 貼上 Google Maps 截圖，主表費用將同步即時重算。
+                  <p className="text-xs text-blue-100 leading-relaxed">
+                    本附件區直接呈現您從 Google Maps 取得的<strong>真實原版截圖</strong>（列印 PDF 與匯出 Word 時原圖高清輸出）：
+                    ① 點「開啟真實 Google Maps 路線頁面」➔ ② 點「一鍵擷取視窗」或截圖後按 <strong>Ctrl+V 貼上</strong> ➔ ③ 填入 Google Maps 公里數，主報核單立刻同步重算！
                   </p>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="px-3 py-1.5 rounded-xl bg-white/15 border border-white/25 text-xs font-extrabold">
-                    Google Maps 已核驗：{calculated.googleVerifiedCount} / {calculated.computedRows.length}
+                    已附真實截圖：{calculated.attachedCount} / {calculated.computedRows.length} 筆（共 {calculated.totalScreenshotsCount} 張）
                   </span>
-                  <button
-                    type="button"
-                    onClick={handleBatchFetchRealRoads}
-                    disabled={isBatchFetchingRoad || calculated.computedRows.length === 0}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-slate-950 text-xs font-extrabold cursor-pointer shadow-sm"
-                  >
-                    {isBatchFetchingRoad ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    <span>一鍵批次套用真實道路距離</span>
-                  </button>
                 </div>
               </div>
 
@@ -1831,18 +1694,9 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                       ratePerKm={ratePerKm}
                       actualKm={row.actualKm}
                       fuelSubsidy={row.fuelSubsidy}
-                      routeSummaryText={row.routeAndKmText}
                       evidence={row.evidence}
-                      isFetchingRoad={Boolean(fetchingRowIds[row.id])}
-                      onFetchRealRoad={() =>
-                        fetchRoadForSingleRow(
-                          row.id,
-                          row.evidence.waypoints,
-                          activeManager?.region || '新北區',
-                          true
-                        )
-                      }
-                      onUpdateKmAndMeta={patch => updateRowEvidenceAndKm(row.id, patch)}
+                      onPreviewImage={setPreviewImageUrl}
+                      onUpdateEvidence={patch => updateRowEvidence(row.id, patch)}
                     />
                   ))}
                 </div>
@@ -1867,14 +1721,40 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
               className="inline-flex items-center gap-1 text-blue-600 hover:underline font-bold cursor-pointer ml-1"
             >
               <ExternalLink size={12} />
-              <span>{activeViewTab === 'form' ? '前往檢視附件距離驗證 ➔' : '返回報核單主表 ➔'}</span>
+              <span>{activeViewTab === 'form' ? '前往補附真實 Google Maps 截圖 ➔' : '返回報核單主表 ➔'}</span>
             </button>
           </div>
           <span className="text-[11px] text-slate-400">
-            列印 PDF 時系統將自動輸出「第 1 頁報核單主表 ＋ 第 2 頁起每日路線與 Google Maps 距離佐證附件」
+            所有貼上的真實 Google Maps 截圖與公里數會自動暫存于本機，列印 PDF／匯出 Word 將直接附帶原圖
           </span>
         </div>
       </div>
+
+      {/* 真實截圖放大預覽燈箱 */}
+      {previewImageUrl && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/85 flex items-center justify-center p-4"
+          onClick={e => {
+            e.stopPropagation();
+            setPreviewImageUrl(null);
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewImageUrl(null)}
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/15 hover:bg-white/25 text-white cursor-pointer"
+            title="關閉預覽 (Esc)"
+          >
+            <X size={22} />
+          </button>
+          <img
+            src={previewImageUrl}
+            alt="Google Maps 官方截圖放大檢視"
+            className="max-w-[95vw] max-h-[90vh] object-contain rounded-xl shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 };
