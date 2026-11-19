@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { GeoPoint } from '../data/storeCoordinates';
 import type { OptimizedLeg, RouteStop } from '../utils/route-optimizer';
-import { Minus, Plus, Maximize2, Layers, X, Eye, Clock } from 'lucide-react';
+import { buildGoogleMapsStopUrl } from '../utils/route-optimizer';
+import { Minus, Plus, Maximize2, Layers, X, Eye, Clock, Navigation } from 'lucide-react';
 
 interface Props {
   stops: RouteStop[];
@@ -590,16 +591,27 @@ export const RouteMap: React.FC<Props> = ({
             </p>
           )}
 
-          {onJumpToActivity && selectedStop.recordId && !selectedStop.isSchedule && (
-            <button
-              type="button"
-              onClick={() => onJumpToActivity(selectedStop.storeName, selectedStop.recordId)}
-              className="mt-2.5 w-full py-1.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          <div className="mt-2.5 flex flex-col gap-1.5">
+            {onJumpToActivity && selectedStop.recordId && !selectedStop.isSchedule && (
+              <button
+                type="button"
+                onClick={() => onJumpToActivity(selectedStop.storeName, selectedStop.recordId)}
+                className="w-full py-1.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Eye size={13} />
+                <span>前往戰情牆查看完整報告</span>
+              </button>
+            )}
+            <a
+              href={buildGoogleMapsStopUrl(selectedStop.geoPoint)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-1.5 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
             >
-              <Eye size={13} />
-              <span>前往戰情牆查看完整報告</span>
-            </button>
-          )}
+              <Navigation size={12} />
+              <span>Google Maps 單站導航</span>
+            </a>
+          </div>
         </div>
       )}
 

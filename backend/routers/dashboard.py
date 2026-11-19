@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Body
 from psycopg2.extras import Json
@@ -10,6 +11,7 @@ from backend.utils import _normalize_activity_time
 
 logger = logging.getLogger("dashboard-api")
 router = APIRouter(prefix="/api", tags=["戰情數據與門市組織"])
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 @router.get("/managers", response_model=List[Manager])
 def get_managers(user: Optional[dict] = Depends(get_optional_user)):
@@ -51,23 +53,46 @@ def import_managers(managers: List[Manager] = Body(...), user: dict = Depends(ge
     return {"success": True, "count": len(managers)}
 
 @router.get("/dashboard-data")
-def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optional[dict] = Depends(get_optional_user)):
+def get_dashboard_data(
+    time_range: str = "day",
+    region: str = "all",
+    limit: int = 3000,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """
     獲取戰情牆首頁全部聚合數據（門市組織、活動紀錄、待改善項目）
+    支援自訂安全上限 (預設 3000 筆、最高 5000 筆) 與日期區間篩選，避免跨月車資與歷史報表被截斷
     """
+    # 防呆限流，避免惡意或誤傳超大 limit 拖垮資料庫
+    safe_limit = max(100, min(limit, 5000))
+
+    if start_date and not DATE_PATTERN.match(start_date):
+        raise HTTPException(status_code=400, detail="start_date 格式需為 YYYY-MM-DD")
+    if end_date and not DATE_PATTERN.match(end_date):
+        raise HTTPException(status_code=400, detail="end_date 格式需為 YYYY-MM-DD")
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             # 1. Get Managers
             cur.execute("SELECT data FROM store WHERE id = 'managers'")
             row = cur.fetchone()
             managers = row[0] if row else []
-            
+
             # 2. Get Activities
             query = "SELECT data, created_at FROM visit_records"
-            params = []
-            conditions = []
-            
-            if time_range == "all":
+            params: list = []
+            conditions: list = []
+
+            if start_date or end_date:
+                if start_date:
+                    conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date >= %s::date")
+                    params.append(start_date)
+                if end_date:
+                    conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date <= %s::date")
+                    params.append(end_date)
+            elif time_range == "all":
                 pass
             elif time_range == "week":
                 conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
@@ -78,29 +103,36 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
                 conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
             else:
                 conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))::date")
-            
+
             if region != "all":
                 conditions.append("region = %s")
                 params.append(region)
-                
+
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
-                
-            query += " ORDER BY created_at DESC LIMIT 500"
+
+            # 多查 1 筆以判斷是否有截斷
+            query += " ORDER BY created_at DESC LIMIT %s"
+            params.append(safe_limit + 1)
             cur.execute(query, tuple(params))
+            raw_rows = cur.fetchall()
+            truncated = len(raw_rows) > safe_limit
+            if truncated:
+                raw_rows = raw_rows[:safe_limit]
+
             activities = [
-                _normalize_activity_time(r[0], r[1]) for r in cur.fetchall()
+                _normalize_activity_time(r[0], r[1]) for r in raw_rows
                 if r[0]
                 and "測試" not in str(r[0].get("storeName") or "")
                 and "文心秀泰" not in str(r[0].get("storeName") or "")
                 and r[0].get("recordId") != "0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c"
                 and not any("測試" in str((it or {}).get("desc") or "") for it in (r[0].get("newActionItems") or []))
             ]
-            
-            # 3. Get Action Items
+
+            # 3. Get Action Items（放寬上限至 1000 筆避免活躍 PDCA 遭截斷）
             action_items = []
             try:
-                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
+                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 1000")
                 action_items = [
                     r[0] for r in cur.fetchall()
                     if r[0]
@@ -113,7 +145,7 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             except Exception as e:
                 logger.warning("Failed to fetch action_items: %s", e)
                 conn.rollback()
-            
+
             # 區主管權限過濾（同步 users 最新負責門市）
             if user and user.get("role") == "manager" and user.get("sub"):
                 cur.execute("SELECT name, assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
@@ -149,6 +181,11 @@ def get_dashboard_data(time_range: str = "day", region: str = "all", user: Optio
             return {
                 "managers": managers,
                 "activities": activities,
-                "actionItems": action_items
+                "actionItems": action_items,
+                "meta": {
+                    "activityCount": len(activities),
+                    "limit": safe_limit,
+                    "truncated": truncated,
+                },
             }
 

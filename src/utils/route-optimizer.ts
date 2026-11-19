@@ -232,9 +232,10 @@ export const optimizeDailyRoute = (
   region: string,
   dateStr: string,
   rawStops: RouteStop[],
-  ratePerKm: number = DEFAULT_SUBSIDY_PER_KM
+  ratePerKm: number = DEFAULT_SUBSIDY_PER_KM,
+  customHubPoint?: GeoPoint
 ): RouteOptimizationResult => {
-  const hubPoint = getRegionHubPoint(region);
+  const hubPoint = customHubPoint || getRegionHubPoint(region);
 
   // 1. 實際路線：依原始時間與填寫順序排列
   const actualStops = rawStops.map((s, idx) => ({ ...s, orderIndex: idx + 1 }));
@@ -324,4 +325,61 @@ export const optimizeDailyRoute = (
     suggestionText,
     adviceBullets,
   };
+};
+
+/**
+ * 產生 Google Maps 多停靠點開車導航連結（無須 API Key，手機點擊可直接開啟 Google Maps App）
+ * @param hubPoint 出發與返程基準點
+ * @param stops 欲依序導航的巡店站點清單
+ * @param roundTrip 是否回到出發點（預設 true；若為 false 則以最後一站為終點）
+ */
+export const buildGoogleMapsRouteUrl = (
+  hubPoint: GeoPoint,
+  stops: RouteStop[],
+  roundTrip = true
+): string => {
+  if (!stops || stops.length === 0) {
+    return `https://www.google.com/maps/search/?api=1&query=${hubPoint.lat},${hubPoint.lng}`;
+  }
+
+  const fmtCoord = (pt: GeoPoint) => `${pt.lat.toFixed(6)},${pt.lng.toFixed(6)}`;
+  const origin = fmtCoord(hubPoint);
+
+  // Google Maps 通用 URL 支援最多約 9 個中繼站 (waypoints)，超出時保留前 9 站避免網址截斷
+  if (roundTrip) {
+    const waypoints = stops.slice(0, 9).map(s => fmtCoord(s.geoPoint)).join('|');
+    const params = new URLSearchParams({
+      api: '1',
+      origin,
+      destination: origin,
+      waypoints,
+      travelmode: 'driving',
+    });
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
+  }
+
+  const destination = fmtCoord(stops[stops.length - 1].geoPoint);
+  const middleStops = stops.slice(0, -1).slice(0, 9);
+  const params = new URLSearchParams({
+    api: '1',
+    origin,
+    destination,
+    travelmode: 'driving',
+  });
+  if (middleStops.length > 0) {
+    params.set('waypoints', middleStops.map(s => fmtCoord(s.geoPoint)).join('|'));
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+};
+
+/**
+ * 產生單一門市 Google Maps 快速導航連結
+ */
+export const buildGoogleMapsStopUrl = (pt: GeoPoint): string => {
+  const params = new URLSearchParams({
+    api: '1',
+    destination: `${pt.lat.toFixed(6)},${pt.lng.toFixed(6)}`,
+    travelmode: 'driving',
+  });
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
 };

@@ -9,8 +9,11 @@ import {
   type GeoPoint,
 } from '../data/storeCoordinates';
 
-/** 預設汽車每公里油資／車程補助單價（新台幣 元/公里） */
+/** 預設汽車每公里油資／車程補助單價（新台幣 元/公里，依國內出差旅費報核單註2） */
 export const DEFAULT_SUBSIDY_PER_KM = 6.5;
+
+/** 預設機車每公里油資／車程補助單價（新台幣 元/公里，依國內出差旅費報核單註2） */
+export const MOTORCYCLE_SUBSIDY_PER_KM = 3;
 
 export type MileageCalcMode = 'round_trip' | 'store_only';
 
@@ -128,7 +131,8 @@ export const calculateDailyRoute = (
   dayActivities: VisitRecord[],
   ratePerKm: number = DEFAULT_SUBSIDY_PER_KM,
   mode: MileageCalcMode = 'round_trip',
-  includeSchedule: boolean = true
+  includeSchedule: boolean = true,
+  customHubPoint?: GeoPoint
 ): DailyRouteRecord | null => {
   const validActivities = dayActivities
     .filter(a => includeSchedule || !SCHEDULE_TYPES.has(a.actionType))
@@ -151,7 +155,7 @@ export const calculateDailyRoute = (
     distinctStops.push(act);
   }
 
-  const hub = getRegionHubPoint(region);
+  const hub = customHubPoint || getRegionHubPoint(region);
   const legs: RouteLeg[] = [];
   const visitedStores: string[] = [];
   let storeVisitCount = 0;
@@ -266,6 +270,8 @@ export const buildExpenseDashboardReport = (params: {
   ratePerKm?: number;
   mode?: MileageCalcMode;
   includeSchedule?: boolean;
+  customHubPointsByManager?: Record<string, GeoPoint>;
+  globalCustomHubPoint?: GeoPoint;
 }): ExpenseDashboardReport => {
   const {
     allActivities,
@@ -277,6 +283,8 @@ export const buildExpenseDashboardReport = (params: {
     ratePerKm = DEFAULT_SUBSIDY_PER_KM,
     mode = 'round_trip',
     includeSchedule = true,
+    customHubPointsByManager,
+    globalCustomHubPoint,
   } = params;
 
   const deptKeyword = selectedDepartment === 'all' ? '' : selectedDepartment.replace('營業', '');
@@ -375,6 +383,8 @@ export const buildExpenseDashboardReport = (params: {
 
   for (const info of rosterMap.values()) {
     const dateMap = activitiesByManagerDate.get(info.managerName) || new Map<string, VisitRecord[]>();
+    // 優先使用該主管專屬自訂起始點地址，其次全域自訂起始點，皆無則退回區域中心
+    const mgrCustomHub = customHubPointsByManager?.[info.managerName] || globalCustomHubPoint;
 
     // 1. 計算「當天（targetDateStr）」路線與費用
     const dayActs = dateMap.get(targetDateStr) || [];
@@ -387,7 +397,8 @@ export const buildExpenseDashboardReport = (params: {
         dayActs,
         ratePerKm,
         mode,
-        includeSchedule
+        includeSchedule,
+        mgrCustomHub
       ) || undefined;
 
     // 2. 計算「當月（targetMonthKey）」所有出勤日路線與加總
@@ -402,7 +413,8 @@ export const buildExpenseDashboardReport = (params: {
         acts,
         ratePerKm,
         mode,
-        includeSchedule
+        includeSchedule,
+        mgrCustomHub
       );
       if (route) {
         monthDailyRoutes.push(route);
@@ -428,7 +440,8 @@ export const buildExpenseDashboardReport = (params: {
         acts,
         ratePerKm,
         mode,
-        includeSchedule
+        includeSchedule,
+        mgrCustomHub
       );
       if (route) periodRoutes.push(route);
     }

@@ -1,27 +1,71 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, lazy, Suspense } from 'react';
 import { HeaderBar } from '../components/HeaderBar';
 import { SummaryCards } from '../components/SummaryCards';
 import { ExecutiveSummary } from '../components/ExecutiveSummary';
 import { ActivityWall, type ActivityCategoryFilter } from '../components/ActivityWall';
 import { ManagerList, type ManagerStatusFilter } from '../components/ManagerList';
-import { OrganizationMap } from '../components/OrganizationMap';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
 import { getDashboardData } from '../api/api';
-import { RefreshCw, ArrowUp } from 'lucide-react';
-import { CoverageRadarChart } from '../components/charts/CoverageRadarChart';
-import { IssuePieChart } from '../components/charts/IssuePieChart';
-import { RiskDistributionChart } from '../components/charts/RiskDistributionChart';
+import { RefreshCw, ArrowUp, AlertTriangle } from 'lucide-react';
 import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
-import { AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
 import { normalizeStoreName, normalizeRegionName, compareRegion } from '../utils/store-region';
-import { MileageExpensePanel } from '../components/MileageExpensePanel';
-import { AuditRouteMapPanel } from '../components/AuditRouteMapPanel';
 import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
-import { ActivityScheduleModal, type ActivityScheduleType } from '../components/modals/ActivityScheduleModal';
-import { UnresolvedStoreModal, type ResolvingStoreInfo } from '../components/modals/UnresolvedStoreModal';
+import {
+  CUSTOM_HUBS_UPDATED_EVENT,
+  customHubToGeoPoint,
+  loadCustomHubPoints,
+  type StoredCustomHubs,
+} from '../utils/address-geocoder';
+import type { GeoPoint } from '../data/storeCoordinates';
+import type { ActivityScheduleType } from '../components/modals/ActivityScheduleModal';
+import type { ResolvingStoreInfo } from '../components/modals/UnresolvedStoreModal';
+
+// 延後動態載入重型分頁、圖表與彈窗組件，大幅縮減儀表板首屏 JS 體積
+const OrganizationMap = lazy(() =>
+  import('../components/OrganizationMap').then(m => ({ default: m.OrganizationMap }))
+);
+const MileageExpensePanel = lazy(() =>
+  import('../components/MileageExpensePanel').then(m => ({ default: m.MileageExpensePanel }))
+);
+const AuditRouteMapPanel = lazy(() =>
+  import('../components/AuditRouteMapPanel').then(m => ({ default: m.AuditRouteMapPanel }))
+);
+const DashboardChartsSection = lazy(() =>
+  import('../components/charts/DashboardChartsSection').then(m => ({ default: m.DashboardChartsSection }))
+);
+const AdminExpenseBanner = lazy(() =>
+  import('../components/AdminExpenseBanner').then(m => ({ default: m.AdminExpenseBanner }))
+);
+const OverdueStoresBanner = lazy(() =>
+  import('../components/OverdueStoresBanner').then(m => ({ default: m.OverdueStoresBanner }))
+);
+const ActivityScheduleModal = lazy(() =>
+  import('../components/modals/ActivityScheduleModal').then(m => ({ default: m.ActivityScheduleModal }))
+);
+const UnresolvedStoreModal = lazy(() =>
+  import('../components/modals/UnresolvedStoreModal').then(m => ({ default: m.UnresolvedStoreModal }))
+);
+
+const ChartsLoadingSkeleton = () => (
+  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6 animate-pulse">
+    {[1, 2, 3].map(i => (
+      <div key={i} className="h-[290px] bg-white rounded-xl border border-gray-200 p-5 flex flex-col justify-between">
+        <div className="h-4 w-32 bg-gray-200 rounded" />
+        <div className="h-44 w-full bg-gray-100 rounded-lg" />
+      </div>
+    ))}
+  </div>
+);
+
+const TabLoadingFallback = () => (
+  <div className="bg-white rounded-2xl border border-slate-200 p-10 flex flex-col items-center justify-center gap-3 text-slate-500 shadow-xs">
+    <div className="animate-spin rounded-full h-9 w-9 border-2 border-blue-600 border-t-transparent" />
+    <span className="text-xs font-semibold">正在載入分頁模組...</span>
+  </div>
+);
 
 const DashboardSkeleton = () => (
   <div className="animate-pulse flex flex-col gap-6" style={{ marginTop: 'var(--space-6)' }}>
@@ -304,9 +348,22 @@ export const DashboardPage: React.FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // 同步讀取並監聽自訂出發起始點地址設定（連動儀表板管理員車資速覽橫幅）
+  const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
+  useEffect(() => {
+    const syncHubs = () => setCustomHubs(loadCustomHubPoints());
+    window.addEventListener(CUSTOM_HUBS_UPDATED_EVENT, syncHubs);
+    return () => window.removeEventListener(CUSTOM_HUBS_UPDATED_EVENT, syncHubs);
+  }, []);
+
   const adminExpenseReport = useMemo(() => {
     if (user?.role !== 'admin') return null;
     const baseDate = customStartDate || getTaipeiTodayStr();
+    const byMgr: Record<string, GeoPoint> = {};
+    for (const [k, v] of Object.entries(customHubs.byManager || {})) {
+      const pt = customHubToGeoPoint(v);
+      if (pt) byMgr[k] = pt;
+    }
     return buildExpenseDashboardReport({
       allActivities,
       periodActivities: activities,
@@ -315,8 +372,10 @@ export const DashboardPage: React.FC = () => {
       targetDateStr: baseDate,
       targetMonthKey: baseDate.slice(0, 7),
       ratePerKm: DEFAULT_SUBSIDY_PER_KM,
+      customHubPointsByManager: byMgr,
+      globalCustomHubPoint: customHubToGeoPoint(customHubs.global),
     });
-  }, [user, allActivities, activities, managers, selectedDepartment, customStartDate]);
+  }, [user, allActivities, activities, managers, selectedDepartment, customStartDate, customHubs]);
 
   const uniqueManagers = useMemo(() => {
     let sourceManagers = managers;
@@ -1316,25 +1375,29 @@ export const DashboardPage: React.FC = () => {
               )}
             </div>
 
-            {/* 當日活動內容 新增／修改雙模式彈窗（模組化組件） */}
-            <ActivityScheduleModal
-              isOpen={scheduleModalOpen}
-              onClose={() => setScheduleModalOpen(false)}
-              mode={scheduleModalMode}
-              onModeChange={setScheduleModalMode}
-              initialRecord={scheduleModalInitialRecord}
-              initialPresetType={scheduleModalPresetType}
-              targetManagerName={scheduleModalManager}
-              onManagerChange={setScheduleModalManager}
-              managers={uniqueManagers}
-              allActivities={allActivities}
-              isAdmin={user?.role === 'admin'}
-              currentUserName={user?.name}
-              onSuccess={async () => {
-                await fetchData(true);
-              }}
-              canEditRecord={canEditActivityRecord}
-            />
+            {/* 當日活動內容 新增／修改雙模式彈窗（按需懶載入） */}
+            {scheduleModalOpen && (
+              <Suspense fallback={null}>
+                <ActivityScheduleModal
+                  isOpen={scheduleModalOpen}
+                  onClose={() => setScheduleModalOpen(false)}
+                  mode={scheduleModalMode}
+                  onModeChange={setScheduleModalMode}
+                  initialRecord={scheduleModalInitialRecord}
+                  initialPresetType={scheduleModalPresetType}
+                  targetManagerName={scheduleModalManager}
+                  onManagerChange={setScheduleModalManager}
+                  managers={uniqueManagers}
+                  allActivities={allActivities}
+                  isAdmin={user?.role === 'admin'}
+                  currentUserName={user?.name}
+                  onSuccess={async () => {
+                    await fetchData(true);
+                  }}
+                  canEditRecord={canEditActivityRecord}
+                />
+              </Suspense>
+            )}
 
             {/* Unresolved Issues Reminder Banner (依區域清晰劃分數量與門市) */}
             {unresolvedStores.length > 0 && (
@@ -1439,15 +1502,19 @@ export const DashboardPage: React.FC = () => {
               </div>
             )}
 
-            {/* 未結案門市追蹤與結案彈窗（模組化組件） */}
-            <UnresolvedStoreModal
-              storeInfo={resolvingStore}
-              onClose={() => setResolvingStore(null)}
-              onNavigateAudit={storeName => navigate(`/audit?store=${encodeURIComponent(storeName)}`)}
-              onResolveStore={handleResolveStorePdca}
-              onJumpToStore={handleJumpToStore}
-              isSubmittingResolve={isSubmittingResolve}
-            />
+            {/* 未結案門市追蹤與結案彈窗（按需懶載入） */}
+            {resolvingStore && (
+              <Suspense fallback={null}>
+                <UnresolvedStoreModal
+                  storeInfo={resolvingStore}
+                  onClose={() => setResolvingStore(null)}
+                  onNavigateAudit={storeName => navigate(`/audit?store=${encodeURIComponent(storeName)}`)}
+                  onResolveStore={handleResolveStorePdca}
+                  onJumpToStore={handleJumpToStore}
+                  isSubmittingResolve={isSubmittingResolve}
+                />
+              </Suspense>
+            )}
 
             {activeTab === 'dashboard' ? (
               <>
@@ -1479,97 +1546,37 @@ export const DashboardPage: React.FC = () => {
                   })()}
                 </div>
 
-                {/* 最高管理權限專屬：當天推算車資與每月車程費用加總速覽橫幅 */}
+                {/* 巡店週期預警：自動偵測超過指定天數未實地巡視的門市（獨立懶載入） */}
+                <Suspense fallback={null}>
+                  <OverdueStoresBanner
+                    managers={managers}
+                    allActivities={allActivities}
+                    selectedDepartment={selectedDepartment}
+                    selectedManager={selectedManager}
+                    onNavigateAudit={storeName => navigate(`/audit?store=${encodeURIComponent(storeName)}`)}
+                  />
+                </Suspense>
+
+                {/* 最高管理權限專屬：當天推算車資與每月車程費用加總速覽橫幅（按權限懶載入） */}
                 {user?.role === 'admin' && adminExpenseReport && (
-                  <div className="mb-6 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-4 sm:p-5 text-white shadow-md border border-indigo-500/30">
-                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-white/10">
-                      <div className="flex items-center gap-2.5 flex-wrap">
-                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-400 text-slate-950">
-                          🔒 最高管理權限專屬
-                        </span>
-                        <h3 className="text-sm sm:text-base font-extrabold text-white">
-                          🚗 巡店車程里程與預估車資補助（依汽車每公里 {adminExpenseReport.ratePerKm} 元推算）
-                        </h3>
-                      </div>
-
-                      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                        <div className="bg-blue-500/20 border border-blue-400/40 rounded-xl px-3 py-1.5 text-xs">
-                          <span className="text-blue-200 font-semibold">
-                            📅 當天推算 ({adminExpenseReport.targetDateStr.slice(5).replace('-', '/')})：
-                          </span>
-                          <strong className="text-white font-black text-sm ml-1">
-                            NT$ {adminExpenseReport.dayTotalSubsidy.toLocaleString()}
-                          </strong>
-                          <span className="text-blue-200 ml-1">
-                            ({adminExpenseReport.dayTotalKm.toFixed(1)} km)
-                          </span>
-                        </div>
-
-                        <div className="bg-emerald-500/20 border border-emerald-400/40 rounded-xl px-3 py-1.5 text-xs">
-                          <span className="text-emerald-200 font-semibold">
-                            🗓️ {adminExpenseReport.targetMonthKey.slice(5)}月累計加總：
-                          </span>
-                          <strong className="text-amber-300 font-black text-sm ml-1">
-                            NT$ {adminExpenseReport.monthTotalSubsidy.toLocaleString()}
-                          </strong>
-                          <span className="text-emerald-200 ml-1">
-                            ({adminExpenseReport.monthTotalKm.toFixed(1)} km)
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('expense')}
-                          className="px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs cursor-pointer transition-all shadow-xs"
-                        >
-                          查看完整路線與報表 ➔
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* 每一位區主管當天推算費用 & 當月車程費用加總一覽 */}
-                    <div className="pt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2">
-                      {adminExpenseReport.managersReport.map(m => (
-                        <button
-                          key={m.managerName}
-                          type="button"
-                          onClick={() => setActiveTab('expense')}
-                          className="text-left bg-white/10 hover:bg-white/15 border border-white/15 rounded-xl px-3 py-2 transition-all cursor-pointer flex flex-col gap-1"
-                          title={`點擊查看 ${m.managerName} 每日行車路線與分段車資明細`}
-                        >
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="text-xs font-extrabold text-white truncate">
-                              {m.managerName}
-                              {m.roleLabel === '副區主管' ? ' (副)' : ''}
-                            </span>
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/40 text-indigo-100 shrink-0">
-                              {m.region}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-[11px] text-indigo-200">
-                            <span>當天 ({adminExpenseReport.targetDateStr.slice(5).replace('-', '/')})：</span>
-                            <strong className={m.daySubsidy > 0 ? 'text-sky-300 font-extrabold' : 'text-gray-400'}>
-                              ${m.daySubsidy.toLocaleString()} ({m.dayKm.toFixed(1)}km)
-                            </strong>
-                          </div>
-                          <div className="flex items-center justify-between text-[11px] text-indigo-200">
-                            <span>{adminExpenseReport.targetMonthKey.slice(5)}月加總：</span>
-                            <strong className="text-amber-300 font-extrabold">
-                              ${m.monthSubsidy.toLocaleString()} ({m.monthKm.toFixed(1)}km)
-                            </strong>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <Suspense fallback={null}>
+                    <AdminExpenseBanner
+                      report={adminExpenseReport}
+                      onOpenExpenseTab={() => setActiveTab('expense')}
+                    />
+                  </Suspense>
                 )}
 
-                {/* Charts Row */}
-                <div id="section-charts" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
-                  <CoverageRadarChart data={radarData} />
-                  <RiskDistributionChart data={riskData} managers={managers} onStoreSelect={handleJumpToStore} />
-                  <IssuePieChart data={pieData} managers={managers} onStoreSelect={handleJumpToStore} />
-                </div>
+                {/* Charts Row（獨立懶載入 Recharts 區塊） */}
+                <Suspense fallback={<ChartsLoadingSkeleton />}>
+                  <DashboardChartsSection
+                    radarData={radarData}
+                    riskData={riskData}
+                    pieData={pieData}
+                    managers={managers}
+                    onStoreSelect={handleJumpToStore}
+                  />
+                </Suspense>
 
                 {/* Executive Summary */}
                 {!selectedManager && (
@@ -1643,36 +1650,42 @@ export const DashboardPage: React.FC = () => {
                 </div>
               </>
             ) : activeTab === 'expense' && user?.role === 'admin' ? (
-              <MileageExpensePanel
-                allActivities={allActivities}
-                periodActivities={activities}
-                managers={managers}
-                selectedDepartment={selectedDepartment}
-                initialDateStr={customStartDate || getTaipeiTodayStr()}
-                onStoreSelect={(storeName, recordId) => {
-                  setActiveTab('dashboard');
-                  setTimeout(() => handleJumpToStore(storeName, recordId), 80);
-                }}
-                onOpenRouteMap={(managerName, dateStr) => {
-                  if (managerName) setRouteMapInitialManager(managerName);
-                  if (dateStr) setRouteMapInitialDate(dateStr);
-                  setActiveTab('route_map');
-                }}
-              />
+              <Suspense fallback={<TabLoadingFallback />}>
+                <MileageExpensePanel
+                  allActivities={allActivities}
+                  periodActivities={activities}
+                  managers={managers}
+                  selectedDepartment={selectedDepartment}
+                  initialDateStr={customStartDate || getTaipeiTodayStr()}
+                  onStoreSelect={(storeName, recordId) => {
+                    setActiveTab('dashboard');
+                    setTimeout(() => handleJumpToStore(storeName, recordId), 80);
+                  }}
+                  onOpenRouteMap={(managerName, dateStr) => {
+                    if (managerName) setRouteMapInitialManager(managerName);
+                    if (dateStr) setRouteMapInitialDate(dateStr);
+                    setActiveTab('route_map');
+                  }}
+                />
+              </Suspense>
             ) : activeTab === 'route_map' || activeTab === 'map' ? (
-              <AuditRouteMapPanel
-                allActivities={allActivities}
-                managers={managers}
-                selectedDepartment={selectedDepartment}
-                initialDateStr={routeMapInitialDate || customStartDate || getTaipeiTodayStr()}
-                initialManagerName={routeMapInitialManager}
-                onJumpToActivity={(storeName, recordId) => {
-                  setActiveTab('dashboard');
-                  setTimeout(() => handleJumpToStore(storeName, recordId), 80);
-                }}
-              />
+              <Suspense fallback={<TabLoadingFallback />}>
+                <AuditRouteMapPanel
+                  allActivities={allActivities}
+                  managers={managers}
+                  selectedDepartment={selectedDepartment}
+                  initialDateStr={routeMapInitialDate || customStartDate || getTaipeiTodayStr()}
+                  initialManagerName={routeMapInitialManager}
+                  onJumpToActivity={(storeName, recordId) => {
+                    setActiveTab('dashboard');
+                    setTimeout(() => handleJumpToStore(storeName, recordId), 80);
+                  }}
+                />
+              </Suspense>
             ) : (
-              <OrganizationMap managers={managers} />
+              <Suspense fallback={<TabLoadingFallback />}>
+                <OrganizationMap managers={managers} />
+              </Suspense>
             )}
           </>
         )}

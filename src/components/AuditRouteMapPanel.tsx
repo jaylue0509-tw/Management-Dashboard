@@ -4,8 +4,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { getTaipeiDateStr, formatTaipeiReportTime, getTaipeiTodayStr, shiftDateStr } from '../utils/time-utils';
 import { normalizeStoreName } from '../utils/store-region';
 import { getStoreGeoPoint, getRegionHubPoint, HEADQUARTERS_POINT } from '../data/storeCoordinates';
-import { optimizeDailyRoute, type RouteStop } from '../utils/route-optimizer';
+import { optimizeDailyRoute, buildGoogleMapsRouteUrl, type RouteStop } from '../utils/route-optimizer';
 import { DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
+import {
+  CUSTOM_HUBS_UPDATED_EVENT,
+  customHubToGeoPoint,
+  loadCustomHubPoints,
+  type StoredCustomHubs,
+} from '../utils/address-geocoder';
 import { RouteMap } from './RouteMap';
 import {
   Calendar,
@@ -18,6 +24,7 @@ import {
   Clock,
   Compass,
   ArrowRight,
+  Navigation,
 } from 'lucide-react';
 
 interface Props {
@@ -159,12 +166,30 @@ export const AuditRouteMapPanel: React.FC<Props> = ({
     : activeManagers[0]?.name || '';
   const currentRegion = managerRegionMap.get(currentManagerName) || '新北區';
 
+  // 讀取並監聽自訂出發起始點地址設定（與車資推算及報核單同步連動）
+  const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
+  useEffect(() => {
+    const syncHubs = () => setCustomHubs(loadCustomHubPoints());
+    window.addEventListener(CUSTOM_HUBS_UPDATED_EVENT, syncHubs);
+    return () => window.removeEventListener(CUSTOM_HUBS_UPDATED_EVENT, syncHubs);
+  }, []);
+
   // 最佳化分析引擎
   const analysis = useMemo(() => {
     const acts = dayActivities.filter(a => a.areaManagerName === currentManagerName);
     const stops = buildStops(acts, currentRegion);
-    return optimizeDailyRoute(currentManagerName, currentRegion, selectedDate, stops, DEFAULT_SUBSIDY_PER_KM);
-  }, [dayActivities, currentManagerName, currentRegion, selectedDate]);
+    const customHubPoint = customHubToGeoPoint(
+      customHubs.byManager[currentManagerName] || customHubs.global
+    );
+    return optimizeDailyRoute(
+      currentManagerName,
+      currentRegion,
+      selectedDate,
+      stops,
+      DEFAULT_SUBSIDY_PER_KM,
+      customHubPoint
+    );
+  }, [dayActivities, currentManagerName, currentRegion, selectedDate, customHubs]);
 
   const canOptimize = analysis.actualStops.length > 1 && !analysis.isAlreadyOptimal;
   const isOptimalView = viewMode === 'optimal' && canOptimize;
@@ -337,34 +362,57 @@ export const AuditRouteMapPanel: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* 右側：實際走法 vs 建議走法 Tab 切換按鈕 */}
-              {canOptimize && (
-                <div className="inline-flex rounded-xl bg-white border border-slate-200 p-1 shadow-xs">
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('actual')}
-                    className={`px-4 py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                      !isOptimalView
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                    }`}
-                  >
-                    實際走法路線
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('optimal')}
-                    className={`px-4 py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
+              {/* 右側：實際走法 vs 建議走法 Tab 切換 + 一鍵 Google Maps 多站導航 */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {canOptimize && (
+                  <div className="inline-flex rounded-xl bg-white border border-slate-200 p-1 shadow-xs">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('actual')}
+                      className={`px-4 py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                        !isOptimalView
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      }`}
+                    >
+                      實際走法路線
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('optimal')}
+                      className={`px-4 py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        isOptimalView
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-emerald-700 hover:bg-emerald-50'
+                      }`}
+                    >
+                      <Sparkles size={13} />
+                      <span>建議最優路線</span>
+                    </button>
+                  </div>
+                )}
+
+                {shownStops.length > 0 && (
+                  <a
+                    href={buildGoogleMapsRouteUrl(analysis.hubPoint, shownStops, true)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition-all shadow-xs border ${
                       isOptimalView
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'text-emerald-700 hover:bg-emerald-50'
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
+                        : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300'
                     }`}
+                    title={
+                      isOptimalView
+                        ? '於 Google Maps 開啟「建議最優順序」多停靠點導航'
+                        : '於 Google Maps 開啟「實際巡店順序」多停靠點導航'
+                    }
                   >
-                    <Sparkles size={13} />
-                    <span>建議最優路線</span>
-                  </button>
-                </div>
-              )}
+                    <Navigation size={13} />
+                    <span>{isOptimalView ? '導航最優路線' : 'Google Maps 導航'}</span>
+                  </a>
+                )}
+              </div>
             </div>
 
             {/* 實際順序 vs 建議最佳順序 直觀對比列（僅在有優化空間時顯示，點選站點可連動定位） */}

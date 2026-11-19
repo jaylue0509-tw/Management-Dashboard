@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, lazy, Suspense } from 'react';
 import {
   Car,
+  Bike,
   Calendar,
   Download,
   ChevronDown,
@@ -9,16 +10,36 @@ import {
   ShieldCheck,
   Navigation,
   Search,
+  FileSpreadsheet,
+  Home,
+  X,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import type { Manager, VisitRecord } from '../types';
+import type { GeoPoint } from '../data/storeCoordinates';
 import {
   DEFAULT_SUBSIDY_PER_KM,
+  MOTORCYCLE_SUBSIDY_PER_KM,
   buildExpenseDashboardReport,
   type DailyRouteRecord,
   type ManagerExpenseItem,
   type MileageCalcMode,
 } from '../utils/mileage-calculator';
+import {
+  customHubToGeoPoint,
+  geocodeTaiwanAddress,
+  loadCustomHubPoints,
+  saveCustomHubPoints,
+  type StoredCustomHubs,
+} from '../utils/address-geocoder';
+
+// 延後動態載入《國內出差旅費報核單》彈窗，維持車資頁輕量化
+const TravelExpenseReimbursementModal = lazy(() =>
+  import('./TravelExpenseReimbursementModal').then(m => ({
+    default: m.TravelExpenseReimbursementModal,
+  }))
+);
 
 interface Props {
   allActivities: VisitRecord[];
@@ -141,6 +162,20 @@ export const MileageExpensePanel: React.FC<Props> = ({
   const [expandedManager, setExpandedManager] = useState<string | null>(null);
   const [onlyShowActive, setOnlyShowActive] = useState<boolean>(false);
 
+  // 自訂出發起始點地址狀態（支援全體通用或個別主管專屬設定，自動持久化至 localStorage）
+  const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
+  const [hubTargetScope, setHubTargetScope] = useState<string>('__global__');
+  const [addressInput, setAddressInput] = useState<string>(() => loadCustomHubPoints().global?.address || '');
+  const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
+  const [geocodeStatus, setGeocodeStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // 《東森寵物雲 國內出差旅費報核單》彈窗狀態
+  const [reimbursementModal, setReimbursementModal] = useState<{
+    open: boolean;
+    managerName: string;
+    scope: 'month' | 'day';
+  }>({ open: false, managerName: '', scope: 'month' });
+
   // 當外層日期篩選變更時，同步更新目標單日與月份
   React.useEffect(() => {
     if (initialDateStr) {
@@ -148,6 +183,110 @@ export const MileageExpensePanel: React.FC<Props> = ({
       setTargetMonthKey(initialDateStr.slice(0, 7));
     }
   }, [initialDateStr]);
+
+  // 將自訂起始點轉換成里程計算引擎可用之座標映射
+  const customHubPointsByManager = useMemo(() => {
+    const map: Record<string, GeoPoint> = {};
+    for (const [mgrName, cfg] of Object.entries(customHubs.byManager || {})) {
+      const pt = customHubToGeoPoint(cfg);
+      if (pt) map[mgrName] = pt;
+    }
+    return map;
+  }, [customHubs.byManager]);
+
+  const globalCustomHubPoint = useMemo(
+    () => customHubToGeoPoint(customHubs.global),
+    [customHubs.global]
+  );
+
+  // 切換起始點設定對象時，自動回填該對象目前儲存之起始點地址
+  const handleSelectHubTargetScope = (nextScope: string) => {
+    setHubTargetScope(nextScope);
+    setGeocodeStatus(null);
+    if (nextScope === '__global__') {
+      setAddressInput(customHubs.global?.address || '');
+    } else {
+      setAddressInput(customHubs.byManager[nextScope]?.address || '');
+    }
+  };
+
+  // 解析起始點地址並套用至車資推算（同步連動報核單與巡店路徑地圖）
+  const handleApplyStartAddress = async (presetAddress?: string) => {
+    const query = (presetAddress ?? addressInput).trim();
+    if (!query) {
+      setGeocodeStatus({ type: 'error', text: '請先輸入起始點地址、行政區、地標或門市名稱' });
+      return;
+    }
+    if (presetAddress !== undefined) setAddressInput(presetAddress);
+
+    setIsGeocoding(true);
+    setGeocodeStatus(null);
+    try {
+      const resolved = await geocodeTaiwanAddress(query);
+      if (!resolved) {
+        setGeocodeStatus({
+          type: 'error',
+          text: `無法定位「${query}」，建議包含縣市與行政區（例如：新北市板橋區文化路一段）或直接輸入門市名稱`,
+        });
+        return;
+      }
+
+      const nextStored: StoredCustomHubs =
+        hubTargetScope === '__global__'
+          ? { ...customHubs, global: resolved }
+          : {
+              ...customHubs,
+              byManager: {
+                ...customHubs.byManager,
+                [hubTargetScope]: resolved,
+              },
+            };
+
+      setCustomHubs(nextStored);
+      saveCustomHubPoints(nextStored);
+
+      const targetLabel = hubTargetScope === '__global__' ? '全體主管通用起點' : `${hubTargetScope} 專屬起點`;
+      const sourceLabel =
+        resolved.source === 'nominatim'
+          ? '街道門牌精準定位'
+          : resolved.source === 'store'
+          ? '門市座標定位'
+          : resolved.source === 'headquarters'
+          ? '總部座標'
+          : resolved.source === 'coordinates'
+          ? '經緯度座標'
+          : '行政區中心定位';
+
+      setGeocodeStatus({
+        type: 'success',
+        text: `已套用【${targetLabel}】：${resolved.address}（${sourceLabel} · ${resolved.lat.toFixed(4)}, ${resolved.lng.toFixed(4)}），里程與車資已即時重算！`,
+      });
+    } finally {
+      setIsGeocoding(false);
+    }
+  };
+
+  // 移除自訂起始點（恢復預設區域中心）
+  const handleRemoveCustomHub = (targetKey: string) => {
+    const nextStored: StoredCustomHubs =
+      targetKey === '__global__'
+        ? { ...customHubs, global: null }
+        : {
+            ...customHubs,
+            byManager: Object.fromEntries(
+              Object.entries(customHubs.byManager).filter(([k]) => k !== targetKey)
+            ),
+          };
+    setCustomHubs(nextStored);
+    saveCustomHubPoints(nextStored);
+    if (hubTargetScope === targetKey) {
+      setAddressInput('');
+    }
+    setGeocodeStatus({
+      type: 'success',
+      text: targetKey === '__global__' ? '已清除全體通用起點，恢復依各區域預設中心推算' : `已清除「${targetKey}」專屬起點，恢復預設推算`,
+    });
+  };
 
   const report = useMemo(
     () =>
@@ -161,6 +300,8 @@ export const MileageExpensePanel: React.FC<Props> = ({
         ratePerKm,
         mode,
         includeSchedule,
+        customHubPointsByManager,
+        globalCustomHubPoint,
       }),
     [
       allActivities,
@@ -172,6 +313,8 @@ export const MileageExpensePanel: React.FC<Props> = ({
       ratePerKm,
       mode,
       includeSchedule,
+      customHubPointsByManager,
+      globalCustomHubPoint,
     ]
   );
 
@@ -295,14 +438,30 @@ export const MileageExpensePanel: React.FC<Props> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleExportCsv}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs sm:text-sm font-extrabold shadow-md cursor-pointer transition-all"
-          >
-            <Download size={16} />
-            <span>匯出當日＆當月車資 CSV 報表</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() =>
+                setReimbursementModal({
+                  open: true,
+                  managerName: visibleManagers[0]?.managerName || report.managersReport[0]?.managerName || '',
+                  scope: 'month',
+                })
+              }
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs sm:text-sm font-extrabold shadow-md cursor-pointer transition-all"
+            >
+              <FileSpreadsheet size={16} />
+              <span>產生《國內出差旅費報核單》</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs sm:text-sm font-extrabold shadow-md cursor-pointer transition-all"
+            >
+              <Download size={16} />
+              <span>匯出 CSV 報表</span>
+            </button>
+          </div>
         </div>
 
         {/* 日期、月份、單價與計算模式設定列 */}
@@ -356,15 +515,42 @@ export const MileageExpensePanel: React.FC<Props> = ({
               onChange={e => setMode(e.target.value as MileageCalcMode)}
               className="bg-slate-900/80 text-white text-xs sm:text-sm font-bold rounded-lg px-2.5 py-1.5 border border-white/20 outline-none focus:border-amber-400 cursor-pointer"
             >
-              <option value="round_trip">🏠 含區域中心出發／回程＋跨店移動</option>
+              <option value="round_trip">🏠 含起始點出發／回程＋跨店移動</option>
               <option value="store_only">📍 僅計門市間跨店移動（首店➔末店）</option>
             </select>
           </div>
 
-          {/* 4. 每公里補助單價 & 公務行程納入開關 */}
+          {/* 4. 每公里補助單價（汽車 6.5 / 機車 3）& 公務行程納入開關 */}
           <div className="bg-white/10 border border-white/15 rounded-xl p-3 flex flex-col justify-between gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-bold text-indigo-200">汽車每公里補助單價</span>
+            <div className="flex items-center justify-between gap-1.5 flex-wrap">
+              <div className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setRatePerKm(DEFAULT_SUBSIDY_PER_KM)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-extrabold cursor-pointer transition-colors ${
+                    ratePerKm === DEFAULT_SUBSIDY_PER_KM
+                      ? 'bg-amber-400 text-slate-950'
+                      : 'bg-slate-900/60 text-indigo-200 hover:bg-white/15'
+                  }`}
+                  title="依公司報核單註2：汽車每公里補助 6.5 元"
+                >
+                  <Car size={11} />
+                  <span>汽車6.5</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRatePerKm(MOTORCYCLE_SUBSIDY_PER_KM)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-extrabold cursor-pointer transition-colors ${
+                    ratePerKm === MOTORCYCLE_SUBSIDY_PER_KM
+                      ? 'bg-amber-400 text-slate-950'
+                      : 'bg-slate-900/60 text-indigo-200 hover:bg-white/15'
+                  }`}
+                  title="依公司報核單註2：機車每公里補助 3 元"
+                >
+                  <Bike size={11} />
+                  <span>機車3</span>
+                </button>
+              </div>
               <div className="flex items-center gap-1">
                 <input
                   type="number"
@@ -373,9 +559,9 @@ export const MileageExpensePanel: React.FC<Props> = ({
                   max="50"
                   value={ratePerKm}
                   onChange={e => setRatePerKm(Math.max(0, Number(e.target.value) || DEFAULT_SUBSIDY_PER_KM))}
-                  className="w-16 bg-slate-900/80 text-amber-300 text-sm font-extrabold text-center rounded-lg px-2 py-0.5 border border-amber-400/40 outline-none"
+                  className="w-14 bg-slate-900/80 text-amber-300 text-xs sm:text-sm font-extrabold text-center rounded-lg px-1.5 py-0.5 border border-amber-400/40 outline-none"
                 />
-                <span className="text-xs font-bold text-white">元/km</span>
+                <span className="text-[11px] font-bold text-white">元/km</span>
               </div>
             </div>
             <label className="flex items-center gap-2 text-xs text-indigo-100 cursor-pointer select-none">
@@ -387,6 +573,132 @@ export const MileageExpensePanel: React.FC<Props> = ({
               />
               <span>納入總部／會議／特殊公務行程里程</span>
             </label>
+          </div>
+        </div>
+
+        {/* 5. 起始點地址輸入計算列（支援全體通用或指定區主管專屬出發點，自動連動里程、報核單與地圖） */}
+        <div className="mt-3 pt-3 border-t border-white/10">
+          <div className="bg-white/10 border border-indigo-400/30 rounded-xl p-3 flex flex-col gap-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-xs font-extrabold text-amber-300">
+                  <Home size={14} />
+                  自訂出發／返程起始點地址計算
+                </span>
+                <span className="text-[11px] text-indigo-200">
+                  輸入住家地址、公司地址、行政區或門市名稱，立即定位並重算車資、報核單與巡店地圖
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleApplyStartAddress('總部大樓')}
+                disabled={isGeocoding}
+                className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-indigo-100 border border-white/15 cursor-pointer transition-colors"
+              >
+                快速套用：總部大樓（中和）
+              </button>
+            </div>
+
+            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
+              <select
+                value={hubTargetScope}
+                onChange={e => handleSelectHubTargetScope(e.target.value)}
+                className="bg-slate-900/90 text-white text-xs font-bold rounded-lg px-3 py-2 border border-white/20 outline-none focus:border-amber-400 cursor-pointer md:w-56 shrink-0"
+              >
+                <option value="__global__">🌐 套用對象：全體主管通用起點</option>
+                {report.managersReport.map(m => (
+                  <option key={`hub-opt-${m.managerName}`} value={m.managerName}>
+                    👤 專屬起點：{m.managerName}（{m.region}）
+                  </option>
+                ))}
+              </select>
+
+              <div className="flex-1 relative">
+                <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-300 pointer-events-none" />
+                <input
+                  type="text"
+                  value={addressInput}
+                  onChange={e => setAddressInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleApplyStartAddress();
+                    }
+                  }}
+                  placeholder="輸入起始點地址（例：新北市板橋區文化路一段188號、桃園中壢火車站、或門市名稱）..."
+                  className="w-full pl-9 pr-3 py-2 bg-slate-900/90 text-white placeholder-indigo-300/60 text-xs sm:text-sm font-medium rounded-lg border border-white/20 outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleApplyStartAddress()}
+                disabled={isGeocoding}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-white text-xs font-extrabold cursor-pointer transition-colors shrink-0 shadow-xs"
+              >
+                {isGeocoding ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>定位計算中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Navigation size={14} />
+                    <span>定位並重算車資</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* 定位狀態即時回饋 */}
+            {geocodeStatus && (
+              <div
+                className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border ${
+                  geocodeStatus.type === 'success'
+                    ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200'
+                    : 'bg-rose-500/20 border-rose-400/40 text-rose-200'
+                }`}
+              >
+                {geocodeStatus.type === 'success' ? '✅ ' : '⚠️ '}
+                {geocodeStatus.text}
+              </div>
+            )}
+
+            {/* 已生效的自訂起始點列表（一鍵清除可恢復預設區域中心） */}
+            {(customHubs.global || Object.keys(customHubs.byManager).length > 0) && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className="text-[11px] font-bold text-indigo-200">已套用自訂起點：</span>
+                {customHubs.global && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/50 text-amber-200 text-[11px] font-bold">
+                    <span>🌐 全體通用：{customHubs.global.address}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCustomHub('__global__')}
+                      className="hover:text-white cursor-pointer"
+                      title="移除全體通用起點"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                )}
+                {Object.entries(customHubs.byManager).map(([mgrName, cfg]) => (
+                  <span
+                    key={`chip-${mgrName}`}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-400/20 border border-sky-300/50 text-sky-100 text-[11px] font-bold"
+                  >
+                    <span>👤 {mgrName}：{cfg.address}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCustomHub(mgrName)}
+                      className="hover:text-white cursor-pointer"
+                      title={`移除 ${mgrName} 專屬起點`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -602,6 +914,14 @@ export const MileageExpensePanel: React.FC<Props> = ({
                       <div className="text-xs text-gray-500 mt-0.5 font-medium">
                         {m.department || '營運處'} · 轄下負責 {m.assignedStoreCount} 間門市
                       </div>
+                      {(customHubs.byManager[m.managerName] || customHubs.global) && (
+                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full">
+                          <Home size={10} />
+                          <span>
+                            出發起點：{(customHubs.byManager[m.managerName] || customHubs.global)?.address}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -702,10 +1022,39 @@ export const MileageExpensePanel: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* 右側：展開每日明細按鈕 */}
-                  <div className="flex items-center justify-end shrink-0">
+                  {/* 右側：產生報核單、設定起點與展開每日明細按鈕 */}
+                  <div className="flex items-center justify-end gap-1.5 flex-wrap shrink-0">
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setReimbursementModal({
+                          open: true,
+                          managerName: m.managerName,
+                          scope: 'month',
+                        });
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-extrabold bg-amber-50 hover:bg-amber-400 text-amber-900 hover:text-slate-950 border border-amber-300 transition-colors cursor-pointer"
+                      title={`開啟 ${m.managerName} 的《國內出差旅費報核單》（自動連動本月路線與公里數）`}
+                    >
+                      <FileSpreadsheet size={13} />
+                      <span>報核單</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        handleSelectHubTargetScope(m.managerName);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 transition-colors cursor-pointer"
+                      title={`為 ${m.managerName} 設定專屬起始點地址`}
+                    >
+                      <Home size={13} />
+                      <span>設起點</span>
+                    </button>
                     <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 transition-colors">
-                      <span>{isExpanded ? '收合路線明細' : `查看路線明細 (${m.monthDailyRoutes.length}日)`}</span>
+                      <span>{isExpanded ? '收合路線明細' : `明細 (${m.monthDailyRoutes.length}日)`}</span>
                       {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                     </span>
                   </div>
@@ -716,7 +1065,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                   <div className="px-4 pb-4 pt-2 bg-slate-50 border-t border-gray-200 flex flex-col gap-2.5">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="text-xs font-extrabold text-slate-700">
-                        🛣️ {m.managerName}（{m.region}）— {targetMonthKey} 每日巡店行車軌跡與分段車資試算（汽車每公里補助{' '}
+                        🛣️ {m.managerName}（{m.region}）— {targetMonthKey} 每日巡店行車軌跡與分段車資試算（每公里補助{' '}
                         {ratePerKm} 元）
                       </span>
                       <span className="text-xs text-blue-600 font-semibold">
@@ -747,6 +1096,22 @@ export const MileageExpensePanel: React.FC<Props> = ({
           })}
         </div>
       </div>
+
+      {/* 《東森寵物雲股份有限公司 國內出差旅費報核單》雙向連動彈窗 */}
+      {reimbursementModal.open && (
+        <Suspense fallback={null}>
+          <TravelExpenseReimbursementModal
+            isOpen={reimbursementModal.open}
+            onClose={() => setReimbursementModal(prev => ({ ...prev, open: false }))}
+            managersReport={report.managersReport}
+            initialManagerName={reimbursementModal.managerName}
+            targetMonthKey={targetMonthKey}
+            targetDateStr={targetDateStr}
+            initialRatePerKm={ratePerKm}
+            initialScope={reimbursementModal.scope}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };
