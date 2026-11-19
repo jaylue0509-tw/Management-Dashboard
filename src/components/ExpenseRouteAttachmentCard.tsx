@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ExternalLink,
   Upload,
@@ -8,6 +8,7 @@ import {
   ZoomIn,
   Loader2,
   Plus,
+  Sparkles,
 } from 'lucide-react';
 import type { GeoPoint } from '../data/storeCoordinates';
 import {
@@ -15,6 +16,7 @@ import {
   captureScreenSnapshot,
   compressScreenshotFile,
 } from '../utils/road-routing';
+import { recognizeGoogleMapsScreenshotKm } from '../utils/gmaps-screenshot-ocr';
 
 export type VerificationStatus = 'pending_screenshot' | 'google_verified';
 
@@ -50,7 +52,7 @@ interface ExpenseRouteAttachmentCardProps {
 
 /**
  * 報核單極簡附件卡：
- * 一鍵開啟真實 Google Maps 完整路線視窗（含左側路線時間公里＋右側地圖）並一鍵截圖存為正式附件
+ * 一鍵開啟／截圖或貼上真實 Google Maps 畫面後，自動 OCR 辨識截圖中之「XX.X 公里」並即時連動主報核單金額
  */
 export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProps> = ({
   index,
@@ -66,8 +68,12 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const popupRef = useRef<Window | null>(null);
+  const autoOcrAttemptedRef = useRef<boolean>(false);
+
   const [isDragging, setIsDragging] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [isRecognizingKm, setIsRecognizingKm] = useState(false);
+  const [ocrBadgeText, setOcrBadgeText] = useState<string>('');
   const [hasOpenedMap, setHasOpenedMap] = useState(false);
 
   const googleUrl = useMemo(
@@ -77,19 +83,68 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
 
   const hasScreenshots = evidence.googleScreenshots.length > 0;
 
+  /**
+   * 自動從 Google Maps 截圖辨識公里數與行車分鐘數，並直接連動更新主報核單金額（無須手動填寫）
+   */
+  const runAutoOcrAndLink = useCallback(
+    async (imageDataUrl: string) => {
+      setIsRecognizingKm(true);
+      setOcrBadgeText('');
+      try {
+        const result = await recognizeGoogleMapsScreenshotKm(imageDataUrl);
+        if (result.distanceKm !== null && result.distanceKm > 0) {
+          onUpdateEvidence({
+            actualKm: result.distanceKm,
+            ...(result.durationMin !== null ? { durationMin: result.durationMin } : {}),
+            verificationStatus: 'google_verified',
+          });
+          setOcrBadgeText(
+            `已自動帶入 ${result.distanceKm} 公里${result.durationMin ? ` · ${result.durationMin}分` : ''}`
+          );
+          window.setTimeout(() => setOcrBadgeText(''), 5000);
+        } else {
+          setOcrBadgeText('未偵測到清晰公里字樣，可直接點上方 km 微調');
+          window.setTimeout(() => setOcrBadgeText(''), 4000);
+        }
+      } catch {
+        // 辨識失敗不阻擋附件保存
+      } finally {
+        setIsRecognizingKm(false);
+      }
+    },
+    [onUpdateEvidence]
+  );
+
+  // 若先前已貼有 Google Maps 截圖但公里數仍為 0，開啟附件頁時自動補辨識並連動主表
+  useEffect(() => {
+    if (
+      !autoOcrAttemptedRef.current &&
+      evidence.googleScreenshots.length > 0 &&
+      actualKm === 0
+    ) {
+      autoOcrAttemptedRef.current = true;
+      runAutoOcrAndLink(evidence.googleScreenshots[0]);
+    }
+  }, [evidence.googleScreenshots, actualKm, runAutoOcrAndLink]);
+
   const handleFiles = async (files: FileList | File[]) => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
     if (imageFiles.length === 0) return;
     try {
-      const nextList = [...evidence.googleScreenshots];
+      const addedUrls: string[] = [];
       for (const file of imageFiles) {
         const dataUrl = await compressScreenshotFile(file);
-        nextList.push(dataUrl);
+        addedUrls.push(dataUrl);
       }
+      const nextList = [...evidence.googleScreenshots, ...addedUrls];
       onUpdateEvidence({
         googleScreenshots: nextList,
         verificationStatus: 'google_verified',
       });
+      // 貼上／上傳後立即自動辨識公里數並連動主報核單
+      if (addedUrls.length > 0) {
+        await runAutoOcrAndLink(addedUrls[0]);
+      }
     } catch {
       // 忽略無效圖檔
     }
@@ -125,7 +180,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
   };
 
   /**
-   * 一鍵截圖 Google Maps 視窗／分頁並自動存入本筆附件（完成後自動關閉剛開啟之視窗）
+   * 一鍵截圖 Google Maps 視窗／分頁 ➔ 自動存入附件 ➔ 自動 OCR 辨識公里數並連動主表金額
    */
   const handleOneClickCapture = async () => {
     setIsCapturing(true);
@@ -144,9 +199,11 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
             // 跨網域視窗若無法自動關閉則忽略
           }
         }
+        // 截圖完成瞬間自動辨識「XX.X 公里」並連動主表，無須手動輸入
+        await runAutoOcrAndLink(dataUrl);
       }
     } catch {
-      // 使用者取消視窗選擇時靜默返回
+      // 使用者取消視窗選擇
     } finally {
       setIsCapturing(false);
     }
@@ -170,7 +227,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
           : 'border-slate-200 hover:border-blue-300 focus:border-blue-500'
       }`}
     >
-      {/* 極簡單行標題與連動公里數列 */}
+      {/* 極簡單行標題與自動連動公里數列 */}
       <div className="bg-slate-50 border-b border-slate-200 px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="px-2 py-0.5 rounded bg-slate-900 text-white text-xs font-extrabold shrink-0">
@@ -180,15 +237,27 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
             {dateStr}
           </span>
           {routeSummaryText && (
-            <span className="text-xs text-slate-500 truncate max-w-[360px]" title={routeSummaryText}>
+            <span className="text-xs text-slate-500 truncate max-w-[320px]" title={routeSummaryText}>
               {routeSummaryText}
             </span>
           )}
-          {hasScreenshots && <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />}
+          {isRecognizingKm ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 shrink-0">
+              <Loader2 size={11} className="animate-spin" />
+              <span>自動辨識公里數中...</span>
+            </span>
+          ) : ocrBadgeText ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 shrink-0">
+              <Sparkles size={11} />
+              <span>{ocrBadgeText}</span>
+            </span>
+          ) : hasScreenshots ? (
+            <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+          ) : null}
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          {/* 實際公里數輸入（即時連動報核單主表油資與大寫金額） */}
+          {/* 自動連動之實際公里數與油資 */}
           <div className="inline-flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-2 py-0.5">
             <input
               type="number"
@@ -201,7 +270,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
                 })
               }
               className="w-14 text-right text-xs font-extrabold text-blue-700 outline-none tabular-nums"
-              title="依 Google Maps 截圖輸入公里數（立即連動主報核單）"
+              title="已自動連動報核單主表（可隨時微調）"
             />
             <span className="text-[11px] font-bold text-slate-500">km</span>
             <span className="text-[11px] font-extrabold text-emerald-700 pl-1 border-l border-slate-200">
@@ -214,7 +283,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
             type="button"
             onClick={handleOpenGoogleMapsPopup}
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold cursor-pointer transition-colors"
-            title="開啟完整 Google Maps 路線視窗（含左側路線時間公里＋右側地圖）"
+            title="開啟完整 Google Maps 路線視窗"
           >
             <ExternalLink size={12} />
             <span>開啟 Google Maps</span>
@@ -223,13 +292,13 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
           <button
             type="button"
             onClick={handleOneClickCapture}
-            disabled={isCapturing}
+            disabled={isCapturing || isRecognizingKm}
             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-white text-xs font-extrabold cursor-pointer transition-all ${
               hasOpenedMap
-                ? 'bg-indigo-600 hover:bg-indigo-700 ring-2 ring-indigo-300'
+                ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-300'
                 : 'bg-slate-900 hover:bg-slate-800'
             }`}
-            title="點選剛開啟的 Google Maps 視窗／分頁，一鍵截圖存成附件"
+            title="一鍵截圖 Google Maps 視窗並自動辨識公里數連動主表"
           >
             {isCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
             <span>{isCapturing ? '截圖中...' : '一鍵截圖'}</span>
@@ -250,7 +319,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold cursor-pointer"
-            title="上傳圖片檔"
+            title="上傳圖片檔（自動辨識公里數）"
           >
             <Upload size={12} />
           </button>
@@ -289,6 +358,15 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
                   className="w-full max-h-[440px] object-contain cursor-zoom-in mx-auto"
                 />
                 <div className="absolute top-2 right-2 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => runAutoOcrAndLink(dataUrl)}
+                    disabled={isRecognizingKm}
+                    className="p-1.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-700 text-white shadow cursor-pointer"
+                    title="重新從此截圖自動辨識公里數並連動主表"
+                  >
+                    {isRecognizingKm ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  </button>
                   <button
                     type="button"
                     onClick={handleOneClickCapture}
@@ -334,7 +412,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
               <button
                 type="button"
                 onClick={handleOneClickCapture}
-                disabled={isCapturing}
+                disabled={isCapturing || isRecognizingKm}
                 className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-extrabold shadow-xs cursor-pointer transition-all ${
                   hasOpenedMap
                     ? 'bg-emerald-600 hover:bg-emerald-700 ring-4 ring-emerald-200'
@@ -342,14 +420,14 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
                 }`}
               >
                 {isCapturing ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
-                <span>{isCapturing ? '擷取中...' : '② 一鍵截圖 Google Maps 放進附件'}</span>
+                <span>{isCapturing ? '擷取中...' : '② 一鍵截圖並自動帶入公里數'}</span>
               </button>
             </div>
 
             <div className="text-[11px] text-slate-500">
-              待 Google Maps 顯示路線公里數後按「<strong>② 一鍵截圖</strong>」選擇該視窗即可自動存為附件；或直接按{' '}
+              截圖或按{' '}
               <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-slate-700 font-bold">Ctrl+V</kbd>{' '}
-              貼上／拖曳圖片至此
+              貼上後，系統將<strong>自動辨識截圖中的公里數並直接連動更新主報核單金額</strong>
             </div>
           </div>
         )}

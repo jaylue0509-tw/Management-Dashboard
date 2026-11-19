@@ -144,8 +144,11 @@ const buildRowFromDailyRoute = (
   const cacheKey = `${route.managerName}_${route.dateStr}`;
   const saved = storedMap[cacheKey];
 
-  const initialKm = saved?.actualKm !== undefined ? saved.actualKm : Number(route.totalKm.toFixed(1));
   const initialScreenshots = Array.isArray(saved?.googleScreenshots) ? saved.googleScreenshots : [];
+  const initialKm =
+    saved?.actualKm !== undefined && (saved.actualKm > 0 || initialScreenshots.length > 0)
+      ? saved.actualKm
+      : Number(route.totalKm.toFixed(1));
   const initialStopLabels =
     Array.isArray(saved?.stopLabels) && saved.stopLabels.length > 0
       ? saved.stopLabels

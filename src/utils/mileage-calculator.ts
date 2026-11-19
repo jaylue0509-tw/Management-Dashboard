@@ -3,6 +3,7 @@ import { getTaipeiDateStr, formatTaipeiReportTime } from './time-utils';
 import { compareRegion, normalizeRegionName, normalizeStoreName } from './store-region';
 import {
   HEADQUARTERS_POINT,
+  RAW_STORE_COORDINATES,
   estimateDrivingKm,
   getRegionHubPoint,
   getStoreGeoPoint,
@@ -106,8 +107,11 @@ const toTimestamp = (iso?: string): number => {
   return Number.isNaN(t) ? 0 : t;
 };
 
+const SORTED_STORE_NAMES = Object.keys(RAW_STORE_COORDINATES).sort((a, b) => b.length - a.length);
+
 /**
  * 判斷單一紀錄對應的地理座標點
+ * 針對「特殊行程／會議行程」亦會自動掃描文字中提及之門市名稱（例如「在彰化中正處理事務」），避免誤判為 0 公里
  */
 const resolveActivityPoint = (activity: VisitRecord, region: string): GeoPoint => {
   if (activity.actionType === '總部行程') {
@@ -116,6 +120,20 @@ const resolveActivityPoint = (activity: VisitRecord, region: string): GeoPoint =
   if (SCHEDULE_TYPES.has(activity.actionType)) {
     const text = `${activity.storeName || ''} ${activity.highlightDescription || ''}`;
     if (text.includes('總部')) return HEADQUARTERS_POINT;
+
+    // 檢查公務／特殊行程內容是否明確提及任一門市名稱
+    for (const storeKey of SORTED_STORE_NAMES) {
+      if (storeKey.length >= 2 && text.includes(storeKey)) {
+        const pt = RAW_STORE_COORDINATES[storeKey];
+        return {
+          lat: pt.lat,
+          lng: pt.lng,
+          isOffshore: pt.isOffshore,
+          label: `${storeKey}店`,
+        };
+      }
+    }
+
     const hub = getRegionHubPoint(region);
     return { ...hub, label: `${activity.actionType}（${activity.highlightDescription || hub.label}）` };
   }
