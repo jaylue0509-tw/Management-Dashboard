@@ -844,14 +844,14 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     </tbody>
   </table>
 
-  <!-- 五級簽核欄 -->
+  <!-- 五級簽核欄（皆留白供紙本手寫簽名） -->
   <table class="sign-grid">
     <tr>
       <td>總 經 理</td>
       <td>副 總 經 理</td>
       <td>部 門 主 管</td>
       <td>審　　核</td>
-      <td>請 款 人：${escapeHtml(applicantName)}</td>
+      <td>請 款 人</td>
     </tr>
   </table>
 
@@ -1511,21 +1511,13 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                   </tbody>
                 </table>
 
-                {/* 五級簽核列 */}
+                {/* 五級簽核列（留白供紙本手寫簽名） */}
                 <div className="grid grid-cols-5 border-2 border-t-0 border-black text-xs sm:text-sm font-extrabold">
-                  <div className="border-r border-black p-2 pb-7">總 經 理</div>
-                  <div className="border-r border-black p-2 pb-7">副 總 經 理</div>
-                  <div className="border-r border-black p-2 pb-7">部 門 主 管</div>
-                  <div className="border-r border-black p-2 pb-7">審　　核</div>
-                  <div className="p-2 pb-7 flex flex-col justify-between">
-                    <span>請 款 人</span>
-                    <input
-                      type="text"
-                      value={applicantName}
-                      onChange={e => setApplicantName(e.target.value)}
-                      className="mt-1 font-bold text-sm text-blue-900 bg-transparent border-b border-dashed border-slate-400 outline-none"
-                    />
-                  </div>
+                  <div className="border-r border-black p-2 pb-9">總 經 理</div>
+                  <div className="border-r border-black p-2 pb-9">副 總 經 理</div>
+                  <div className="border-r border-black p-2 pb-9">部 門 主 管</div>
+                  <div className="border-r border-black p-2 pb-9">審　　核</div>
+                  <div className="p-2 pb-9">請 款 人</div>
                 </div>
               </div>
             )
