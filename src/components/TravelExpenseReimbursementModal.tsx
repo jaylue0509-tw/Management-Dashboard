@@ -13,7 +13,14 @@ import {
   FileSpreadsheet,
   Smartphone,
   LayoutGrid,
+  Cloud,
+  Loader2,
 } from 'lucide-react';
+import {
+  fetchPettyCashDraftFromServer,
+  resetPettyCashDraftOnServer,
+  savePettyCashDraftToServer,
+} from '../utils/petty-cash-sync';
 import {
   DEFAULT_SUBSIDY_PER_KM,
   MOTORCYCLE_SUBSIDY_PER_KM,
@@ -289,6 +296,25 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
   const rowsRef = useRef<PettyCashRow[]>([]);
   rowsRef.current = rows;
 
+  // 雲端草稿同步狀態（手機填寫、電腦列印、總部線上核對）
+  const [cloudSyncState, setCloudSyncState] = useState<
+    'idle' | 'loading' | 'saving' | 'synced' | 'offline'
+  >('idle');
+  const [cloudSavedTime, setCloudSavedTime] = useState<string>('');
+  const cloudSaveTimerRef = useRef<number | null>(null);
+  const formMetaRef = useRef({
+    formSerialNo: '',
+    purposePrefix: '',
+    vehicleType: vehicleType as VehicleType,
+    ratePerKm,
+  });
+  formMetaRef.current = {
+    formSerialNo,
+    purposePrefix,
+    vehicleType,
+    ratePerKm,
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -323,6 +349,72 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     ? `${activeManager.managerName}_${targetMonthKey}`
     : '';
 
+  // 立即將目前主管當月之黏存單草稿（發票號碼、高鐵／停車費、公里數與表頭）儲存至後端資料庫
+  const flushCloudSave = useCallback(async () => {
+    if (!activeManager) return;
+    if (cloudSaveTimerRef.current) {
+      window.clearTimeout(cloudSaveTimerRef.current);
+      cloudSaveTimerRef.current = null;
+    }
+
+    const mgrName = activeManager.managerName;
+    const prefix = `${mgrName}_${targetMonthKey}-`;
+    const fullEvidenceMap = loadStoredEvidenceMap();
+    const monthEvidencePatches: Record<string, StoredEvidencePatch> = {};
+    for (const [k, v] of Object.entries(fullEvidenceMap)) {
+      if (k.startsWith(prefix)) {
+        monthEvidencePatches[k] = v;
+      }
+    }
+    const bucketKey = `${mgrName}_${targetMonthKey}`;
+    const customRowsList = loadStoredCustomRows(bucketKey);
+
+    setCloudSyncState('saving');
+    const result = await savePettyCashDraftToServer({
+      managerName: mgrName,
+      monthKey: targetMonthKey,
+      formSerialNo: formMetaRef.current.formSerialNo,
+      purposePrefix: formMetaRef.current.purposePrefix,
+      vehicleType: formMetaRef.current.vehicleType,
+      ratePerKm: formMetaRef.current.ratePerKm,
+      evidencePatches: monthEvidencePatches,
+      customRows: customRowsList as unknown as Record<string, unknown>[],
+    });
+
+    if (result.ok) {
+      setCloudSyncState('synced');
+      setCloudSavedTime(
+        new Date().toLocaleTimeString('zh-TW', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone: 'Asia/Taipei',
+        })
+      );
+    } else {
+      setCloudSyncState('offline');
+    }
+  }, [activeManager, targetMonthKey]);
+
+  // 800ms 防抖自動雲端存檔，避免每敲一個字就送出請求
+  const scheduleCloudSave = useCallback(() => {
+    if (!activeManager) return;
+    if (cloudSaveTimerRef.current) {
+      window.clearTimeout(cloudSaveTimerRef.current);
+    }
+    cloudSaveTimerRef.current = window.setTimeout(() => {
+      flushCloudSave();
+    }, 800);
+  }, [activeManager, flushCloudSave]);
+
+  useEffect(() => {
+    return () => {
+      if (cloudSaveTimerRef.current) {
+        window.clearTimeout(cloudSaveTimerRef.current);
+      }
+    };
+  }, []);
+
   // 依據主管與統計範圍載入系統紀錄（合併同月手動新增之高鐵／停車費列），並於背景自動計算點對點真實道路距離連動主表
   const syncFromSystemData = useCallback(
     (ignoreSavedCache = false) => {
@@ -336,16 +428,34 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
             : []
           : [...activeManager.monthDailyRoutes].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
 
+      const bucketKey = `${activeManager.managerName}_${targetMonthKey}`;
+      if (ignoreSavedCache) {
+        // 清除本機當月快取與雲端資料庫草稿
+        try {
+          const allEv = loadStoredEvidenceMap();
+          const prefix = `${activeManager.managerName}_${targetMonthKey}-`;
+          for (const k of Object.keys(allEv)) {
+            if (k.startsWith(prefix)) delete allEv[k];
+          }
+          localStorage.setItem(SCREENSHOT_CACHE_KEY, JSON.stringify(allEv));
+        } catch {
+          // 忽略儲存異常
+        }
+        saveStoredCustomRows(bucketKey, []);
+        setFormSerialNo('');
+        resetPettyCashDraftOnServer(activeManager.managerName, targetMonthKey).then(() => {
+          setCloudSyncState('idle');
+          setCloudSavedTime('');
+        });
+      }
+
       const storedMap = ignoreSavedCache ? {} : loadStoredEvidenceMap();
       const generatedRows = sourceRoutes.map((route, idx) =>
         buildRowFromDailyRoute(route, idx, storedMap)
       );
 
-      const bucketKey = `${activeManager.managerName}_${targetMonthKey}`;
       let mergedRows = generatedRows;
-      if (ignoreSavedCache) {
-        saveStoredCustomRows(bucketKey, []);
-      } else {
+      if (!ignoreSavedCache) {
         const savedCustomRows = loadStoredCustomRows(bucketKey)
           .filter(r => scope !== 'day' || r.dateStr === targetDateStr)
           .map(r => ({ ...r, isCustomRow: true }));
@@ -372,11 +482,79 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     [activeManager, scope, targetMonthKey, targetDateStr]
   );
 
+  // 開啟黏存單或切換主管／月份時，先載入本機快取快速顯示，再向後端資料庫拉取雲端草稿同步還原
   useEffect(() => {
-    if (isOpen && activeManager) {
+    if (!isOpen || !activeManager) return;
+    syncFromSystemData(false);
+
+    let cancelled = false;
+    setCloudSyncState('loading');
+    fetchPettyCashDraftFromServer(activeManager.managerName, targetMonthKey).then(draft => {
+      if (cancelled) return;
+      if (!draft) {
+        setCloudSyncState('idle');
+        setCloudSavedTime('');
+        return;
+      }
+
+      // 合併雲端草稿中的各日發票／里程調整至本機快取
+      if (draft.evidencePatches && typeof draft.evidencePatches === 'object') {
+        const currentEv = loadStoredEvidenceMap();
+        for (const [k, v] of Object.entries(draft.evidencePatches)) {
+          currentEv[k] = {
+            ...(currentEv[k] || {}),
+            ...(v as StoredEvidencePatch),
+            // 若雲端因容量裁剪不含截圖，保留本機既有截圖避免覆蓋
+            googleScreenshots:
+              Array.isArray(v.googleScreenshots) && v.googleScreenshots.length > 0
+                ? v.googleScreenshots
+                : currentEv[k]?.googleScreenshots || [],
+          };
+        }
+        try {
+          localStorage.setItem(SCREENSHOT_CACHE_KEY, JSON.stringify(currentEv));
+        } catch {
+          // 忽略儲存異常
+        }
+      }
+
+      // 合併雲端手動新增列（高鐵票／停車費／租車等）
+      if (Array.isArray(draft.customRows)) {
+        const bucketKey = `${activeManager.managerName}_${targetMonthKey}`;
+        saveStoredCustomRows(bucketKey, draft.customRows as unknown as PettyCashRow[]);
+      }
+
+      // 先以合併後的快取重建列表，再套用雲端保存的表頭與車輛單價
       syncFromSystemData(false);
-    }
-  }, [isOpen, activeManager, syncFromSystemData]);
+      if (draft.formSerialNo !== undefined) setFormSerialNo(draft.formSerialNo);
+      if (draft.purposePrefix) setPurposePrefix(draft.purposePrefix);
+      if (draft.vehicleType === 'car' || draft.vehicleType === 'motorcycle') {
+        setVehicleType(draft.vehicleType);
+      }
+      if (typeof draft.ratePerKm === 'number' && draft.ratePerKm > 0) {
+        setRatePerKm(draft.ratePerKm);
+      }
+
+      setCloudSyncState('synced');
+      if (draft.updatedAt) {
+        const d = new Date(draft.updatedAt);
+        if (!Number.isNaN(d.getTime())) {
+          setCloudSavedTime(
+            d.toLocaleTimeString('zh-TW', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZone: 'Asia/Taipei',
+            })
+          );
+        }
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, activeManager, targetMonthKey, syncFromSystemData]);
 
   // 開啟黏存單或起點變更重建列表後，自動於背景計算每筆油資行程的點對點真實道路軌跡與公里數（無須手動再按一次）
   useEffect(() => {
@@ -431,7 +609,22 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
 
   const handleVehicleSwitch = (nextType: VehicleType) => {
     setVehicleType(nextType);
-    setRatePerKm(nextType === 'motorcycle' ? MOTORCYCLE_SUBSIDY_PER_KM : DEFAULT_SUBSIDY_PER_KM);
+    const nextRate = nextType === 'motorcycle' ? MOTORCYCLE_SUBSIDY_PER_KM : DEFAULT_SUBSIDY_PER_KM;
+    setRatePerKm(nextRate);
+    formMetaRef.current = { ...formMetaRef.current, vehicleType: nextType, ratePerKm: nextRate };
+    scheduleCloudSave();
+  };
+
+  const handleUpdateFormSerialNo = (val: string) => {
+    setFormSerialNo(val);
+    formMetaRef.current = { ...formMetaRef.current, formSerialNo: val };
+    scheduleCloudSave();
+  };
+
+  const handleUpdatePurposePrefix = (val: string) => {
+    setPurposePrefix(val);
+    formMetaRef.current = { ...formMetaRef.current, purposePrefix: val };
+    scheduleCloudSave();
   };
 
   const persistRowPatch = (
@@ -483,6 +676,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       }
       return nextList;
     });
+    scheduleCloudSave();
   };
 
   const updateRowEvidence = (
@@ -536,6 +730,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       }
       return nextList;
     });
+    scheduleCloudSave();
   };
 
   const handleAddRow = (presetCategory: ExpenseCategoryItem = '油資') => {
@@ -579,6 +774,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       persistCustomRowsSnapshot(nextList);
       return nextList;
     });
+    scheduleCloudSave();
   };
 
   const handleDeleteRow = (id: string) => {
@@ -590,6 +786,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       }
       return nextList;
     });
+    scheduleCloudSave();
   };
 
   // 即時計算每一列之實付金額、油資公式文字、總計金額與底部 8 位數拆解
@@ -1069,6 +1266,36 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
             <h2 className="text-xs sm:text-base font-extrabold tracking-wide">
               東森寵物雲股份有限公司 — 零用金單據黏存單＆點對點 Google Maps 附件
             </h2>
+            <button
+              type="button"
+              onClick={flushCloudSave}
+              disabled={cloudSyncState === 'saving' || cloudSyncState === 'loading'}
+              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition-colors cursor-pointer ${
+                cloudSyncState === 'synced'
+                  ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200 hover:bg-emerald-500/30'
+                  : cloudSyncState === 'offline'
+                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-200 hover:bg-amber-500/30'
+                  : 'bg-white/10 border-white/20 text-sky-200 hover:bg-white/20'
+              }`}
+              title="點擊立即將本月份發票號碼、高鐵／停車費與明細草稿同步儲存至雲端資料庫（手機填、電腦印）"
+            >
+              {cloudSyncState === 'saving' || cloudSyncState === 'loading' ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <Cloud size={11} />
+              )}
+              <span>
+                {cloudSyncState === 'loading'
+                  ? '載入雲端草稿...'
+                  : cloudSyncState === 'saving'
+                  ? '雲端存檔中...'
+                  : cloudSyncState === 'synced'
+                  ? `已自動同步雲端${cloudSavedTime ? ` ${cloudSavedTime}` : ''}`
+                  : cloudSyncState === 'offline'
+                  ? '暫存本機（點此重試同步）'
+                  : '點此儲存雲端草稿'}
+              </span>
+            </button>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
@@ -1269,7 +1496,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                         type="text"
                         value={formSerialNo}
                         placeholder="選填"
-                        onChange={e => setFormSerialNo(e.target.value)}
+                        onChange={e => handleUpdateFormSerialNo(e.target.value)}
                         className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-900"
                       />
                     </label>
@@ -1279,7 +1506,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                     <input
                       type="text"
                       value={purposePrefix}
-                      onChange={e => setPurposePrefix(e.target.value)}
+                      onChange={e => handleUpdatePurposePrefix(e.target.value)}
                       className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm font-bold text-slate-900"
                     />
                   </label>
@@ -1402,7 +1629,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                       type="text"
                       value={formSerialNo}
                       placeholder="____________"
-                      onChange={e => setFormSerialNo(e.target.value)}
+                      onChange={e => handleUpdateFormSerialNo(e.target.value)}
                       className="w-36 border-b border-black text-center font-mono text-sm outline-none bg-transparent focus:bg-blue-50"
                     />
                   </div>
@@ -1424,7 +1651,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
                           <input
                             type="text"
                             value={purposePrefix}
-                            onChange={e => setPurposePrefix(e.target.value)}
+                            onChange={e => handleUpdatePurposePrefix(e.target.value)}
                             className="flex-1 min-w-[260px] font-extrabold text-sm sm:text-base bg-transparent hover:bg-blue-50/60 focus:bg-blue-50 px-1.5 py-0.5 rounded outline-none"
                           />
                           <span className="font-extrabold text-sm sm:text-base text-blue-900 whitespace-nowrap pr-2">

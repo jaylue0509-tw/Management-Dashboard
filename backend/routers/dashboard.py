@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 from psycopg2.extras import Json
@@ -14,6 +14,7 @@ from backend.utils import _normalize_activity_time
 logger = logging.getLogger("dashboard-api")
 router = APIRouter(prefix="/api", tags=["戰情數據與門市組織"])
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
 @router.get("/managers", response_model=List[Manager])
 def get_managers(user: Optional[dict] = Depends(get_optional_user)):
@@ -292,4 +293,112 @@ def upsert_manager_start_address(
         return {"success": True, "data": {"global": None, "byManager": personal}}
 
     return {"success": True, "data": stored}
+
+
+class PettyCashDraftPayload(BaseModel):
+    managerName: str = Field(..., min_length=1, max_length=60, description="區主管姓名")
+    monthKey: str = Field(..., min_length=7, max_length=7, description="統計月份 YYYY-MM")
+    formSerialNo: Optional[str] = Field(default="", max_length=60)
+    purposePrefix: Optional[str] = Field(default="", max_length=240)
+    vehicleType: Optional[str] = Field(default="car", max_length=20)
+    ratePerKm: Optional[float] = Field(default=6.5, ge=0.0, le=100.0)
+    evidencePatches: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    customRows: List[Dict[str, Any]] = Field(default_factory=list, max_length=120)
+    reset: bool = Field(default=False, description="是否重置並清空當月草稿")
+
+
+def _build_petty_cash_draft_id(manager_name: str, month_key: str) -> str:
+    return f"petty_cash_draft:{manager_name}:{month_key}"
+
+
+@router.get("/petty-cash-drafts")
+def get_petty_cash_draft(
+    manager_name: str,
+    month_key: str,
+    user: dict = Depends(get_current_user),
+):
+    """
+    取得指定區主管於指定月份的《零用金單據黏存單》雲端草稿（手機／電腦／總部跨裝置同步）
+    - 區主管 (manager)：嚴格僅能讀取自己本人的草稿
+    - 管理員 (admin)：可讀取任一主管草稿進行線上核對
+    """
+    target_mgr = manager_name.strip()
+    target_month = month_key.strip()
+    if not target_mgr or not MONTH_PATTERN.match(target_month):
+        raise HTTPException(status_code=400, detail="無效的主管姓名或月份格式（需為 YYYY-MM）")
+
+    is_admin = user.get("role") == "admin"
+    current_name = (user.get("name") or "").strip()
+    if not is_admin and target_mgr != current_name:
+        raise HTTPException(status_code=403, detail="區主管僅能檢視自己本人的零用金單據黏存單草稿")
+
+    store_id = _build_petty_cash_draft_id(target_mgr, target_month)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM store WHERE id = %s", (store_id,))
+            row = cur.fetchone()
+            draft = row[0] if row and isinstance(row[0], dict) else None
+
+    return {"success": True, "draft": draft}
+
+
+@router.put("/petty-cash-drafts")
+def upsert_petty_cash_draft(
+    payload: PettyCashDraftPayload,
+    user: dict = Depends(get_current_user),
+):
+    """
+    儲存或重置指定區主管於指定月份的《零用金單據黏存單》雲端草稿
+    - 區主管 (manager)：僅能儲存或重置自己本人的草稿
+    - 管理員 (admin)：可協助調整並儲存任一主管草稿
+    """
+    target_mgr = payload.managerName.strip()
+    target_month = payload.monthKey.strip()
+    if not target_mgr or not MONTH_PATTERN.match(target_month):
+        raise HTTPException(status_code=400, detail="無效的主管姓名或月份格式（需為 YYYY-MM）")
+
+    is_admin = user.get("role") == "admin"
+    current_name = (user.get("name") or "").strip()
+    if not is_admin and target_mgr != current_name:
+        raise HTTPException(status_code=403, detail="區主管僅能儲存或修改自己本人的零用金單據黏存單草稿")
+
+    store_id = _build_petty_cash_draft_id(target_mgr, target_month)
+
+    if payload.reset:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM store WHERE id = %s", (store_id,))
+            conn.commit()
+        return {"success": True, "draft": None}
+
+    if len(payload.evidencePatches) > 120:
+        raise HTTPException(status_code=400, detail="草稿筆數超過上限")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    draft_doc = {
+        "managerName": target_mgr,
+        "monthKey": target_month,
+        "formSerialNo": (payload.formSerialNo or "").strip(),
+        "purposePrefix": (payload.purposePrefix or "").strip(),
+        "vehicleType": payload.vehicleType if payload.vehicleType in ("car", "motorcycle") else "car",
+        "ratePerKm": float(payload.ratePerKm if payload.ratePerKm is not None else 6.5),
+        "evidencePatches": payload.evidencePatches,
+        "customRows": payload.customRows,
+        "updatedAt": now_iso,
+        "updatedBy": current_name or user.get("sub") or "",
+    }
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO store (id, data) VALUES (%s, %s)
+                ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+                """,
+                (store_id, Json(draft_doc)),
+            )
+        conn.commit()
+
+    return {"success": True, "draft": draft_doc}
+
 

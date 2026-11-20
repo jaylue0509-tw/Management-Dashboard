@@ -92,7 +92,7 @@ export const formatStopForGoogleMaps = (label: string, fallbackPt?: GeoPoint, re
  */
 export const buildGoogleMapsDirectionsUrl = (
   waypoints: GeoPoint[],
-  vehicle: 'car' | 'motorcycle' = 'car',
+  _vehicle: 'car' | 'motorcycle' = 'car',
   customStopLabels?: string[]
 ): string => {
   const labels =
@@ -111,11 +111,12 @@ export const buildGoogleMapsDirectionsUrl = (
   const destination = cleanForSearch(labels[labels.length - 1]);
   const middle = labels.slice(1, -1).slice(0, 9).map(cleanForSearch);
 
+  // NOTE: Google Maps URL API 僅支援 driving / transit / walking / bicycling，台灣汽機車皆對應 driving 道路模式
   const params = new URLSearchParams({
     api: '1',
     origin,
     destination,
-    travelmode: vehicle === 'motorcycle' ? 'driving' : 'driving',
+    travelmode: 'driving',
   });
   if (middle.length > 0) {
     params.set('waypoints', middle.join('|'));

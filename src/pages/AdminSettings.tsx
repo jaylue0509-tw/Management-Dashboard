@@ -93,7 +93,7 @@ export const AdminSettings: React.FC = () => {
         const error = await res.json();
         alert('儲存失敗: ' + (error.detail || '未知錯誤'));
       }
-    } catch (err) {
+    } catch {
       alert('系統連線異常');
     }
   };

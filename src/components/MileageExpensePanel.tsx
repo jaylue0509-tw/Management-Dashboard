@@ -183,7 +183,11 @@ export const MileageExpensePanel: React.FC<Props> = ({
     return hubs.global?.address || '';
   });
   const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
-  const [geocodeStatus, setGeocodeStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [geocodeStatus, setGeocodeStatus] = useState<{
+    type: 'success' | 'warning' | 'error';
+    text: string;
+    verifyCoords?: { lat: number; lng: number };
+  } | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
 
   // 《東森寵物雲 零用金單據黏存單》彈窗狀態
@@ -295,10 +299,19 @@ export const MileageExpensePanel: React.FC<Props> = ({
         ? '☁️ 已儲存至雲端資料庫，手機／電腦／總部統一以此地址計算！'
         : '（已暫存於本機並重算，待網路恢復後將同步雲端）';
 
-      setGeocodeStatus({
-        type: 'success',
-        text: `已套用【${targetLabel}】：${resolved.address}（${sourceLabel} · ${resolved.lat.toFixed(4)}, ${resolved.lng.toFixed(4)}）— ${syncHint}`,
-      });
+      if (resolved.source === 'district') {
+        setGeocodeStatus({
+          type: 'warning',
+          text: `已套用【${targetLabel}】：${resolved.address}（僅定位至行政區中心 ${resolved.lat.toFixed(4)}, ${resolved.lng.toFixed(4)}）— 若與實際住處有落差，建議改輸入附近交叉路口、車站、門市名稱，或直接貼上 Google Maps 經緯度（例：25.0143, 121.4637）。${syncHint}`,
+          verifyCoords: { lat: resolved.lat, lng: resolved.lng },
+        });
+      } else {
+        setGeocodeStatus({
+          type: 'success',
+          text: `已套用【${targetLabel}】：${resolved.address}（${sourceLabel} · ${resolved.lat.toFixed(4)}, ${resolved.lng.toFixed(4)}）— ${syncHint}`,
+          verifyCoords: { lat: resolved.lat, lng: resolved.lng },
+        });
+      }
     } finally {
       setIsGeocoding(false);
     }
@@ -766,17 +779,36 @@ export const MileageExpensePanel: React.FC<Props> = ({
               </button>
             </div>
 
-            {/* 定位狀態即時回饋 */}
+            {/* 定位狀態即時回饋（含定位精準度防呆與 Google Maps 座標核對連結） */}
             {geocodeStatus && (
               <div
-                className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border ${
+                className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border flex flex-wrap items-center justify-between gap-2 ${
                   geocodeStatus.type === 'success'
                     ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200'
+                    : geocodeStatus.type === 'warning'
+                    ? 'bg-amber-500/25 border-amber-300/60 text-amber-100'
                     : 'bg-rose-500/20 border-rose-400/40 text-rose-200'
                 }`}
               >
-                {geocodeStatus.type === 'success' ? '✅ ' : '⚠️ '}
-                {geocodeStatus.text}
+                <span>
+                  {geocodeStatus.type === 'success'
+                    ? '✅ '
+                    : geocodeStatus.type === 'warning'
+                    ? '⚠️ '
+                    : '❌ '}
+                  {geocodeStatus.text}
+                </span>
+                {geocodeStatus.verifyCoords && (
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${geocodeStatus.verifyCoords.lat.toFixed(6)},${geocodeStatus.verifyCoords.lng.toFixed(6)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/15 hover:bg-white/25 text-white border border-white/25 whitespace-nowrap shrink-0 transition-colors"
+                  >
+                    <MapPin size={11} />
+                    <span>在 Google Maps 核對起點</span>
+                  </a>
+                )}
               </div>
             )}
 
@@ -789,6 +821,15 @@ export const MileageExpensePanel: React.FC<Props> = ({
                 {!isManagerOnly && customHubs.global && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/50 text-amber-200 text-[11px] font-bold">
                     <span>🌐 全體通用：{customHubs.global.address}</span>
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${customHubs.global.lat.toFixed(6)},${customHubs.global.lng.toFixed(6)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-amber-100 hover:text-white underline"
+                      title="於 Google Maps 核對座標位置"
+                    >
+                      核對
+                    </a>
                     <button
                       type="button"
                       onClick={() => handleRemoveCustomHub('__global__')}
@@ -804,9 +845,25 @@ export const MileageExpensePanel: React.FC<Props> = ({
                   .map(([mgrName, cfg]) => (
                     <span
                       key={`chip-${mgrName}`}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-400/20 border border-sky-300/50 text-sky-100 text-[11px] font-bold"
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[11px] font-bold ${
+                        cfg.source === 'district'
+                          ? 'bg-amber-400/20 border-amber-300/60 text-amber-100'
+                          : 'bg-sky-400/20 border-sky-300/50 text-sky-100'
+                      }`}
                     >
-                      <span>👤 {mgrName}：{cfg.address}</span>
+                      <span>
+                        👤 {mgrName}：{cfg.address}
+                        {cfg.source === 'district' ? '（行政區中心）' : ''}
+                      </span>
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${cfg.lat.toFixed(6)},${cfg.lng.toFixed(6)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-white"
+                        title="於 Google Maps 核對座標位置"
+                      >
+                        核對
+                      </a>
                       <button
                         type="button"
                         onClick={() => handleRemoveCustomHub(mgrName)}
@@ -1040,12 +1097,24 @@ export const MileageExpensePanel: React.FC<Props> = ({
                       <div className="text-xs text-gray-500 mt-0.5 font-medium">
                         {m.department || '營運處'} · 轄下負責 {m.assignedStoreCount} 間門市
                       </div>
-                      {(customHubs.byManager[m.managerName] || customHubs.global) ? (
-                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full">
+                      {customHubs.byManager[m.managerName] ? (
+                        <div
+                          className={`mt-1 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            customHubs.byManager[m.managerName].source === 'district'
+                              ? 'text-amber-800 bg-amber-50 border-amber-300'
+                              : 'text-sky-700 bg-sky-50 border-sky-200'
+                          }`}
+                        >
                           <Home size={10} />
                           <span>
-                            出發起點：{(customHubs.byManager[m.managerName] || customHubs.global)?.address}
+                            個人起點：{customHubs.byManager[m.managerName].address}
+                            {customHubs.byManager[m.managerName].source === 'district' ? '（行政區中心）' : ''}
                           </span>
+                        </div>
+                      ) : customHubs.global ? (
+                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                          <Home size={10} />
+                          <span>全體通用起點：{customHubs.global.address}（未設個人地址）</span>
                         </div>
                       ) : (
                         <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full">
