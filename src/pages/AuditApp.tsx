@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import SignatureCanvas from 'react-signature-canvas';
 import { Camera, Mic, Save, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Trash2, LogOut, KeyRound, Calendar, Clock, Wifi, WifiOff, History, Sparkles, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL, getAuthHeaders } from '../api/api';
 import { storeRegions } from '../data/storeRegions';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
@@ -172,11 +173,9 @@ export const AuditApp = () => {
     }
     setLastAuditLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
-      const res = await fetch(`${apiBase}/visit-records/last-audit?store=${encodeURIComponent(store)}`, { headers });
+      const res = await fetch(`${API_BASE_URL}/visit-records/last-audit?store=${encodeURIComponent(store)}`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setLastAuditData(data);
@@ -637,11 +636,9 @@ export const AuditApp = () => {
     if (!store) return;
     setActionItemsLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
-      const res = await fetch(`${apiBase}/action-items?store=${encodeURIComponent(store)}`, { headers });
+      const res = await fetch(`${API_BASE_URL}/action-items?store=${encodeURIComponent(store)}`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setPastActionItems(data.filter((item: any) => item.status === 'Open' && !item.desc?.includes('測試') && !item.issueDescription?.includes('測試')));
@@ -722,15 +719,9 @@ export const AuditApp = () => {
     };
 
     try {
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const targetUrl = import.meta.env.PROD
-        ? '/api/visit-records'
-        : 'https://management-dashboard-rust.vercel.app/api/visit-records';
-      const res = await fetch(targetUrl, {
+      const res = await fetch(`${API_BASE_URL}/visit-records`, {
         method: 'POST',
-        headers,
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
@@ -809,14 +800,8 @@ export const AuditApp = () => {
     setSubmitStatusText('正在安全傳輸巡店紀錄與照片...');
 
     // 弱網與高負載環境重試機制 (最多重試 2 次)
-    const token = localStorage.getItem('token');
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const endpoints = [
-      '/api/visit-records',
-      'https://management-dashboard-rust.vercel.app/api/visit-records'
-    ];
+    const headers = getAuthHeaders({ 'Content-Type': 'application/json' });
+    const targetUrl = `${API_BASE_URL}/visit-records`;
 
     let isSuccess = false;
     let lastErrorMsg = '';
@@ -830,9 +815,6 @@ export const AuditApp = () => {
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 秒保護防呆
-
-        // 生產環境優先使用同源相對路徑
-        const targetUrl = import.meta.env.PROD ? endpoints[0] : endpoints[1];
         const res = await fetch(targetUrl, {
           method: 'POST',
           headers,

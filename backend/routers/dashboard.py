@@ -402,3 +402,61 @@ def upsert_petty_cash_draft(
     return {"success": True, "draft": draft_doc}
 
 
+@router.get("/petty-cash-drafts/summary")
+def get_petty_cash_drafts_summary(
+    month_key: str,
+    user: dict = Depends(get_current_user),
+):
+    """
+    取得指定月份各區主管《零用金單據黏存單》雲端填報狀態摘要（管理員可檢視全區，區主管僅檢視自己）
+    """
+    target_month = month_key.strip()
+    if not MONTH_PATTERN.match(target_month):
+        raise HTTPException(status_code=400, detail="無效的月份格式（需為 YYYY-MM）")
+
+    is_admin = user.get("role") == "admin"
+    current_name = (user.get("name") or "").strip()
+
+    summaries: Dict[str, Dict[str, Any]] = {}
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            if is_admin:
+                cur.execute(
+                    "SELECT data FROM store WHERE id LIKE %s",
+                    (f"petty_cash_draft:%:{target_month}",),
+                )
+            else:
+                if not current_name:
+                    return {"success": True, "monthKey": target_month, "byManager": {}}
+                cur.execute(
+                    "SELECT data FROM store WHERE id = %s",
+                    (_build_petty_cash_draft_id(current_name, target_month),),
+                )
+
+            for (doc,) in cur.fetchall():
+                if not isinstance(doc, dict):
+                    continue
+                mgr = str(doc.get("managerName") or "").strip()
+                if not mgr:
+                    continue
+                ev_patches = doc.get("evidencePatches") if isinstance(doc.get("evidencePatches"), dict) else {}
+                custom_rows = doc.get("customRows") if isinstance(doc.get("customRows"), list) else []
+                invoice_count = sum(
+                    1 for v in ev_patches.values()
+                    if isinstance(v, dict) and str(v.get("invoiceNumber") or "").strip()
+                ) + sum(
+                    1 for r in custom_rows
+                    if isinstance(r, dict) and str(r.get("invoiceNumber") or "").strip()
+                )
+                summaries[mgr] = {
+                    "updatedAt": doc.get("updatedAt") or "",
+                    "updatedBy": doc.get("updatedBy") or "",
+                    "formSerialNo": doc.get("formSerialNo") or "",
+                    "customRowCount": len(custom_rows),
+                    "invoiceCount": invoice_count,
+                }
+
+    return {"success": True, "monthKey": target_month, "byManager": summaries}
+
+
+

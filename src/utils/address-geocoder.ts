@@ -249,6 +249,57 @@ export const geocodeTaiwanAddress = async (rawInput: string): Promise<CustomHubC
 };
 
 /**
+ * 將手機／瀏覽器 GPS 經緯度反查為台灣繁體中文門牌或道路地址（失敗時安全回退為經緯度文字）
+ */
+export const reverseGeocodeTaiwanCoords = async (
+  lat: number,
+  lng: number
+): Promise<CustomHubConfig> => {
+  let readableAddress = `GPS 定位（${lat.toFixed(5)}, ${lng.toFixed(5)}）`;
+  let displayName = readableAddress;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 5000);
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=1&accept-language=zh-TW&lat=${lat.toFixed(6)}&lon=${lng.toFixed(6)}`;
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    window.clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const json = await res.json();
+      const addr = json?.address || {};
+      const city = addr.city || addr.county || '';
+      const district = addr.suburb || addr.town || addr.city_district || addr.district || '';
+      const road = addr.road || addr.pedestrian || addr.neighbourhood || '';
+      const houseNo = addr.house_number ? `${addr.house_number}號` : '';
+      const composed = `${city}${district}${road}${houseNo}`.trim();
+      if (composed.length >= 4) {
+        readableAddress = composed;
+      } else if (typeof json?.display_name === 'string' && json.display_name.trim()) {
+        readableAddress = json.display_name.split(',').slice(0, 3).reverse().join('').trim() || readableAddress;
+      }
+      if (typeof json?.display_name === 'string' && json.display_name.trim()) {
+        displayName = json.display_name;
+      }
+    }
+  } catch {
+    // 離線或超時時保留精準 GPS 經緯度文字
+  }
+
+  return {
+    address: readableAddress,
+    lat,
+    lng,
+    matchedDisplayName: displayName,
+    source: 'coordinates',
+    updatedAt: new Date().toISOString(),
+  };
+};
+
+/**
  * 讀取本地持久化儲存的自訂出發起始點設定
  */
 export const loadCustomHubPoints = (): StoredCustomHubs => {

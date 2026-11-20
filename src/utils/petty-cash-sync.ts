@@ -114,6 +114,37 @@ export const savePettyCashDraftToServer = async (
   }
 };
 
+export interface PettyCashDraftSummaryItem {
+  updatedAt: string;
+  updatedBy: string;
+  formSerialNo: string;
+  customRowCount: number;
+  invoiceCount: number;
+}
+
+/**
+ * 取得指定月份各區主管《零用金單據黏存單》雲端填報狀態摘要（供車資中心總覽顯示）
+ */
+export const fetchPettyCashDraftsSummary = async (
+  monthKey: string
+): Promise<Record<string, PettyCashDraftSummaryItem>> => {
+  if (!monthKey) return {};
+  try {
+    const params = new URLSearchParams({ month_key: monthKey });
+    const res = await fetch(`${API_BASE_URL}/petty-cash-drafts/summary?${params.toString()}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) return {};
+    const json = await res.json();
+    return json?.byManager && typeof json.byManager === 'object'
+      ? (json.byManager as Record<string, PettyCashDraftSummaryItem>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
 /**
  * 重置並清空後端資料庫中指定主管當月之黏存單草稿
  */

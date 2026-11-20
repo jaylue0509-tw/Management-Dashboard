@@ -15,6 +15,8 @@ import {
   X,
   Loader2,
   AlertTriangle,
+  LocateFixed,
+  Cloud,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import type { Manager, VisitRecord } from '../types';
@@ -32,10 +34,15 @@ import {
   deleteCustomHubPointFromServer,
   geocodeTaiwanAddress,
   loadCustomHubPoints,
+  reverseGeocodeTaiwanCoords,
   saveCustomHubPointToServer,
   syncCustomHubPointsFromServer,
   type StoredCustomHubs,
 } from '../utils/address-geocoder';
+import {
+  fetchPettyCashDraftsSummary,
+  type PettyCashDraftSummaryItem,
+} from '../utils/petty-cash-sync';
 
 // 延後動態載入《國內出差旅費報核單》彈窗，維持車資頁輕量化
 const TravelExpenseReimbursementModal = lazy(() =>
@@ -169,6 +176,10 @@ export const MileageExpensePanel: React.FC<Props> = ({
     user?.role === 'manager' ? user.name : null
   );
   const [onlyShowActive, setOnlyShowActive] = useState<boolean>(false);
+  const [onlyShowMissingHub, setOnlyShowMissingHub] = useState<boolean>(false);
+  const [draftSummaryByManager, setDraftSummaryByManager] = useState<
+    Record<string, PettyCashDraftSummaryItem>
+  >({});
 
   // 自訂出發起始點地址狀態（區主管僅能設定與檢視本人專屬起點，並同步雲端資料庫）
   const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
@@ -212,6 +223,17 @@ export const MileageExpensePanel: React.FC<Props> = ({
       active = false;
     };
   }, [isManagerOnly, user?.name]);
+
+  // 載入指定月份各區主管《零用金單據黏存單》雲端填報狀態摘要（管理員檢視全區、區主管僅看自己）
+  const refreshDraftSummary = React.useCallback(async () => {
+    if (!targetMonthKey) return;
+    const summary = await fetchPettyCashDraftsSummary(targetMonthKey);
+    setDraftSummaryByManager(summary);
+  }, [targetMonthKey]);
+
+  React.useEffect(() => {
+    refreshDraftSummary();
+  }, [refreshDraftSummary]);
 
   // 當外層日期篩選變更時，同步更新目標單日與月份
   React.useEffect(() => {
@@ -317,6 +339,67 @@ export const MileageExpensePanel: React.FC<Props> = ({
     }
   };
 
+  // 一鍵取得手機／瀏覽器目前 GPS 座標並反查台灣門牌地址儲存為固定起點
+  const handleUseCurrentGps = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGeocodeStatus({ type: 'error', text: '此裝置或瀏覽器不支援 GPS 定位，請手動輸入地址' });
+      return;
+    }
+
+    const effectiveTargetKey = isManagerOnly ? (user?.name || '').trim() : hubTargetScope;
+    if (!effectiveTargetKey) {
+      setGeocodeStatus({ type: 'error', text: '無法識別您的區主管帳號，請重新登入後再試' });
+      return;
+    }
+
+    setIsGeocoding(true);
+    setGeocodeStatus(null);
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          if (latitude < 21.0 || latitude > 26.5 || longitude < 118.0 || longitude > 123.0) {
+            setGeocodeStatus({
+              type: 'error',
+              text: `偵測到 GPS 座標（${latitude.toFixed(4)}, ${longitude.toFixed(4)}）超出台灣本島與離島範圍，請手動輸入地址`,
+            });
+            return;
+          }
+
+          const resolved = await reverseGeocodeTaiwanCoords(latitude, longitude);
+          setAddressInput(resolved.address);
+          const saveResult = await saveCustomHubPointToServer(effectiveTargetKey, resolved);
+          setCustomHubs(saveResult.data);
+
+          const targetLabel =
+            effectiveTargetKey === '__global__' ? '全體主管通用起點' : `${effectiveTargetKey} 專屬起點`;
+          const syncHint = saveResult.syncedCloud
+            ? '☁️ 已儲存至雲端資料庫，手機／電腦／總部統一以此起點計算！'
+            : '（已暫存於本機，待連線恢復後將同步雲端）';
+
+          setGeocodeStatus({
+            type: 'success',
+            text: `已以 GPS 精準定位【${targetLabel}】：${resolved.address}（${latitude.toFixed(4)}, ${longitude.toFixed(4)}）— ${syncHint}`,
+            verifyCoords: { lat: latitude, lng: longitude },
+          });
+        } finally {
+          setIsGeocoding(false);
+        }
+      },
+      err => {
+        setIsGeocoding(false);
+        const reason =
+          err.code === err.PERMISSION_DENIED
+            ? '定位權限遭拒絕，請於瀏覽器或手機設定開啟位置權限'
+            : err.code === err.TIMEOUT
+            ? 'GPS 定位逾時，建議移至窗邊或戶外再試，或手動輸入地址'
+            : '目前無法取得 GPS 訊號，請手動輸入地址';
+        setGeocodeStatus({ type: 'error', text: reason });
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  };
+
   // 移除自訂起始點（同步清除雲端紀錄並恢復預設區域中心）
   const handleRemoveCustomHub = async (targetKey: string) => {
     if (isManagerOnly && targetKey !== user?.name) return;
@@ -382,6 +465,9 @@ export const MileageExpensePanel: React.FC<Props> = ({
       if (isManagerOnly && m.managerName !== user?.name) return false;
       if (!isManagerOnly && selectedRegion !== ALL_REGIONS && m.region !== selectedRegion) return false;
       if (!isManagerOnly && onlyShowActive && m.dayKm === 0 && m.monthKm === 0) return false;
+      if (!isManagerOnly && onlyShowMissingHub && Boolean(customHubs.byManager[m.managerName])) {
+        return false;
+      }
       if (
         !isManagerOnly &&
         q &&
@@ -393,7 +479,16 @@ export const MileageExpensePanel: React.FC<Props> = ({
       }
       return true;
     });
-  }, [report.managersReport, isManagerOnly, user?.name, selectedRegion, onlyShowActive, keyword]);
+  }, [
+    report.managersReport,
+    isManagerOnly,
+    user?.name,
+    selectedRegion,
+    onlyShowActive,
+    onlyShowMissingHub,
+    customHubs.byManager,
+    keyword,
+  ]);
 
   if (!user) return null;
 
@@ -708,14 +803,26 @@ export const MileageExpensePanel: React.FC<Props> = ({
                   輸入完整住家或固定出發地址後儲存，手機／電腦／總部統一以此起點計算車資與黏存單
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => handleApplyStartAddress('總部大樓')}
-                disabled={isGeocoding}
-                className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-indigo-100 border border-white/15 cursor-pointer transition-colors"
-              >
-                快速套用：總部大樓（中和）
-              </button>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleUseCurrentGps}
+                  disabled={isGeocoding}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/40 text-emerald-100 border border-emerald-400/50 cursor-pointer transition-colors"
+                  title="以手機或電腦目前 GPS 精準座標自動帶入起點地址"
+                >
+                  <LocateFixed size={12} />
+                  <span>帶入目前 GPS 位置</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApplyStartAddress('總部大樓')}
+                  disabled={isGeocoding}
+                  className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-indigo-100 border border-white/15 cursor-pointer transition-colors"
+                >
+                  快速套用：總部大樓（中和）
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
@@ -993,6 +1100,15 @@ export const MileageExpensePanel: React.FC<Props> = ({
                 />
                 <span>僅顯示有出勤紀錄主管</span>
               </label>
+              <label className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={onlyShowMissingHub}
+                  onChange={e => setOnlyShowMissingHub(e.target.checked)}
+                  className="rounded text-amber-600 cursor-pointer"
+                />
+                <span>僅顯示尚未設起點</span>
+              </label>
 
               <div className="relative">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -1120,6 +1236,20 @@ export const MileageExpensePanel: React.FC<Props> = ({
                         <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full">
                           <AlertTriangle size={10} />
                           <span>尚未設定個人出發地址（暫用區域中心）</span>
+                        </div>
+                      )}
+                      {draftSummaryByManager[m.managerName] && (
+                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full ml-1">
+                          <Cloud size={10} />
+                          <span>
+                            {targetMonthKey.slice(5)}月黏存單已雲端存檔
+                            {draftSummaryByManager[m.managerName].invoiceCount > 0
+                              ? ` · 發票 ${draftSummaryByManager[m.managerName].invoiceCount} 筆`
+                              : ''}
+                            {draftSummaryByManager[m.managerName].customRowCount > 0
+                              ? ` · 附加 ${draftSummaryByManager[m.managerName].customRowCount} 筆`
+                              : ''}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1302,7 +1432,10 @@ export const MileageExpensePanel: React.FC<Props> = ({
         <Suspense fallback={null}>
           <TravelExpenseReimbursementModal
             isOpen={reimbursementModal.open}
-            onClose={() => setReimbursementModal(prev => ({ ...prev, open: false }))}
+            onClose={() => {
+              setReimbursementModal(prev => ({ ...prev, open: false }));
+              refreshDraftSummary();
+            }}
             managersReport={report.managersReport}
             initialManagerName={reimbursementModal.managerName}
             targetMonthKey={targetMonthKey}

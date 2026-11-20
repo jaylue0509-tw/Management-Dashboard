@@ -658,6 +658,16 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       const nextList = prev.map(r => {
         if (r.id !== id) return r;
         const nextRow = { ...r, [key]: value };
+        // 修改日期短格式（如 10/05）時同步更新完整 YYYY-MM-DD，確保單日篩選與排序一致
+        if (key === 'shortDate' && typeof value === 'string') {
+          const match = value.trim().match(/^(\d{1,2})[/-](\d{1,2})$/);
+          if (match) {
+            const yearPrefix = (r.dateStr || targetMonthKey || '2026-01').slice(0, 4);
+            const mm = match[1].padStart(2, '0');
+            const dd = match[2].padStart(2, '0');
+            nextRow.dateStr = `${yearPrefix}-${mm}-${dd}`;
+          }
+        }
         // 修改公里數時，若先前有手動鎖定金額則自動解除鎖定，讓實付金額隨公里數×單價即時更新
         if (key === 'actualKm') {
           nextRow.customAmount = null;

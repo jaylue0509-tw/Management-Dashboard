@@ -8,6 +8,11 @@ export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
   (import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api');
 
+/** API 主機來源（供 /api/photos/... 等相對路徑圖片資源拼接使用） */
+export const API_ORIGIN = API_BASE_URL.endsWith('/api')
+  ? API_BASE_URL.slice(0, -4)
+  : API_BASE_URL;
+
 /**
  * 產生包含 Bearer Token 的認證 Header
  */

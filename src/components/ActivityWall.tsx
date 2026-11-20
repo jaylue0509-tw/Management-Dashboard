@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import type { VisitRecord } from '../types';
 import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck, Search, Compass } from 'lucide-react';
 import { formatTaipeiReportTime, formatTimeAgo, getMinutesAgo } from '../utils/time-utils';
+import { API_ORIGIN } from '../api/api';
 
 export type ActivityCategoryFilter = 'all' | 'store' | 'abnormal' | 'normal' | 'photo' | 'schedule';
 
@@ -27,7 +28,7 @@ const ITEM_NAMES: Record<string, string> = {
 const resolvePhotoUrl = (url?: string): string => {
   if (!url) return '';
   if (url.startsWith('/api/')) {
-    return import.meta.env.PROD ? url : `https://management-dashboard-rust.vercel.app${url}`;
+    return `${API_ORIGIN}${url}`;
   }
   return url;
 };
