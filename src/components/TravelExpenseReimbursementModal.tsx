@@ -65,6 +65,8 @@ interface PettyCashRow {
   isCustomRow?: boolean;
   /** 出發起始點與站點數指紋，當主管修改起始點地址時自動失效舊里程快取 */
   originSignature?: string;
+  /** 對應本機與雲端草稿之唯一快取鍵（巡店油資與高鐵去程／回程／停車費各自獨立不互蓋） */
+  cacheKey?: string;
 }
 
 interface TravelExpenseReimbursementModalProps {
@@ -176,80 +178,153 @@ const formatFuelFormulaLine = (km: number, rate: number, paidAmount: number): st
 };
 
 /**
- * 依據單日巡店路線紀錄轉成《零用金單據黏存單》預設明細列
+ * 依據單日巡店與總部出差紀錄轉成《零用金單據黏存單》預設明細列
+ * - 北區去中和景平路總部或一般巡店：產出 1 列「油資」（附點對點真實 Google Maps 距離圖）
+ * - 中南部去中和景平路總部：比照紙本黏存單自動展開為「去程高鐵票＋回程高鐵票＋高鐵停車費」3 列（不產生假長途開車地圖）
  */
-const buildRowFromDailyRoute = (
+const buildRowsFromDailyRoute = (
   route: DailyRouteRecord,
   idx: number,
   storedMap: Record<string, StoredEvidencePatch>
-): PettyCashRow => {
+): PettyCashRow[] => {
   const [, mm = '01', dd = '01'] = route.dateStr.split('-');
   const shortDate = `${mm.padStart(2, '0')}/${dd.padStart(2, '0')}`;
-
-  // 比照紙本照片格式：「店點巡視：彰化中山店.彰化中正店.員林三民東店.和美彰美店」
-  let defaultRouteTitle = '';
-  if (route.visitedStores.length > 0) {
-    const storesWithSuffix = route.visitedStores.map(s => (s.endsWith('店') ? s : `${s}店`));
-    defaultRouteTitle = `店點巡視：${storesWithSuffix.join('.')}`;
-  } else if (route.legs.length > 0) {
-    const legTargets = route.legs.filter(l => !l.isReturnLeg).map(l => l.toLabel);
-    defaultRouteTitle = legTargets.join(' / ') || '轄區店點巡視';
-  } else {
-    defaultRouteTitle = '轄區店點巡視';
-  }
+  const resultRows: PettyCashRow[] = [];
 
   const waypoints = route.waypoints || [];
-  const originSignature = buildOriginSignature(waypoints);
-  const defaultStopLabels = waypoints.map(wp =>
-    formatStopForGoogleMaps(wp.label, wp, route.region)
-  );
-  const cacheKey = `${route.managerName}_${route.dateStr}`;
-  const saved = storedMap[cacheKey];
+  const hasDrivingRoute = !route.hsrTrip || (route.totalKm > 0 && waypoints.length >= 2);
 
-  // NOTE: 僅當快取的起點指紋與目前出發起點一致時才沿用舊里程與站點，避免主管更新起點地址後仍被舊市中心距離覆蓋
-  const isRouteCacheValid = Boolean(
-    saved && saved.originSignature && saved.originSignature === originSignature
-  );
+  if (hasDrivingRoute) {
+    // 比照紙本照片格式：「店點巡視：彰化中山店.彰化中正店.員林三民東店.和美彰美店」
+    let defaultRouteTitle = '';
+    if (route.visitedStores.length > 0) {
+      const storesWithSuffix = route.visitedStores.map(s => (s.endsWith('店') ? s : `${s}店`));
+      defaultRouteTitle = `店點巡視：${storesWithSuffix.join('.')}`;
+    } else if (route.legs.length > 0) {
+      const legTargets = route.legs
+        .filter(l => !l.isReturnLeg && l.transportMode !== 'hsr')
+        .map(l => l.toLabel);
+      defaultRouteTitle = legTargets.join(' / ') || '轄區店點巡視';
+    } else {
+      defaultRouteTitle = '轄區店點巡視';
+    }
 
-  const initialScreenshots = Array.isArray(saved?.googleScreenshots) ? saved.googleScreenshots : [];
-  const initialKm =
-    isRouteCacheValid && saved?.actualKm !== undefined && saved.actualKm > 0
-      ? saved.actualKm
-      : Number(route.totalKm.toFixed(1));
-  const initialStopLabels =
-    isRouteCacheValid && Array.isArray(saved?.stopLabels) && saved.stopLabels.length >= 2
-      ? saved.stopLabels
-      : defaultStopLabels.length >= 2
-      ? defaultStopLabels
-      : [
-          formatStopForGoogleMaps(`${route.region}中心`, undefined, route.region),
-          formatStopForGoogleMaps(route.visitedStores[0] || '總部大樓', undefined, route.region),
-        ];
+    const originSignature = buildOriginSignature(waypoints);
+    const defaultStopLabels = waypoints.map(wp =>
+      formatStopForGoogleMaps(wp.label, wp, route.region)
+    );
+    const cacheKey = `${route.managerName}_${route.dateStr}`;
+    const saved = storedMap[cacheKey];
 
-  return {
-    id: `petty-${route.dateStr}-${idx}`,
-    dateStr: route.dateStr,
-    shortDate,
-    itemCategory: saved?.itemCategory || '油資',
-    routeTitle: saved?.routeTitle || defaultRouteTitle,
-    actualKm: initialKm,
-    customAmount: isRouteCacheValid && saved?.customAmount !== undefined ? saved.customAmount : null,
-    invoiceNumber: saved?.invoiceNumber || '',
-    isCustomRow: false,
-    originSignature,
-    evidence: {
-      waypoints,
-      stopLabels: initialStopLabels,
-      geometry: waypoints.map(w => [w.lat, w.lng] as [number, number]),
-      durationMin:
-        isRouteCacheValid && saved?.durationMin !== undefined
-          ? saved.durationMin
-          : Math.max(8, Math.round((initialKm / 34) * 60)),
-      viaRoad: isRouteCacheValid && saved?.viaRoad ? saved.viaRoad : '途經主要省道／快速道路',
+    // NOTE: 僅當快取的起點指紋與目前出發起點一致時才沿用舊里程與站點，避免主管更新起點地址後仍被舊市中心距離覆蓋
+    const isRouteCacheValid = Boolean(
+      saved && saved.originSignature && saved.originSignature === originSignature
+    );
+
+    const initialScreenshots = Array.isArray(saved?.googleScreenshots) ? saved.googleScreenshots : [];
+    const initialKm =
+      isRouteCacheValid && saved?.actualKm !== undefined && saved.actualKm > 0
+        ? saved.actualKm
+        : Number(route.totalKm.toFixed(1));
+    const initialStopLabels =
+      isRouteCacheValid && Array.isArray(saved?.stopLabels) && saved.stopLabels.length >= 2
+        ? saved.stopLabels
+        : defaultStopLabels.length >= 2
+        ? defaultStopLabels
+        : [
+            formatStopForGoogleMaps(`${route.region}中心`, undefined, route.region),
+            formatStopForGoogleMaps(route.visitedStores[0] || '總部大樓', undefined, route.region),
+          ];
+
+    resultRows.push({
+      id: `petty-${route.dateStr}-${idx}`,
+      dateStr: route.dateStr,
+      shortDate,
+      itemCategory: saved?.itemCategory || '油資',
+      routeTitle: saved?.routeTitle || defaultRouteTitle,
+      actualKm: initialKm,
+      customAmount: isRouteCacheValid && saved?.customAmount !== undefined ? saved.customAmount : null,
+      invoiceNumber: saved?.invoiceNumber || '',
+      isCustomRow: false,
+      originSignature,
+      cacheKey,
+      evidence: {
+        waypoints,
+        stopLabels: initialStopLabels,
+        geometry: waypoints.map(w => [w.lat, w.lng] as [number, number]),
+        durationMin:
+          isRouteCacheValid && saved?.durationMin !== undefined
+            ? saved.durationMin
+            : Math.max(8, Math.round((initialKm / 34) * 60)),
+        viaRoad: isRouteCacheValid && saved?.viaRoad ? saved.viaRoad : '途經主要省道／快速道路',
+        verificationStatus: 'google_verified',
+        googleScreenshots: initialScreenshots,
+      },
+    });
+  }
+
+  // 中南部主管赴中和景平路總部：自動比照紙本展開「高鐵去程＋高鐵回程＋高鐵停車費」3 列
+  if (route.hsrTrip) {
+    const hsr = route.hsrTrip;
+    const hsrEmptyEvidence: RouteEvidenceData = {
+      waypoints: [],
+      stopLabels: [],
+      geometry: [],
+      durationMin: 0,
+      viaRoad: '台灣高鐵',
       verificationStatus: 'google_verified',
-      googleScreenshots: initialScreenshots,
-    },
-  };
+      googleScreenshots: [],
+    };
+
+    const hsrItems: Array<{
+      suffix: string;
+      category: ExpenseCategoryItem;
+      title: string;
+      amount: number;
+    }> = [
+      {
+        suffix: 'hsr_out',
+        category: '高鐵票',
+        title: `${hsr.meetingTitle} / 高鐵：${hsr.departureStation}-${hsr.arrivalStation} (實付 ${hsr.oneWayFare} 元)`,
+        amount: hsr.oneWayFare,
+      },
+      {
+        suffix: 'hsr_back',
+        category: '高鐵票',
+        title: `${hsr.meetingTitle} / 高鐵：${hsr.arrivalStation}-${hsr.departureStation} (實付 ${hsr.oneWayFare} 元)`,
+        amount: hsr.oneWayFare,
+      },
+      {
+        suffix: 'hsr_park',
+        category: '停車費',
+        title: `${hsr.departureStation}高鐵停車費`,
+        amount: hsr.defaultParkingFee,
+      },
+    ];
+
+    for (const item of hsrItems) {
+      const hsrCacheKey = `${route.managerName}_${route.dateStr}_${item.suffix}`;
+      const savedHsr = storedMap[hsrCacheKey];
+      resultRows.push({
+        id: `petty-${route.dateStr}-${idx}-${item.suffix}`,
+        dateStr: route.dateStr,
+        shortDate,
+        itemCategory: savedHsr?.itemCategory || item.category,
+        routeTitle: savedHsr?.routeTitle || item.title,
+        actualKm: 0,
+        customAmount:
+          savedHsr?.customAmount !== undefined && savedHsr.customAmount !== null
+            ? savedHsr.customAmount
+            : item.amount,
+        invoiceNumber: savedHsr?.invoiceNumber || '',
+        isCustomRow: false,
+        cacheKey: hsrCacheKey,
+        evidence: hsrEmptyEvidence,
+      });
+    }
+  }
+
+  return resultRows;
 };
 
 const escapeHtml = (str: string | number | undefined | null): string =>
@@ -450,8 +525,8 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       }
 
       const storedMap = ignoreSavedCache ? {} : loadStoredEvidenceMap();
-      const generatedRows = sourceRoutes.map((route, idx) =>
-        buildRowFromDailyRoute(route, idx, storedMap)
+      const generatedRows = sourceRoutes.flatMap((route, idx) =>
+        buildRowsFromDailyRoute(route, idx, storedMap)
       );
 
       let mergedRows = generatedRows;
@@ -632,7 +707,8 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     patch: StoredEvidencePatch
   ) => {
     if (!activeManager || row.isCustomRow) return;
-    saveStoredEvidenceItem(`${activeManager.managerName}_${row.dateStr}`, {
+    const key = row.cacheKey || `${activeManager.managerName}_${row.dateStr}`;
+    saveStoredEvidenceItem(key, {
       originSignature: row.originSignature,
       ...patch,
     });

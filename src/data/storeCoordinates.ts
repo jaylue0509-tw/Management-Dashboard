@@ -8,12 +8,12 @@ export interface GeoPoint {
 }
 
 /**
- * 台北總部座標（新北市中和區／台北市區中心基準）
+ * 台北總部座標（固定於新北市中和區景平路258號）
  */
 export const HEADQUARTERS_POINT: GeoPoint = {
-  lat: 25.0015,
-  lng: 121.4885,
-  label: '總部大樓',
+  lat: 24.9935,
+  lng: 121.5095,
+  label: '總部大樓（中和景平路）',
 };
 
 /**

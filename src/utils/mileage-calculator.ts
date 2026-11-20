@@ -29,6 +29,23 @@ export interface RouteLeg {
   recordId?: string;
   actionType?: string;
   isReturnLeg?: boolean;
+  /** 交通方式：drive（汽機車行駛計公里）或 hsr（中南部前往中和總部搭高鐵） */
+  transportMode?: 'drive' | 'hsr';
+}
+
+export interface HsrHeadquartersTrip {
+  /** 中南部出發高鐵站（如：台中、彰化、嘉義、台南、左營） */
+  departureStation: string;
+  /** 北部抵達高鐵站（中和景平路總部固定搭至板橋站） */
+  arrivalStation: string;
+  /** 標準車廂單程全票（NT$） */
+  oneWayFare: number;
+  /** 高鐵來回票價合計（NT$） */
+  roundTripFare: number;
+  /** 預設高鐵站單日停車費（NT$，可於黏存單調整或刪除） */
+  defaultParkingFee: number;
+  /** 會議／總部行程事由 */
+  meetingTitle: string;
 }
 
 export interface DailyRouteRecord {
@@ -44,6 +61,8 @@ export interface DailyRouteRecord {
   waypoints: GeoPoint[];
   totalKm: number;
   totalSubsidy: number;
+  /** 若為中南部主管前往中和景平路總部，標記改搭高鐵往返板橋站資訊 */
+  hsrTrip?: HsrHeadquartersTrip;
 }
 
 export interface ManagerExpenseItem {
@@ -108,6 +127,77 @@ const toTimestamp = (iso?: string): number => {
 };
 
 const SORTED_STORE_NAMES = Object.keys(RAW_STORE_COORDINATES).sort((a, b) => b.length - a.length);
+
+/** 中南部區域（往返中和景平路總部固定搭高鐵至板橋站；北區新北／北桃／竹苗／宜花則開車往返） */
+const CENTRAL_SOUTH_HSR_REGIONS = new Set(['中投區', '彰雲區', '嘉南區', '高雄區', '高屏區']);
+
+/** 台灣高鐵標準車廂全票（各站 ↔ 板橋站，供中南部主管赴中和景平路總部自動計費） */
+const HSR_TO_BANQIAO_FARES: Record<string, number> = {
+  台中: 670,
+  彰化: 790,
+  雲林: 900,
+  嘉義: 1050,
+  台南: 1320,
+  左營: 1460,
+};
+
+/** 預設高鐵站當日停車費（比照紙本零用金黏存單：高鐵停車費 $250） */
+const DEFAULT_HSR_PARKING_FEE = 250;
+
+/**
+ * 判斷單筆行程是否為前往中和景平路總部（含總部行程、月會、雙週會、行營採、寵物雲會報等）
+ */
+export const isHeadquartersActivity = (activity: VisitRecord): boolean => {
+  if (activity.actionType === '總部行程') return true;
+  if (!SCHEDULE_TYPES.has(activity.actionType)) return false;
+  const text = `${activity.storeName || ''} ${activity.highlightDescription || ''}`;
+  return /總部|月會|雙週會|行營採|會報|景平路/.test(text);
+};
+
+/**
+ * 判斷該區域／出發起點是否屬於中南部（赴中和景平路總部必搭高鐵；北區則開車）
+ */
+export const isCentralSouthHsrRegion = (region: string, hubPoint?: GeoPoint): boolean => {
+  const normalized = normalizeRegionName(region);
+  if (CENTRAL_SOUTH_HSR_REGIONS.has(normalized)) return true;
+  if (['新北區', '北桃區', '竹苗區', '宜花區'].includes(normalized)) return false;
+  return Boolean(hubPoint && hubPoint.lat < 24.45);
+};
+
+/**
+ * 依中南部區域與出發座標決定最近之高鐵出發站與至板橋站標準車廂單程票價
+ */
+const resolveHsrStationToBanqiao = (
+  region: string,
+  hubPoint?: GeoPoint
+): { station: string; oneWayFare: number } => {
+  const normalized = normalizeRegionName(region);
+  if (normalized === '中投區') return { station: '台中', oneWayFare: HSR_TO_BANQIAO_FARES['台中'] };
+  if (normalized === '彰雲區') {
+    // 若出發點偏雲林（北緯 < 23.78），對應高鐵雲林站；否則對應高鐵彰化站
+    if (hubPoint && hubPoint.lat < 23.78) {
+      return { station: '雲林', oneWayFare: HSR_TO_BANQIAO_FARES['雲林'] };
+    }
+    return { station: '彰化', oneWayFare: HSR_TO_BANQIAO_FARES['彰化'] };
+  }
+  if (normalized === '嘉南區') {
+    // 台南市區（北緯 < 23.15）搭台南站，新營／嘉義搭嘉義站
+    if (hubPoint && hubPoint.lat < 23.15) {
+      return { station: '台南', oneWayFare: HSR_TO_BANQIAO_FARES['台南'] };
+    }
+    return { station: '嘉義', oneWayFare: HSR_TO_BANQIAO_FARES['嘉義'] };
+  }
+  if (normalized === '高雄區' || normalized === '高屏區') {
+    return { station: '左營', oneWayFare: HSR_TO_BANQIAO_FARES['左營'] };
+  }
+  // 依出發緯度保底推算
+  const lat = hubPoint?.lat ?? 24.16;
+  if (lat < 22.85) return { station: '左營', oneWayFare: HSR_TO_BANQIAO_FARES['左營'] };
+  if (lat < 23.25) return { station: '台南', oneWayFare: HSR_TO_BANQIAO_FARES['台南'] };
+  if (lat < 23.65) return { station: '嘉義', oneWayFare: HSR_TO_BANQIAO_FARES['嘉義'] };
+  if (lat < 24.0) return { station: '彰化', oneWayFare: HSR_TO_BANQIAO_FARES['彰化'] };
+  return { station: '台中', oneWayFare: HSR_TO_BANQIAO_FARES['台中'] };
+};
 
 /** 常見公務／會議／受訓地點關鍵字座標對照，確保特殊行程不會與出發點重疊為 0 公里 */
 const SCHEDULE_LANDMARK_COORDS: { keywords: string[]; lat: number; lng: number; label: string }[] = [
@@ -238,96 +328,153 @@ export const calculateDailyRoute = (
     }
   }
 
-  if (mode === 'round_trip') {
-    let currentPoint = hub;
-    waypoints.push(hub);
-    for (const stop of distinctStops) {
-      const nextPoint = resolveActivityPoint(stop, region, hub);
-      waypoints.push({
-        ...nextPoint,
-        label: nextPoint.label || stop.storeName || stop.actionType,
-      });
-      const km = estimateDrivingKm(currentPoint, nextPoint, region);
-      const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
-      legs.push({
-        fromLabel: currentPoint.label,
-        toLabel: SCHEDULE_TYPES.has(stop.actionType)
-          ? `${stop.actionType}${stop.highlightDescription ? `：${stop.highlightDescription}` : ''}`
-          : stop.storeName,
-        distanceKm: km,
-        subsidyCost: Math.round(km * ratePerKm),
-        visitTime: timeStr,
-        recordId: stop.recordId,
-        actionType: stop.actionType,
-      });
-      currentPoint = nextPoint;
-    }
+  // NOTE: 總部固定於中和景平路：北區主管開車往返計油資，中南部主管改採高鐵往返板橋站計費（不計數百公里長途開車油資）
+  const useHsrForHq = isCentralSouthHsrRegion(region, hub);
+  const hqStops = useHsrForHq ? distinctStops.filter(s => isHeadquartersActivity(s)) : [];
+  const drivingStops = useHsrForHq
+    ? distinctStops.filter(s => !isHeadquartersActivity(s))
+    : distinctStops;
 
-    // 末站返回區域中心或自訂起始點
-    const returnKm = estimateDrivingKm(currentPoint, hub, region);
-    if (returnKm > 0) {
+  let hsrTrip: HsrHeadquartersTrip | undefined;
+  if (hqStops.length > 0) {
+    const { station, oneWayFare } = resolveHsrStationToBanqiao(region, hub);
+    const primaryHq = hqStops[0];
+    const meetingTitle =
+      (primaryHq.highlightDescription || '').trim() ||
+      (primaryHq.storeName && primaryHq.storeName !== '總部行程' ? primaryHq.storeName : '總部會議');
+    hsrTrip = {
+      departureStation: station,
+      arrivalStation: '板橋',
+      oneWayFare,
+      roundTripFare: oneWayFare * 2,
+      defaultParkingFee: DEFAULT_HSR_PARKING_FEE,
+      meetingTitle,
+    };
+  }
+
+  if (drivingStops.length > 0) {
+    if (mode === 'round_trip') {
+      let currentPoint = hub;
       waypoints.push(hub);
-      legs.push({
-        fromLabel: currentPoint.label,
-        toLabel: hub.label,
-        distanceKm: returnKm,
-        subsidyCost: Math.round(returnKm * ratePerKm),
-        isReturnLeg: true,
-      });
-    }
-  } else {
-    // 僅計門市間跨店移動（若單日僅 1 站，以區域中心單趟移動估算）
-    if (distinctStops.length === 1) {
-      const stop = distinctStops[0];
-      const nextPoint = resolveActivityPoint(stop, region, hub);
-      waypoints.push(hub, {
-        ...nextPoint,
-        label: nextPoint.label || stop.storeName || stop.actionType,
-      });
-      const km = estimateDrivingKm(hub, nextPoint, region);
-      const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
-      legs.push({
-        fromLabel: hub.label,
-        toLabel: SCHEDULE_TYPES.has(stop.actionType) ? stop.actionType : stop.storeName,
-        distanceKm: km,
-        subsidyCost: Math.round(km * ratePerKm),
-        visitTime: timeStr,
-        recordId: stop.recordId,
-        actionType: stop.actionType,
-      });
-    } else {
-      for (let i = 0; i < distinctStops.length - 1; i++) {
-        const fromStop = distinctStops[i];
-        const toStop = distinctStops[i + 1];
-        const fromPt = resolveActivityPoint(fromStop, region, hub);
-        const toPt = resolveActivityPoint(toStop, region, hub);
-        if (i === 0) {
-          waypoints.push({
-            ...fromPt,
-            label: fromPt.label || fromStop.storeName || fromStop.actionType,
-          });
-        }
+      for (const stop of drivingStops) {
+        const nextPoint = resolveActivityPoint(stop, region, hub);
         waypoints.push({
-          ...toPt,
-          label: toPt.label || toStop.storeName || toStop.actionType,
+          ...nextPoint,
+          label: nextPoint.label || stop.storeName || stop.actionType,
         });
-        const km = estimateDrivingKm(fromPt, toPt, region);
-        const timeStr = formatTaipeiReportTime(toStop.createdAt).split(' ')[1] || '';
+        const km = estimateDrivingKm(currentPoint, nextPoint, region);
+        const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
         legs.push({
-          fromLabel: SCHEDULE_TYPES.has(fromStop.actionType) ? fromStop.actionType : fromStop.storeName,
-          toLabel: SCHEDULE_TYPES.has(toStop.actionType) ? toStop.actionType : toStop.storeName,
+          fromLabel: currentPoint.label,
+          toLabel: SCHEDULE_TYPES.has(stop.actionType)
+            ? `${stop.actionType}${stop.highlightDescription ? `：${stop.highlightDescription}` : ''}`
+            : stop.storeName,
           distanceKm: km,
           subsidyCost: Math.round(km * ratePerKm),
           visitTime: timeStr,
-          recordId: toStop.recordId,
-          actionType: toStop.actionType,
+          recordId: stop.recordId,
+          actionType: stop.actionType,
+          transportMode: 'drive',
         });
+        currentPoint = nextPoint;
+      }
+
+      // 末站返回區域中心或自訂起始點
+      const returnKm = estimateDrivingKm(currentPoint, hub, region);
+      if (returnKm > 0) {
+        waypoints.push(hub);
+        legs.push({
+          fromLabel: currentPoint.label,
+          toLabel: hub.label,
+          distanceKm: returnKm,
+          subsidyCost: Math.round(returnKm * ratePerKm),
+          isReturnLeg: true,
+          transportMode: 'drive',
+        });
+      }
+    } else {
+      // 僅計門市間跨店移動（若單日僅 1 站，以區域中心單趟移動估算）
+      if (drivingStops.length === 1) {
+        const stop = drivingStops[0];
+        const nextPoint = resolveActivityPoint(stop, region, hub);
+        waypoints.push(hub, {
+          ...nextPoint,
+          label: nextPoint.label || stop.storeName || stop.actionType,
+        });
+        const km = estimateDrivingKm(hub, nextPoint, region);
+        const timeStr = formatTaipeiReportTime(stop.createdAt).split(' ')[1] || '';
+        legs.push({
+          fromLabel: hub.label,
+          toLabel: SCHEDULE_TYPES.has(stop.actionType) ? stop.actionType : stop.storeName,
+          distanceKm: km,
+          subsidyCost: Math.round(km * ratePerKm),
+          visitTime: timeStr,
+          recordId: stop.recordId,
+          actionType: stop.actionType,
+          transportMode: 'drive',
+        });
+      } else {
+        for (let i = 0; i < drivingStops.length - 1; i++) {
+          const fromStop = drivingStops[i];
+          const toStop = drivingStops[i + 1];
+          const fromPt = resolveActivityPoint(fromStop, region, hub);
+          const toPt = resolveActivityPoint(toStop, region, hub);
+          if (i === 0) {
+            waypoints.push({
+              ...fromPt,
+              label: fromPt.label || fromStop.storeName || fromStop.actionType,
+            });
+          }
+          waypoints.push({
+            ...toPt,
+            label: toPt.label || toStop.storeName || toStop.actionType,
+          });
+          const km = estimateDrivingKm(fromPt, toPt, region);
+          const timeStr = formatTaipeiReportTime(toStop.createdAt).split(' ')[1] || '';
+          legs.push({
+            fromLabel: SCHEDULE_TYPES.has(fromStop.actionType) ? fromStop.actionType : fromStop.storeName,
+            toLabel: SCHEDULE_TYPES.has(toStop.actionType) ? toStop.actionType : toStop.storeName,
+            distanceKm: km,
+            subsidyCost: Math.round(km * ratePerKm),
+            visitTime: timeStr,
+            recordId: toStop.recordId,
+            actionType: toStop.actionType,
+            transportMode: 'drive',
+          });
+        }
       }
     }
   }
 
+  // 中南部赴中和景平路總部：以高鐵去程＋回程（至板橋站）紀錄取代長途開車估算
+  if (hsrTrip) {
+    const primaryHq = hqStops[0];
+    const timeStr = formatTaipeiReportTime(primaryHq.createdAt).split(' ')[1] || '';
+    legs.push(
+      {
+        fromLabel: `高鐵${hsrTrip.departureStation}站`,
+        toLabel: `高鐵${hsrTrip.arrivalStation}站（中和景平路總部 · ${hsrTrip.meetingTitle}）`,
+        distanceKm: 0,
+        subsidyCost: hsrTrip.oneWayFare,
+        visitTime: timeStr,
+        recordId: primaryHq.recordId,
+        actionType: primaryHq.actionType,
+        transportMode: 'hsr',
+      },
+      {
+        fromLabel: `高鐵${hsrTrip.arrivalStation}站（總部返程）`,
+        toLabel: `高鐵${hsrTrip.departureStation}站`,
+        distanceKm: 0,
+        subsidyCost: hsrTrip.oneWayFare,
+        isReturnLeg: true,
+        transportMode: 'hsr',
+      }
+    );
+  }
+
   const totalKm = Math.round(legs.reduce((sum, l) => sum + l.distanceKm, 0) * 10) / 10;
-  const totalSubsidy = Math.round(totalKm * ratePerKm);
+  const driveSubsidy = Math.round(totalKm * ratePerKm);
+  const totalSubsidy = driveSubsidy + (hsrTrip ? hsrTrip.roundTripFare : 0);
 
   return {
     dateStr,
@@ -341,6 +488,7 @@ export const calculateDailyRoute = (
     waypoints,
     totalKm,
     totalSubsidy,
+    hsrTrip,
   };
 };
 
@@ -381,8 +529,8 @@ export const buildExpenseDashboardReport = (params: {
     selectedDepartment === 'all' || restrictToManagerName
       ? managers
       : managers.filter(
-          m => m.department.includes(deptKeyword) || m.department === selectedDepartment
-        );
+        m => m.department.includes(deptKeyword) || m.department === selectedDepartment
+      );
 
   // 建立每位主管（包含正區主管與副區主管）基本資料名冊
   const rosterMap = new Map<
@@ -517,7 +665,7 @@ export const buildExpenseDashboardReport = (params: {
 
     const monthKm =
       Math.round(monthDailyRoutes.reduce((sum, r) => sum + r.totalKm, 0) * 10) / 10;
-    const monthSubsidy = Math.round(monthKm * ratePerKm);
+    const monthSubsidy = monthDailyRoutes.reduce((sum, r) => sum + r.totalSubsidy, 0);
     const monthVisitCount = monthDailyRoutes.reduce((sum, r) => sum + r.storeVisitCount, 0);
     const monthScheduleCount = monthDailyRoutes.reduce((sum, r) => sum + r.scheduleCount, 0);
 
@@ -539,7 +687,7 @@ export const buildExpenseDashboardReport = (params: {
       if (route) periodRoutes.push(route);
     }
     const periodKm = Math.round(periodRoutes.reduce((sum, r) => sum + r.totalKm, 0) * 10) / 10;
-    const periodSubsidy = Math.round(periodKm * ratePerKm);
+    const periodSubsidy = periodRoutes.reduce((sum, r) => sum + r.totalSubsidy, 0);
     const periodVisitCount = periodRoutes.reduce((sum, r) => sum + r.storeVisitCount, 0);
 
     managersReport.push({
@@ -578,20 +726,20 @@ export const buildExpenseDashboardReport = (params: {
 
   const dayTotalKm =
     Math.round(managersReport.reduce((sum, m) => sum + m.dayKm, 0) * 10) / 10;
-  const dayTotalSubsidy = Math.round(dayTotalKm * ratePerKm);
-  const dayActiveManagers = managersReport.filter(m => m.dayKm > 0).length;
+  const dayTotalSubsidy = managersReport.reduce((sum, m) => sum + m.daySubsidy, 0);
+  const dayActiveManagers = managersReport.filter(m => m.dayKm > 0 || m.daySubsidy > 0).length;
   const dayTotalVisits = managersReport.reduce((sum, m) => sum + m.dayVisitCount, 0);
 
   const monthTotalKm =
     Math.round(managersReport.reduce((sum, m) => sum + m.monthKm, 0) * 10) / 10;
-  const monthTotalSubsidy = Math.round(monthTotalKm * ratePerKm);
-  const monthActiveManagers = managersReport.filter(m => m.monthKm > 0).length;
+  const monthTotalSubsidy = managersReport.reduce((sum, m) => sum + m.monthSubsidy, 0);
+  const monthActiveManagers = managersReport.filter(m => m.monthKm > 0 || m.monthSubsidy > 0).length;
   const monthTotalActiveDays = managersReport.reduce((sum, m) => sum + m.monthActiveDays, 0);
   const monthTotalVisits = managersReport.reduce((sum, m) => sum + m.monthVisitCount, 0);
 
   const periodTotalKm =
     Math.round(managersReport.reduce((sum, m) => sum + m.periodKm, 0) * 10) / 10;
-  const periodTotalSubsidy = Math.round(periodTotalKm * ratePerKm);
+  const periodTotalSubsidy = managersReport.reduce((sum, m) => sum + m.periodSubsidy, 0);
   const periodTotalVisits = managersReport.reduce((sum, m) => sum + m.periodVisitCount, 0);
 
   return {

@@ -84,15 +84,27 @@ const RouteLegTimeline: React.FC<{
           巡視 {route.storeVisitCount} 店
           {route.scheduleCount > 0 ? ` · 公務行程 ${route.scheduleCount} 筆` : ''}
         </span>
+        {route.hsrTrip && (
+          <span className="px-2 py-0.5 rounded-full bg-orange-50 border border-orange-300 text-orange-800 text-[11px] font-extrabold">
+            🚄 中南部總部行程 · 高鐵 {route.hsrTrip.departureStation}↔{route.hsrTrip.arrivalStation}（中和景平路）
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2.5 flex-wrap">
-        <span className="text-xs font-bold text-slate-600">
-          單日里程：<strong className="text-blue-700">{route.totalKm.toFixed(1)} km</strong>
-        </span>
+        {route.totalKm > 0 && (
+          <span className="text-xs font-bold text-slate-600">
+            開車里程：<strong className="text-blue-700">{route.totalKm.toFixed(1)} km</strong>
+          </span>
+        )}
+        {route.hsrTrip && (
+          <span className="text-xs font-bold text-orange-700">
+            高鐵來回：<strong>{formatCurrency(route.hsrTrip.roundTripFare)}</strong>
+          </span>
+        )}
         <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-extrabold">
           單日車資：{formatCurrency(route.totalSubsidy)}
         </span>
-        {onOpenRouteMap && (
+        {onOpenRouteMap && route.waypoints.length >= 2 && (
           <button
             type="button"
             onClick={() => onOpenRouteMap(route.managerName, route.dateStr)}
@@ -107,17 +119,31 @@ const RouteLegTimeline: React.FC<{
 
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
       {route.legs.map((leg, idx) => {
-        const isStoreTarget = !leg.isReturnLeg && leg.recordId && onStoreSelect;
+        const isHsr = leg.transportMode === 'hsr';
+        const isStoreTarget = !leg.isReturnLeg && !isHsr && leg.recordId && onStoreSelect;
+        const showStartBadge = idx === 0 || (isHsr && route.legs[idx - 1]?.transportMode !== 'hsr');
         return (
           <React.Fragment key={idx}>
-            {idx === 0 && (
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-100 text-slate-700 font-semibold border border-slate-200">
-                🏠 {leg.fromLabel}
+            {showStartBadge && (
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-md font-semibold border ${
+                  isHsr
+                    ? 'bg-orange-50 text-orange-800 border-orange-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}
+              >
+                {isHsr ? '🚄' : '🏠'} {leg.fromLabel}
               </span>
             )}
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-bold text-[11px]">
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border font-bold text-[11px] ${
+                isHsr
+                  ? 'bg-orange-50 text-orange-700 border-orange-200'
+                  : 'bg-blue-50 text-blue-700 border-blue-200'
+              }`}
+            >
               <span>➔</span>
-              <span>{leg.distanceKm.toFixed(1)} km</span>
+              <span>{isHsr ? '高鐵' : `${leg.distanceKm.toFixed(1)} km`}</span>
               <span className="text-emerald-700">(${leg.subsidyCost})</span>
             </span>
             {isStoreTarget ? (
@@ -133,12 +159,14 @@ const RouteLegTimeline: React.FC<{
             ) : (
               <span
                 className={`inline-flex items-center gap-1 px-2 py-1 rounded-md font-semibold border ${
-                  leg.isReturnLeg
+                  isHsr
+                    ? 'bg-orange-50/80 text-orange-900 border-orange-200'
+                    : leg.isReturnLeg
                     ? 'bg-slate-100 text-slate-600 border-slate-200'
                     : 'bg-amber-50 text-amber-800 border-amber-200'
                 }`}
               >
-                <span>{leg.isReturnLeg ? '🏠' : '📍'} {leg.toLabel}</span>
+                <span>{isHsr ? '🚄' : leg.isReturnLeg ? '🏠' : '📍'} {leg.toLabel}</span>
                 {leg.visitTime && <span className="text-[10px] opacity-75">({leg.visitTime})</span>}
               </span>
             )}
@@ -464,7 +492,16 @@ export const MileageExpensePanel: React.FC<Props> = ({
     return report.managersReport.filter(m => {
       if (isManagerOnly && m.managerName !== user?.name) return false;
       if (!isManagerOnly && selectedRegion !== ALL_REGIONS && m.region !== selectedRegion) return false;
-      if (!isManagerOnly && onlyShowActive && m.dayKm === 0 && m.monthKm === 0) return false;
+      if (
+        !isManagerOnly &&
+        onlyShowActive &&
+        m.dayKm === 0 &&
+        m.daySubsidy === 0 &&
+        m.monthKm === 0 &&
+        m.monthSubsidy === 0
+      ) {
+        return false;
+      }
       if (!isManagerOnly && onlyShowMissingHub && Boolean(customHubs.byManager[m.managerName])) {
         return false;
       }
@@ -622,8 +659,8 @@ export const MileageExpensePanel: React.FC<Props> = ({
                 </h2>
               </div>
               <p className="text-xs sm:text-sm text-indigo-200 mt-1">
-                依據每日巡店先後順序與台灣各門市實際地理座標，自動推算點對點行車路線里程 × 每公里補助{' '}
-                <strong className="text-amber-300">{ratePerKm} 元</strong>
+                依每日巡店先後與出發地址推算點對點行車里程 × 每公里補助{' '}
+                <strong className="text-amber-300">{ratePerKm} 元</strong>；中和景平路總部行程：北區自動計開車油資，中南部自動以高鐵往返板橋站票價與停車費計列
               </p>
             </div>
           </div>
@@ -1260,7 +1297,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                     {/* 1. 當天推算費用 */}
                     <div
                       className={`rounded-xl p-3 border flex items-center justify-between gap-2 ${
-                        m.dayKm > 0
+                        m.dayKm > 0 || m.daySubsidy > 0
                           ? 'bg-blue-50/70 border-blue-200'
                           : 'bg-gray-50 border-gray-200/80 opacity-80'
                       }`}
@@ -1270,10 +1307,19 @@ export const MileageExpensePanel: React.FC<Props> = ({
                           <span>📅 當天推算 ({targetDateStr.slice(5).replace('-', '/')})</span>
                         </div>
                         <div className="text-xs text-gray-600 font-semibold mt-0.5 truncate">
-                          {m.dayKm > 0 ? (
+                          {m.dayKm > 0 || m.daySubsidy > 0 ? (
                             <>
-                              行駛 <strong className="text-blue-700">{m.dayKm.toFixed(1)} km</strong> · 巡視{' '}
-                              {m.dayVisitCount} 店
+                              {m.dayKm > 0 && (
+                                <>
+                                  行駛 <strong className="text-blue-700">{m.dayKm.toFixed(1)} km</strong> ·{' '}
+                                </>
+                              )}
+                              {m.dayRoute?.hsrTrip && (
+                                <strong className="text-orange-700">
+                                  🚄 高鐵{m.dayRoute.hsrTrip.departureStation}↔{m.dayRoute.hsrTrip.arrivalStation} ·{' '}
+                                </strong>
+                              )}
+                              巡視 {m.dayVisitCount} 店
                               {m.dayScheduleCount > 0 ? ` + 公務 ${m.dayScheduleCount}` : ''}
                             </>
                           ) : (
@@ -1313,7 +1359,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                     {/* 2. 每月車程費用加總 */}
                     <div
                       className={`rounded-xl p-3 border flex items-center justify-between gap-2 ${
-                        m.monthKm > 0
+                        m.monthKm > 0 || m.monthSubsidy > 0
                           ? 'bg-emerald-50/70 border-emerald-200'
                           : 'bg-gray-50 border-gray-200/80 opacity-80'
                       }`}
@@ -1323,7 +1369,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                           <span>🗓️ {targetMonthKey.slice(5)}月累計加總</span>
                         </div>
                         <div className="text-xs text-gray-600 font-semibold mt-0.5">
-                          {m.monthKm > 0 ? (
+                          {m.monthKm > 0 || m.monthSubsidy > 0 ? (
                             <>
                               累計 <strong className="text-emerald-700">{m.monthKm.toFixed(1)} km</strong> · 出勤{' '}
                               {m.monthActiveDays} 天 / {m.monthVisitCount} 店次
