@@ -63,13 +63,23 @@ def init_db():
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                # 儲存全域資料的表 (例如門市主管清單)
+                # 儲存全域資料的表 (例如門市主管清單、區主管起始點地址、零用金黏存單草稿)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS store (
-                        id VARCHAR(50) PRIMARY KEY,
+                        id VARCHAR(120) PRIMARY KEY,
                         data JSONB
                     );
                 """)
+                # 若既有環境的 store.id 仍為舊版 VARCHAR(50)，安全放寬至 VARCHAR(120) 防止長鍵值溢位
+                cur.execute("""
+                    SELECT character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'store' AND column_name = 'id'
+                """)
+                col_len_row = cur.fetchone()
+                if col_len_row and col_len_row[0] is not None and col_len_row[0] < 120:
+                    cur.execute("ALTER TABLE store ALTER COLUMN id TYPE VARCHAR(120);")
+                    logger.info("Migrated store.id column from VARCHAR(%s) to VARCHAR(120)", col_len_row[0])
                 # 儲存巡店紀錄的表
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS visit_records (

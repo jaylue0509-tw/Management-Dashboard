@@ -3,9 +3,9 @@ import type { Manager, VisitRecord } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { getTaipeiDateStr, formatTaipeiReportTime, getTaipeiTodayStr, shiftDateStr } from '../utils/time-utils';
 import { normalizeStoreName } from '../utils/store-region';
-import { getStoreGeoPoint, getRegionHubPoint, HEADQUARTERS_POINT } from '../data/storeCoordinates';
+import type { GeoPoint } from '../data/storeCoordinates';
 import { optimizeDailyRoute, buildGoogleMapsRouteUrl, type RouteStop } from '../utils/route-optimizer';
-import { DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
+import { DEFAULT_SUBSIDY_PER_KM, resolveActivityPoint } from '../utils/mileage-calculator';
 import {
   CUSTOM_HUBS_UPDATED_EVENT,
   customHubToGeoPoint,
@@ -44,9 +44,13 @@ const OPTIMAL_COLOR = '#059669';
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
 /**
- * 將活動紀錄轉為地圖站點（同日連續同店去重）
+ * 將活動紀錄轉為地圖站點（同日連續同店去重，並與車資引擎共用特殊行程精準定位邏輯）
  */
-const buildStops = (acts: VisitRecord[], region: string): RouteStop[] => {
+const buildStops = (
+  acts: VisitRecord[],
+  region: string,
+  hubPoint?: GeoPoint
+): RouteStop[] => {
   const sorted = [...acts].sort(
     (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
   );
@@ -57,15 +61,7 @@ const buildStops = (acts: VisitRecord[], region: string): RouteStop[] => {
     if (prev && !isSched && !prev.isSchedule && normalizeStoreName(prev.storeName) === normalizeStoreName(act.storeName)) {
       continue;
     }
-    const geoPoint = (() => {
-      if (act.actionType === '總部行程') return HEADQUARTERS_POINT;
-      if (isSched) {
-        const text = `${act.storeName || ''} ${act.highlightDescription || ''}`;
-        if (text.includes('總部')) return HEADQUARTERS_POINT;
-        return getRegionHubPoint(region);
-      }
-      return getStoreGeoPoint(act.storeName, region);
-    })();
+    const geoPoint = resolveActivityPoint(act, region, hubPoint);
 
     // 格式化顯示名稱：若是特殊行程且有內容，顯示行程內容
     const displayLabel = isSched
@@ -177,10 +173,10 @@ export const AuditRouteMapPanel: React.FC<Props> = ({
   // 最佳化分析引擎
   const analysis = useMemo(() => {
     const acts = dayActivities.filter(a => a.areaManagerName === currentManagerName);
-    const stops = buildStops(acts, currentRegion);
     const customHubPoint = customHubToGeoPoint(
       customHubs.byManager[currentManagerName] || customHubs.global
     );
+    const stops = buildStops(acts, currentRegion, customHubPoint);
     return optimizeDailyRoute(
       currentManagerName,
       currentRegion,

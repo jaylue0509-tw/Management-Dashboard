@@ -123,10 +123,14 @@ const SCHEDULE_LANDMARK_COORDS: { keywords: string[]; lat: number; lng: number; 
 ];
 
 /**
- * 判斷單一紀錄對應的地理座標點
+ * 判斷單一紀錄對應的地理座標點（供車資核算引擎與巡店路徑地圖共用，確保特殊行程定位 100% 一致）
  * 針對「特殊行程／會議行程」自動掃描門市名稱與地標關鍵字，並確保目的地座標不與出發基準點完全重疊為 0 公里
  */
-const resolveActivityPoint = (activity: VisitRecord, region: string, hubPoint?: GeoPoint): GeoPoint => {
+export const resolveActivityPoint = (
+  activity: VisitRecord,
+  region: string,
+  hubPoint?: GeoPoint
+): GeoPoint => {
   const hub = hubPoint || getRegionHubPoint(region);
 
   if (activity.actionType === '總部行程') {
