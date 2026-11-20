@@ -1,7 +1,9 @@
 import logging
 import re
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Body
+from pydantic import BaseModel, Field
 from psycopg2.extras import Json
 
 from backend.database import get_db_connection
@@ -188,4 +190,106 @@ def get_dashboard_data(
                     "truncated": truncated,
                 },
             }
+
+
+class ManagerStartAddressPayload(BaseModel):
+    targetManager: str = Field(..., min_length=1, max_length=60, description="主管姓名或 __global__")
+    address: Optional[str] = Field(default=None, max_length=200)
+    lat: Optional[float] = Field(default=None, ge=21.0, le=26.5)
+    lng: Optional[float] = Field(default=None, ge=118.0, le=123.0)
+    source: Optional[str] = Field(default="nominatim", max_length=32)
+    matchedDisplayName: Optional[str] = Field(default=None, max_length=300)
+    clear: bool = Field(default=False, description="是否清除該主管起始地址")
+
+
+@router.get("/manager-start-addresses")
+def get_manager_start_addresses(user: dict = Depends(get_current_user)):
+    """
+    取得區主管自訂起始點地址設定（持久化於資料庫，手機／電腦／總部統一標準）
+    - 管理員 (admin)：取得全體主管起始點
+    - 區主管 (manager)：僅能取得自己本人之起始點
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM store WHERE id = 'manager_start_addresses'")
+            row = cur.fetchone()
+            stored = row[0] if row and isinstance(row[0], dict) else {"global": None, "byManager": {}}
+
+    by_mgr = stored.get("byManager") if isinstance(stored.get("byManager"), dict) else {}
+    global_cfg = stored.get("global") if isinstance(stored.get("global"), dict) else None
+
+    if user.get("role") != "admin":
+        mgr_name = (user.get("name") or "").strip()
+        personal = {mgr_name: by_mgr[mgr_name]} if mgr_name and mgr_name in by_mgr else {}
+        return {"global": None, "byManager": personal}
+
+    return {"global": global_cfg, "byManager": by_mgr}
+
+
+@router.put("/manager-start-addresses")
+def upsert_manager_start_address(
+    payload: ManagerStartAddressPayload,
+    user: dict = Depends(get_current_user),
+):
+    """
+    新增、修改或清除區主管專屬出發起始點地址
+    - 區主管 (manager)：僅能修改自己本人之起始地址，禁止異動他人或全域設定
+    - 管理員 (admin)：可設定任一主管或全體通用起始地址
+    """
+    target = payload.targetManager.strip()
+    is_admin = user.get("role") == "admin"
+    current_name = (user.get("name") or "").strip()
+
+    if not is_admin:
+        if target == "__global__" or target != current_name:
+            raise HTTPException(status_code=403, detail="區主管僅能設定或修改自己本人的出發起始點地址")
+
+    if not payload.clear:
+        if not payload.address or not payload.address.strip():
+            raise HTTPException(status_code=400, detail="請填寫有效的出發起始點地址")
+        if payload.lat is None or payload.lng is None:
+            raise HTTPException(status_code=400, detail="缺少地址定位座標，請重新定位")
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM store WHERE id = 'manager_start_addresses'")
+            row = cur.fetchone()
+            stored = row[0] if row and isinstance(row[0], dict) else {"global": None, "byManager": {}}
+            if not isinstance(stored.get("byManager"), dict):
+                stored["byManager"] = {}
+
+            if payload.clear:
+                if target == "__global__":
+                    stored["global"] = None
+                else:
+                    stored["byManager"].pop(target, None)
+            else:
+                entry = {
+                    "address": payload.address.strip(),
+                    "lat": float(payload.lat),
+                    "lng": float(payload.lng),
+                    "source": payload.source or "nominatim",
+                    "matchedDisplayName": payload.matchedDisplayName or payload.address.strip(),
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    "updatedBy": current_name or user.get("sub") or "",
+                }
+                if target == "__global__":
+                    stored["global"] = entry
+                else:
+                    stored["byManager"][target] = entry
+
+            cur.execute(
+                """
+                INSERT INTO store (id, data) VALUES ('manager_start_addresses', %s)
+                ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+                """,
+                (Json(stored),),
+            )
+        conn.commit()
+
+    if not is_admin:
+        personal = {current_name: stored["byManager"][current_name]} if current_name in stored["byManager"] else {}
+        return {"success": True, "data": {"global": None, "byManager": personal}}
+
+    return {"success": True, "data": stored}
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, lazy, Suspense } from 'react';
+import React, { useMemo, useRef, useState, lazy, Suspense } from 'react';
 import {
   Car,
   Bike,
@@ -14,6 +14,7 @@ import {
   Home,
   X,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import type { Manager, VisitRecord } from '../types';
@@ -28,9 +29,11 @@ import {
 } from '../utils/mileage-calculator';
 import {
   customHubToGeoPoint,
+  deleteCustomHubPointFromServer,
   geocodeTaiwanAddress,
   loadCustomHubPoints,
-  saveCustomHubPoints,
+  saveCustomHubPointToServer,
+  syncCustomHubPointsFromServer,
   type StoredCustomHubs,
 } from '../utils/address-geocoder';
 
@@ -167,7 +170,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
   );
   const [onlyShowActive, setOnlyShowActive] = useState<boolean>(false);
 
-  // 自訂出發起始點地址狀態（區主管僅能設定與檢視本人專屬起點）
+  // 自訂出發起始點地址狀態（區主管僅能設定與檢視本人專屬起點，並同步雲端資料庫）
   const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
   const [hubTargetScope, setHubTargetScope] = useState<string>(() =>
     user?.role === 'manager' && user.name ? user.name : '__global__'
@@ -181,13 +184,30 @@ export const MileageExpensePanel: React.FC<Props> = ({
   });
   const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
   const [geocodeStatus, setGeocodeStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const addressInputRef = useRef<HTMLInputElement | null>(null);
 
-  // 《東森寵物雲 國內出差旅費報核單》彈窗狀態
+  // 《東森寵物雲 零用金單據黏存單》彈窗狀態
   const [reimbursementModal, setReimbursementModal] = useState<{
     open: boolean;
     managerName: string;
     scope: 'month' | 'day';
   }>({ open: false, managerName: '', scope: 'month' });
+
+  // 元件載入時向後端資料庫拉取最新起始點地址（確保手機／電腦／總部標準一致）
+  React.useEffect(() => {
+    let active = true;
+    syncCustomHubPointsFromServer().then(synced => {
+      if (!active) return;
+      setCustomHubs(synced);
+      if (isManagerOnly && user?.name) {
+        setHubTargetScope(user.name);
+        setAddressInput(synced.byManager[user.name]?.address || '');
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [isManagerOnly, user?.name]);
 
   // 當外層日期篩選變更時，同步更新目標單日與月份
   React.useEffect(() => {
@@ -214,6 +234,10 @@ export const MileageExpensePanel: React.FC<Props> = ({
 
   // 切換起始點設定對象時，自動回填該對象目前儲存之起始點地址
   const handleSelectHubTargetScope = (nextScope: string) => {
+    if (isManagerOnly && user?.name) {
+      setHubTargetScope(user.name);
+      return;
+    }
     setHubTargetScope(nextScope);
     setGeocodeStatus(null);
     if (nextScope === '__global__') {
@@ -223,13 +247,20 @@ export const MileageExpensePanel: React.FC<Props> = ({
     }
   };
 
-  // 解析起始點地址並套用至車資推算（同步連動報核單與巡店路徑地圖）
+  // 解析起始點地址並持久化寫入後端資料庫（同步連動車資、黏存單與巡店路徑地圖）
   const handleApplyStartAddress = async (presetAddress?: string) => {
     const query = (presetAddress ?? addressInput).trim();
     if (!query) {
       setGeocodeStatus({ type: 'error', text: '請先輸入起始點地址、行政區、地標或門市名稱' });
       return;
     }
+
+    const effectiveTargetKey = isManagerOnly ? (user?.name || '').trim() : hubTargetScope;
+    if (!effectiveTargetKey) {
+      setGeocodeStatus({ type: 'error', text: '無法識別您的區主管帳號，請重新登入後再試' });
+      return;
+    }
+
     if (presetAddress !== undefined) setAddressInput(presetAddress);
 
     setIsGeocoding(true);
@@ -244,21 +275,11 @@ export const MileageExpensePanel: React.FC<Props> = ({
         return;
       }
 
-      const nextStored: StoredCustomHubs =
-        hubTargetScope === '__global__'
-          ? { ...customHubs, global: resolved }
-          : {
-              ...customHubs,
-              byManager: {
-                ...customHubs.byManager,
-                [hubTargetScope]: resolved,
-              },
-            };
+      const saveResult = await saveCustomHubPointToServer(effectiveTargetKey, resolved);
+      setCustomHubs(saveResult.data);
 
-      setCustomHubs(nextStored);
-      saveCustomHubPoints(nextStored);
-
-      const targetLabel = hubTargetScope === '__global__' ? '全體主管通用起點' : `${hubTargetScope} 專屬起點`;
+      const targetLabel =
+        effectiveTargetKey === '__global__' ? '全體主管通用起點' : `${effectiveTargetKey} 專屬起點`;
       const sourceLabel =
         resolved.source === 'nominatim'
           ? '街道門牌精準定位'
@@ -270,34 +291,35 @@ export const MileageExpensePanel: React.FC<Props> = ({
           ? '經緯度座標'
           : '行政區中心定位';
 
+      const syncHint = saveResult.syncedCloud
+        ? '☁️ 已儲存至雲端資料庫，手機／電腦／總部統一以此地址計算！'
+        : '（已暫存於本機並重算，待網路恢復後將同步雲端）';
+
       setGeocodeStatus({
         type: 'success',
-        text: `已套用【${targetLabel}】：${resolved.address}（${sourceLabel} · ${resolved.lat.toFixed(4)}, ${resolved.lng.toFixed(4)}），里程與車資已即時重算！`,
+        text: `已套用【${targetLabel}】：${resolved.address}（${sourceLabel} · ${resolved.lat.toFixed(4)}, ${resolved.lng.toFixed(4)}）— ${syncHint}`,
       });
     } finally {
       setIsGeocoding(false);
     }
   };
 
-  // 移除自訂起始點（恢復預設區域中心）
-  const handleRemoveCustomHub = (targetKey: string) => {
-    const nextStored: StoredCustomHubs =
-      targetKey === '__global__'
-        ? { ...customHubs, global: null }
-        : {
-            ...customHubs,
-            byManager: Object.fromEntries(
-              Object.entries(customHubs.byManager).filter(([k]) => k !== targetKey)
-            ),
-          };
-    setCustomHubs(nextStored);
-    saveCustomHubPoints(nextStored);
-    if (hubTargetScope === targetKey) {
+  // 移除自訂起始點（同步清除雲端紀錄並恢復預設區域中心）
+  const handleRemoveCustomHub = async (targetKey: string) => {
+    if (isManagerOnly && targetKey !== user?.name) return;
+
+    const result = await deleteCustomHubPointFromServer(targetKey);
+    setCustomHubs(result.data);
+
+    if (hubTargetScope === targetKey || (isManagerOnly && targetKey === user?.name)) {
       setAddressInput('');
     }
     setGeocodeStatus({
       type: 'success',
-      text: targetKey === '__global__' ? '已清除全體通用起點，恢復依各區域預設中心推算' : `已清除「${targetKey}」專屬起點，恢復預設推算`,
+      text:
+        targetKey === '__global__'
+          ? '已清除全體通用起點，恢復依各區域預設中心推算'
+          : `已清除「${targetKey}」專屬起點${result.syncedCloud ? '（已同步清除雲端紀錄）' : ''}`,
     });
   };
 
@@ -429,8 +451,50 @@ export const MileageExpensePanel: React.FC<Props> = ({
     URL.revokeObjectURL(url);
   };
 
+  const hasPersonalStartAddress = Boolean(
+    isManagerOnly && user?.name && customHubs.byManager[user.name]
+  );
+  const configuredManagerCount = report.managersReport.filter(m =>
+    Boolean(customHubs.byManager[m.managerName])
+  ).length;
+
+  // 點擊提示橫幅按鈕時，平滑捲動至起始點地址輸入框並自動聚焦
+  const handleFocusAddressInput = () => {
+    addressInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      addressInputRef.current?.focus();
+    }, 220);
+  };
+
   return (
     <div className="flex flex-col gap-5">
+      {/* 區主管尚未設定個人專屬出發起始點時，顯示醒目提醒橫幅（避免預設使用市中心造成標準不一） */}
+      {isManagerOnly && user?.name && !hasPersonalStartAddress && (
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-400/20 border border-amber-400 flex items-center justify-center text-amber-700 shrink-0 mt-0.5">
+              <AlertTriangle size={20} />
+            </div>
+            <div>
+              <div className="text-sm font-black text-amber-950">
+                尚未設定您的個人固定出發起始點地址
+              </div>
+              <p className="text-xs text-amber-900 mt-0.5 leading-relaxed">
+                目前系統暫以預設區域中心（如市中心／車站）推估里程；為避免各區主管計費標準不一，請於下方輸入您實際的固定出發地址並儲存（儲存後手機、電腦與總部報銷標準將完全一致）。
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleFocusAddressInput}
+            className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold shadow-xs cursor-pointer transition-colors"
+          >
+            <MapPin size={14} />
+            <span>立即設定出發地址</span>
+          </button>
+        </div>
+      )}
+
       {/* 最高權限橫幅與控制列 */}
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-6 shadow-lg border border-indigo-500/30">
         <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-white/10">
@@ -597,17 +661,38 @@ export const MileageExpensePanel: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* 5. 起始點地址輸入計算列（支援全體通用或指定區主管專屬出發點，自動連動里程、報核單與地圖） */}
+        {/* 5. 起始點地址輸入計算列（支援區主管個人固定出發點與管理員設定，持久化至資料庫同步車資、黏存單與地圖） */}
         <div className="mt-3 pt-3 border-t border-white/10">
-          <div className="bg-white/10 border border-indigo-400/30 rounded-xl p-3 flex flex-col gap-2.5">
+          <div
+            className={`rounded-xl p-3 flex flex-col gap-2.5 border ${
+              isManagerOnly && !hasPersonalStartAddress
+                ? 'bg-amber-500/15 border-amber-400/70'
+                : 'bg-white/10 border-indigo-400/30'
+            }`}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1 text-xs font-extrabold text-amber-300">
                   <Home size={14} />
-                  自訂出發／返程起始點地址計算
+                  {isManagerOnly ? '個人固定出發／返程起始點地址' : '各區主管出發／返程起始點地址管理'}
                 </span>
+                {isManagerOnly ? (
+                  hasPersonalStartAddress ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/50 text-emerald-200 text-[11px] font-bold">
+                      ☁️ 雲端已同步統一標準
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[11px] font-extrabold">
+                      尚未設定個人起點（避免以市中心估算）
+                    </span>
+                  )
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-500/25 border border-sky-400/50 text-sky-100 text-[11px] font-bold">
+                    已設定專屬起點：{configuredManagerCount} / {report.managersReport.length} 位主管
+                  </span>
+                )}
                 <span className="text-[11px] text-indigo-200">
-                  輸入住家地址、公司地址、行政區或門市名稱，立即定位並重算車資、報核單與巡店地圖
+                  輸入完整住家或固定出發地址後儲存，手機／電腦／總部統一以此起點計算車資與黏存單
                 </span>
               </div>
               <button
@@ -629,20 +714,24 @@ export const MileageExpensePanel: React.FC<Props> = ({
                 <select
                   value={hubTargetScope}
                   onChange={e => handleSelectHubTargetScope(e.target.value)}
-                  className="bg-slate-900/90 text-white text-xs font-bold rounded-lg px-3 py-2.5 border border-white/20 outline-none focus:border-amber-400 cursor-pointer md:w-56 shrink-0"
+                  className="bg-slate-900/90 text-white text-xs font-bold rounded-lg px-3 py-2.5 border border-white/20 outline-none focus:border-amber-400 cursor-pointer md:w-64 shrink-0"
                 >
                   <option value="__global__">🌐 套用對象：全體主管通用起點</option>
-                  {report.managersReport.map(m => (
-                    <option key={`hub-opt-${m.managerName}`} value={m.managerName}>
-                      👤 專屬起點：{m.managerName}（{m.region}）
-                    </option>
-                  ))}
+                  {report.managersReport.map(m => {
+                    const isSet = Boolean(customHubs.byManager[m.managerName]);
+                    return (
+                      <option key={`hub-opt-${m.managerName}`} value={m.managerName}>
+                        {isSet ? '✓' : '⚠'} {m.managerName}（{m.region}）{isSet ? '已設定' : '未設地址'}
+                      </option>
+                    );
+                  })}
                 </select>
               )}
 
               <div className="flex-1 relative">
                 <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-300 pointer-events-none" />
                 <input
+                  ref={addressInputRef}
                   type="text"
                   value={addressInput}
                   onChange={e => setAddressInput(e.target.value)}
@@ -652,8 +741,8 @@ export const MileageExpensePanel: React.FC<Props> = ({
                       handleApplyStartAddress();
                     }
                   }}
-                  placeholder="輸入起始點地址（例：新北市板橋區文化路一段188號、桃園中壢火車站、或門市名稱）..."
-                  className="w-full pl-9 pr-3 py-2.5 bg-slate-900/90 text-white placeholder-indigo-300/60 text-xs sm:text-sm font-medium rounded-lg border border-white/20 outline-none focus:border-amber-400"
+                  placeholder="請輸入固定出發地址（例：新北市板橋區文化路一段188號、台中市西屯區台灣大道三段）..."
+                  className="w-full scroll-mt-24 pl-9 pr-3 py-2.5 bg-slate-900/90 text-white placeholder-indigo-300/60 text-xs sm:text-sm font-medium rounded-lg border border-white/20 outline-none focus:border-amber-400"
                 />
               </div>
 
@@ -666,12 +755,12 @@ export const MileageExpensePanel: React.FC<Props> = ({
                 {isGeocoding ? (
                   <>
                     <Loader2 size={14} className="animate-spin" />
-                    <span>定位計算中...</span>
+                    <span>定位儲存中...</span>
                   </>
                 ) : (
                   <>
                     <Navigation size={14} />
-                    <span>定位並重算車資</span>
+                    <span>定位並儲存起點</span>
                   </>
                 )}
               </button>
@@ -693,7 +782,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
 
             {/* 已生效的自訂起始點列表（區主管僅顯示本人之自訂起點） */}
             {(isManagerOnly
-              ? Boolean(customHubs.byManager[user.name] || customHubs.global)
+              ? Boolean(user?.name && customHubs.byManager[user.name])
               : Boolean(customHubs.global || Object.keys(customHubs.byManager).length > 0)) && (
               <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                 <span className="text-[11px] font-bold text-indigo-200">已套用自訂起點：</span>
@@ -951,12 +1040,17 @@ export const MileageExpensePanel: React.FC<Props> = ({
                       <div className="text-xs text-gray-500 mt-0.5 font-medium">
                         {m.department || '營運處'} · 轄下負責 {m.assignedStoreCount} 間門市
                       </div>
-                      {(customHubs.byManager[m.managerName] || customHubs.global) && (
+                      {(customHubs.byManager[m.managerName] || customHubs.global) ? (
                         <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full">
                           <Home size={10} />
                           <span>
                             出發起點：{(customHubs.byManager[m.managerName] || customHubs.global)?.address}
                           </span>
+                        </div>
+                      ) : (
+                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full">
+                          <AlertTriangle size={10} />
+                          <span>尚未設定個人出發地址（暫用區域中心）</span>
                         </div>
                       )}
                     </div>
@@ -1082,7 +1176,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
                       onClick={e => {
                         e.stopPropagation();
                         handleSelectHubTargetScope(m.managerName);
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        handleFocusAddressInput();
                       }}
                       className="inline-flex items-center justify-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 transition-colors cursor-pointer"
                       title={`為 ${m.managerName} 設定專屬起始點地址`}

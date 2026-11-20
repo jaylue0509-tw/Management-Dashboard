@@ -17,6 +17,7 @@ import {
   CUSTOM_HUBS_UPDATED_EVENT,
   customHubToGeoPoint,
   loadCustomHubPoints,
+  syncCustomHubPointsFromServer,
   type StoredCustomHubs,
 } from '../utils/address-geocoder';
 import type { GeoPoint } from '../data/storeCoordinates';
@@ -348,11 +349,12 @@ export const DashboardPage: React.FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // 同步讀取並監聽自訂出發起始點地址設定（連動儀表板管理員車資速覽橫幅）
+  // 同步讀取並監聽自訂出發起始點地址設定（登入時自動從後端資料庫拉取，手機／電腦／總部統一標準）
   const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
   useEffect(() => {
     const syncHubs = () => setCustomHubs(loadCustomHubPoints());
     window.addEventListener(CUSTOM_HUBS_UPDATED_EVENT, syncHubs);
+    syncCustomHubPointsFromServer().then(setCustomHubs);
     return () => window.removeEventListener(CUSTOM_HUBS_UPDATED_EVENT, syncHubs);
   }, []);
 

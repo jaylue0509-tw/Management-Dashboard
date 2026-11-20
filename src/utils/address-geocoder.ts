@@ -5,6 +5,7 @@ import {
   type GeoPoint,
 } from '../data/storeCoordinates';
 import { normalizeStoreName } from './store-region';
+import { API_BASE_URL, getAuthHeaders } from '../api/api';
 
 export const CUSTOM_HUBS_STORAGE_KEY = 'manager_custom_hubs_v1';
 export const CUSTOM_HUBS_UPDATED_EVENT = 'manager-custom-hubs-updated';
@@ -286,4 +287,115 @@ export const customHubToGeoPoint = (cfg: CustomHubConfig | null | undefined): Ge
     lng: cfg.lng,
     label: cfg.address,
   };
+};
+
+/**
+ * 從後端資料庫同步最新的區主管起始點地址設定（手機／電腦／總部統一標準）
+ */
+export const syncCustomHubPointsFromServer = async (): Promise<StoredCustomHubs> => {
+  const local = loadCustomHubPoints();
+  try {
+    const res = await fetch(`${API_BASE_URL}/manager-start-addresses`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) return local;
+    const json = await res.json();
+    const serverData: StoredCustomHubs = {
+      global: json?.global && typeof json.global.lat === 'number' ? json.global : null,
+      byManager: json?.byManager && typeof json.byManager === 'object' ? json.byManager : {},
+    };
+    saveCustomHubPoints(serverData);
+    return serverData;
+  } catch {
+    return local;
+  }
+};
+
+/**
+ * 將區主管出發起始點地址持久化儲存至後端資料庫（並同步本機快取與全域事件）
+ */
+export const saveCustomHubPointToServer = async (
+  targetKey: string,
+  cfg: CustomHubConfig
+): Promise<{ ok: boolean; syncedCloud: boolean; data: StoredCustomHubs }> => {
+  const local = loadCustomHubPoints();
+  const optimistic: StoredCustomHubs =
+    targetKey === '__global__'
+      ? { ...local, global: cfg }
+      : { ...local, byManager: { ...local.byManager, [targetKey]: cfg } };
+  saveCustomHubPoints(optimistic);
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/manager-start-addresses`, {
+      method: 'PUT',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        targetManager: targetKey,
+        address: cfg.address,
+        lat: cfg.lat,
+        lng: cfg.lng,
+        source: cfg.source,
+        matchedDisplayName: cfg.matchedDisplayName || cfg.address,
+        clear: false,
+      }),
+    });
+    if (!res.ok) {
+      return { ok: true, syncedCloud: false, data: optimistic };
+    }
+    const json = await res.json();
+    if (json?.data) {
+      const serverData: StoredCustomHubs = {
+        global: json.data.global || null,
+        byManager: json.data.byManager || {},
+      };
+      saveCustomHubPoints(serverData);
+      return { ok: true, syncedCloud: true, data: serverData };
+    }
+    return { ok: true, syncedCloud: true, data: optimistic };
+  } catch {
+    return { ok: true, syncedCloud: false, data: optimistic };
+  }
+};
+
+/**
+ * 從後端資料庫清除指定主管之自訂出發起始點地址
+ */
+export const deleteCustomHubPointFromServer = async (
+  targetKey: string
+): Promise<{ ok: boolean; syncedCloud: boolean; data: StoredCustomHubs }> => {
+  const local = loadCustomHubPoints();
+  const optimistic: StoredCustomHubs =
+    targetKey === '__global__'
+      ? { ...local, global: null }
+      : {
+          ...local,
+          byManager: Object.fromEntries(
+            Object.entries(local.byManager).filter(([k]) => k !== targetKey)
+          ),
+        };
+  saveCustomHubPoints(optimistic);
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/manager-start-addresses`, {
+      method: 'PUT',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ targetManager: targetKey, clear: true }),
+    });
+    if (!res.ok) {
+      return { ok: true, syncedCloud: false, data: optimistic };
+    }
+    const json = await res.json();
+    if (json?.data) {
+      const serverData: StoredCustomHubs = {
+        global: json.data.global || null,
+        byManager: json.data.byManager || {},
+      };
+      saveCustomHubPoints(serverData);
+      return { ok: true, syncedCloud: true, data: serverData };
+    }
+    return { ok: true, syncedCloud: true, data: optimistic };
+  } catch {
+    return { ok: true, syncedCloud: false, data: optimistic };
+  }
 };
