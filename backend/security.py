@@ -1,11 +1,20 @@
+import logging
 import os
 import jwt
 from fastapi import HTTPException, Header, Depends
 from typing import Optional
 from passlib.context import CryptContext
 
+logger = logging.getLogger("dashboard-api")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-JWT_SECRET = os.getenv("JWT_SECRET", "management-dashboard-secret-2026")
+
+_DEFAULT_DEV_JWT_SECRET = "management-dashboard-secret-2026"
+JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip() or _DEFAULT_DEV_JWT_SECRET
+if JWT_SECRET == _DEFAULT_DEV_JWT_SECRET:
+    logger.warning(
+        "JWT_SECRET is not configured in environment variables; falling back to default secret. "
+        "Please set a strong JWT_SECRET in production."
+    )
 JWT_ALGORITHM = "HS256"
 
 def get_current_user(authorization: str = Header(None)) -> dict:

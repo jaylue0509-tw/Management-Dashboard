@@ -1,4 +1,5 @@
 import logging
+import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,13 +44,24 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS 中間件設定
+# CORS 中間件設定（依環境變數白名單控制，避免萬用字元搭配憑證傳送）
+_DEFAULT_CORS_ORIGINS = [
+    "https://management-dashboard-rust.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:4173",
+    "http://127.0.0.1:5173",
+]
+_env_cors = [o.strip() for o in (os.getenv("CORS_ORIGINS") or "").split(",") if o.strip()]
+_allowed_origins = _env_cors if _env_cors else _DEFAULT_CORS_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
+    allow_origin_regex=r"^https://management-dashboard-[a-z0-9-]+\.vercel\.app$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # 掛載業務模組路由器

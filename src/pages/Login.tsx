@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL } from '../api/api';
 import { Sparkles, ArrowRight, Building2, UserCircle, ShieldCheck } from 'lucide-react';
 
 export const Login = () => {
@@ -20,7 +21,7 @@ export const Login = () => {
     // 密碼與帳號驗證已交由後端處理
 
     try {
-      const res = await fetch('https://management-dashboard-rust.vercel.app/api/auth/login', {
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password })

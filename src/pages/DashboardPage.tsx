@@ -5,7 +5,7 @@ import { ExecutiveSummary } from '../components/ExecutiveSummary';
 import { ActivityWall, type ActivityCategoryFilter } from '../components/ActivityWall';
 import { ManagerList, type ManagerStatusFilter } from '../components/ManagerList';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
-import { getDashboardData } from '../api/api';
+import { API_BASE_URL, getAuthHeaders, getDashboardData } from '../api/api';
 import { RefreshCw, ArrowUp, AlertTriangle } from 'lucide-react';
 import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
@@ -233,13 +233,9 @@ export const DashboardPage: React.FC = () => {
     if (isSubmittingResolve) return;
     setIsSubmittingResolve(true);
     try {
-      const token = localStorage.getItem('token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
-      const res = await fetch(`${apiBase}/pdca/resolve-store`, {
+      const res = await fetch(`${API_BASE_URL}/pdca/resolve-store`, {
         method: 'POST',
-        headers,
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ storeName, resolvedBy: user?.name || '區主管' })
       });
       if (res.ok) {

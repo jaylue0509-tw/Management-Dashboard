@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   X,
   Printer,
@@ -54,6 +54,10 @@ interface PettyCashRow {
   customAmount: number | null; // 若使用者手動覆寫實付金額（或高鐵票／停車費金額），優先使用此值
   invoiceNumber: string; // 發票號碼（如 ET-66347944）
   evidence: RouteEvidenceData; // 點對點真實 Google Maps 距離圖資料
+  /** 是否為使用者手動新增的費用列（如高鐵票／停車費／租車），採獨立清單持久化避免同日多筆互蓋 */
+  isCustomRow?: boolean;
+  /** 出發起始點與站點數指紋，當主管修改起始點地址時自動失效舊里程快取 */
+  originSignature?: string;
 }
 
 interface TravelExpenseReimbursementModalProps {
@@ -68,6 +72,7 @@ interface TravelExpenseReimbursementModalProps {
 }
 
 interface StoredEvidencePatch {
+  originSignature?: string;
   actualKm?: number;
   customAmount?: number | null;
   invoiceNumber?: string;
@@ -80,6 +85,16 @@ interface StoredEvidencePatch {
 }
 
 const SCREENSHOT_CACHE_KEY = 'petty_cash_google_evidence_v2';
+const CUSTOM_ROWS_CACHE_KEY = 'petty_cash_custom_rows_v1';
+
+/**
+ * 依據當日路線起點座標與停靠站數建立指紋，若主管變更出發起點地址即會偵測差異並重算距離
+ */
+const buildOriginSignature = (waypoints: RouteEvidenceData['waypoints']): string => {
+  if (!waypoints || waypoints.length < 2) return '';
+  const start = waypoints[0];
+  return `${start.lat.toFixed(4)},${start.lng.toFixed(4)}|${waypoints.length}`;
+};
 
 const loadStoredEvidenceMap = (): Record<string, StoredEvidencePatch> => {
   try {
@@ -95,6 +110,33 @@ const saveStoredEvidenceItem = (key: string, patch: StoredEvidencePatch): void =
     const map = loadStoredEvidenceMap();
     map[key] = { ...(map[key] || {}), ...patch };
     localStorage.setItem(SCREENSHOT_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // 超過瀏覽器配額時僅保留於記憶體
+  }
+};
+
+const loadStoredCustomRows = (bucketKey: string): PettyCashRow[] => {
+  try {
+    const raw = localStorage.getItem(CUSTOM_ROWS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const list = parsed?.[bucketKey];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveStoredCustomRows = (bucketKey: string, customRows: PettyCashRow[]): void => {
+  try {
+    const raw = localStorage.getItem(CUSTOM_ROWS_CACHE_KEY);
+    const map: Record<string, PettyCashRow[]> = raw ? JSON.parse(raw) : {};
+    if (customRows.length === 0) {
+      delete map[bucketKey];
+    } else {
+      map[bucketKey] = customRows;
+    }
+    localStorage.setItem(CUSTOM_ROWS_CACHE_KEY, JSON.stringify(map));
   } catch {
     // 超過瀏覽器配額時僅保留於記憶體
   }
@@ -150,19 +192,25 @@ const buildRowFromDailyRoute = (
   }
 
   const waypoints = route.waypoints || [];
+  const originSignature = buildOriginSignature(waypoints);
   const defaultStopLabels = waypoints.map(wp =>
     formatStopForGoogleMaps(wp.label, wp, route.region)
   );
   const cacheKey = `${route.managerName}_${route.dateStr}`;
   const saved = storedMap[cacheKey];
 
+  // NOTE: 僅當快取的起點指紋與目前出發起點一致時才沿用舊里程與站點，避免主管更新起點地址後仍被舊市中心距離覆蓋
+  const isRouteCacheValid = Boolean(
+    saved && saved.originSignature && saved.originSignature === originSignature
+  );
+
   const initialScreenshots = Array.isArray(saved?.googleScreenshots) ? saved.googleScreenshots : [];
   const initialKm =
-    saved?.actualKm !== undefined && saved.actualKm > 0
+    isRouteCacheValid && saved?.actualKm !== undefined && saved.actualKm > 0
       ? saved.actualKm
       : Number(route.totalKm.toFixed(1));
   const initialStopLabels =
-    Array.isArray(saved?.stopLabels) && saved.stopLabels.length >= 2
+    isRouteCacheValid && Array.isArray(saved?.stopLabels) && saved.stopLabels.length >= 2
       ? saved.stopLabels
       : defaultStopLabels.length >= 2
       ? defaultStopLabels
@@ -178,14 +226,19 @@ const buildRowFromDailyRoute = (
     itemCategory: saved?.itemCategory || '油資',
     routeTitle: saved?.routeTitle || defaultRouteTitle,
     actualKm: initialKm,
-    customAmount: saved?.customAmount !== undefined ? saved.customAmount : null,
+    customAmount: isRouteCacheValid && saved?.customAmount !== undefined ? saved.customAmount : null,
     invoiceNumber: saved?.invoiceNumber || '',
+    isCustomRow: false,
+    originSignature,
     evidence: {
       waypoints,
       stopLabels: initialStopLabels,
       geometry: waypoints.map(w => [w.lat, w.lng] as [number, number]),
-      durationMin: saved?.durationMin ?? Math.max(8, Math.round((initialKm / 34) * 60)),
-      viaRoad: saved?.viaRoad || '途經主要省道／快速道路',
+      durationMin:
+        isRouteCacheValid && saved?.durationMin !== undefined
+          ? saved.durationMin
+          : Math.max(8, Math.round((initialKm / 34) * 60)),
+      viaRoad: isRouteCacheValid && saved?.viaRoad ? saved.viaRoad : '途經主要省道／快速道路',
       verificationStatus: 'google_verified',
       googleScreenshots: initialScreenshots,
     },
@@ -232,6 +285,9 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
   const [purposePrefix, setPurposePrefix] = useState<string>('');
   const [applicantName, setApplicantName] = useState<string>('');
   const [rows, setRows] = useState<PettyCashRow[]>([]);
+  const [syncVersion, setSyncVersion] = useState<number>(0);
+  const rowsRef = useRef<PettyCashRow[]>([]);
+  rowsRef.current = rows;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -263,7 +319,11 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     [managersReport, selectedManagerName]
   );
 
-  // 依據主管與統計範圍載入系統紀錄，並於背景自動計算點對點真實道路距離連動主表
+  const customRowsBucketKey = activeManager
+    ? `${activeManager.managerName}_${targetMonthKey}`
+    : '';
+
+  // 依據主管與統計範圍載入系統紀錄（合併同月手動新增之高鐵／停車費列），並於背景自動計算點對點真實道路距離連動主表
   const syncFromSystemData = useCallback(
     (ignoreSavedCache = false) => {
       if (!activeManager) return;
@@ -280,7 +340,24 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       const generatedRows = sourceRoutes.map((route, idx) =>
         buildRowFromDailyRoute(route, idx, storedMap)
       );
-      setRows(generatedRows);
+
+      const bucketKey = `${activeManager.managerName}_${targetMonthKey}`;
+      let mergedRows = generatedRows;
+      if (ignoreSavedCache) {
+        saveStoredCustomRows(bucketKey, []);
+      } else {
+        const savedCustomRows = loadStoredCustomRows(bucketKey)
+          .filter(r => scope !== 'day' || r.dateStr === targetDateStr)
+          .map(r => ({ ...r, isCustomRow: true }));
+        if (savedCustomRows.length > 0) {
+          mergedRows = [...generatedRows, ...savedCustomRows].sort((a, b) =>
+            a.shortDate.localeCompare(b.shortDate)
+          );
+        }
+      }
+
+      setRows(mergedRows);
+      setSyncVersion(v => v + 1);
 
       // 產生如「2026/10/01~10/31 營運二處巡店暨總部會議交通費申請」之用途說明前綴
       const [yStr = '2026', mStr = '01'] = targetMonthKey.split('-');
@@ -299,13 +376,13 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     if (isOpen && activeManager) {
       syncFromSystemData(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, selectedManagerName, scope, targetMonthKey, targetDateStr]);
+  }, [isOpen, activeManager, syncFromSystemData]);
 
-  // 開啟黏存單時，自動於背景計算每筆油資行程的點對點真實道路軌跡與公里數（無須再手動點擊）
+  // 開啟黏存單或起點變更重建列表後，自動於背景計算每筆油資行程的點對點真實道路軌跡與公里數（無須手動再按一次）
   useEffect(() => {
-    if (!isOpen || !activeManager || rows.length === 0) return;
-    const pendingRows = rows.filter(
+    if (!isOpen || !activeManager || syncVersion === 0) return;
+    const currentRows = rowsRef.current;
+    const pendingRows = currentRows.filter(
       r =>
         r.itemCategory === '油資' &&
         r.evidence.waypoints.length >= 2 &&
@@ -322,9 +399,18 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
         setRows(prev =>
           prev.map(r => {
             if (r.id !== item.id) return r;
+            const nextKm = road.distanceKm > 0 ? road.distanceKm : r.actualKm;
+            if (!r.isCustomRow && activeManager) {
+              saveStoredEvidenceItem(`${activeManager.managerName}_${r.dateStr}`, {
+                originSignature: r.originSignature,
+                actualKm: nextKm,
+                durationMin: road.durationMin,
+                viaRoad: road.viaRoad,
+              });
+            }
             return {
               ...r,
-              actualKm: road.distanceKm > 0 ? road.distanceKm : r.actualKm,
+              actualKm: nextKm,
               evidence: {
                 ...r.evidence,
                 geometry: road.geometry,
@@ -341,29 +427,49 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, selectedManagerName, scope]);
+  }, [isOpen, activeManager, syncVersion]);
 
   const handleVehicleSwitch = (nextType: VehicleType) => {
     setVehicleType(nextType);
     setRatePerKm(nextType === 'motorcycle' ? MOTORCYCLE_SUBSIDY_PER_KM : DEFAULT_SUBSIDY_PER_KM);
   };
 
-  const persistRowPatch = (dateStr: string, patch: StoredEvidencePatch) => {
-    if (!activeManager) return;
-    saveStoredEvidenceItem(`${activeManager.managerName}_${dateStr}`, patch);
+  const persistRowPatch = (
+    row: PettyCashRow,
+    patch: StoredEvidencePatch
+  ) => {
+    if (!activeManager || row.isCustomRow) return;
+    saveStoredEvidenceItem(`${activeManager.managerName}_${row.dateStr}`, {
+      originSignature: row.originSignature,
+      ...patch,
+    });
+  };
+
+  // 將手動新增列之變更同步寫入獨立清單（同日多筆高鐵票／停車費不互相覆蓋，重開彈窗仍保留）
+  const persistCustomRowsSnapshot = (nextAllRows: PettyCashRow[]) => {
+    if (!customRowsBucketKey) return;
+    const customOnly = nextAllRows.filter(r => r.isCustomRow);
+    if (scope === 'day') {
+      // 單日檢視時僅替換當日的手動列，保留同月其他日期的手動列
+      const otherDaysCustom = loadStoredCustomRows(customRowsBucketKey).filter(
+        r => r.dateStr !== targetDateStr
+      );
+      saveStoredCustomRows(customRowsBucketKey, [...otherDaysCustom, ...customOnly]);
+    } else {
+      saveStoredCustomRows(customRowsBucketKey, customOnly);
+    }
   };
 
   const updateRow = <K extends keyof PettyCashRow>(id: string, key: K, value: PettyCashRow[K]) => {
-    setRows(prev =>
-      prev.map(r => {
+    setRows(prev => {
+      const nextList = prev.map(r => {
         if (r.id !== id) return r;
         const nextRow = { ...r, [key]: value };
         // 修改公里數時，若先前有手動鎖定金額則自動解除鎖定，讓實付金額隨公里數×單價即時更新
         if (key === 'actualKm') {
           nextRow.customAmount = null;
         }
-        persistRowPatch(r.dateStr, {
+        persistRowPatch(nextRow, {
           actualKm: nextRow.actualKm,
           customAmount: nextRow.customAmount,
           invoiceNumber: nextRow.invoiceNumber,
@@ -371,8 +477,12 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
           routeTitle: nextRow.routeTitle,
         });
         return nextRow;
-      })
-    );
+      });
+      if (prev.some(r => r.id === id && r.isCustomRow)) {
+        persistCustomRowsSnapshot(nextList);
+      }
+      return nextList;
+    });
   };
 
   const updateRowEvidence = (
@@ -388,8 +498,8 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       googleScreenshots?: string[];
     }
   ) => {
-    setRows(prev =>
-      prev.map(r => {
+    setRows(prev => {
+      const nextList = prev.map(r => {
         if (r.id !== id) return r;
         const nextEvidence: RouteEvidenceData = {
           ...r.evidence,
@@ -403,8 +513,14 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
         };
         const nextKm = patch.actualKm !== undefined ? patch.actualKm : r.actualKm;
         const nextCustomAmount = patch.actualKm !== undefined ? null : r.customAmount;
+        const nextRow: PettyCashRow = {
+          ...r,
+          actualKm: nextKm,
+          customAmount: nextCustomAmount,
+          evidence: nextEvidence,
+        };
 
-        persistRowPatch(r.dateStr, {
+        persistRowPatch(nextRow, {
           actualKm: nextKm,
           customAmount: nextCustomAmount,
           durationMin: nextEvidence.durationMin,
@@ -413,14 +529,13 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
           googleScreenshots: nextEvidence.googleScreenshots,
         });
 
-        return {
-          ...r,
-          actualKm: nextKm,
-          customAmount: nextCustomAmount,
-          evidence: nextEvidence,
-        };
-      })
-    );
+        return nextRow;
+      });
+      if (prev.some(r => r.id === id && r.isCustomRow)) {
+        persistCustomRowsSnapshot(nextList);
+      }
+      return nextList;
+    });
   };
 
   const handleAddRow = (presetCategory: ExpenseCategoryItem = '油資') => {
@@ -435,35 +550,46 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
         ? '店點巡視：門市A.門市B'
         : '店點巡視：';
 
-    setRows(prev => [
-      ...prev,
-      {
-        id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        dateStr: targetDateStr,
-        shortDate,
-        itemCategory: presetCategory,
-        routeTitle: defaultTitle,
-        actualKm: presetCategory === '油資' ? 10 : 0,
-        customAmount: presetCategory === '高鐵票' ? 790 : presetCategory === '停車費' ? 250 : null,
-        invoiceNumber: '',
-        evidence: {
-          waypoints: [],
-          stopLabels: [
-            formatStopForGoogleMaps(`${activeManager?.region || '新北區'}中心`, undefined, activeManager?.region),
-            '東森寵物雲總部 235台灣新北市中和區景平路258號',
-          ],
-          geometry: [],
-          durationMin: 15,
-          viaRoad: '途經主要幹道',
-          verificationStatus: 'google_verified',
-          googleScreenshots: [],
-        },
+    const newRow: PettyCashRow = {
+      id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      dateStr: targetDateStr,
+      shortDate,
+      itemCategory: presetCategory,
+      routeTitle: defaultTitle,
+      actualKm: presetCategory === '油資' ? 10 : 0,
+      customAmount: presetCategory === '高鐵票' ? 790 : presetCategory === '停車費' ? 250 : null,
+      invoiceNumber: '',
+      isCustomRow: true,
+      evidence: {
+        waypoints: [],
+        stopLabels: [
+          formatStopForGoogleMaps(`${activeManager?.region || '新北區'}中心`, undefined, activeManager?.region),
+          '東森寵物雲總部 235台灣新北市中和區景平路258號',
+        ],
+        geometry: [],
+        durationMin: 15,
+        viaRoad: '途經主要幹道',
+        verificationStatus: 'google_verified',
+        googleScreenshots: [],
       },
-    ]);
+    };
+
+    setRows(prev => {
+      const nextList = [...prev, newRow];
+      persistCustomRowsSnapshot(nextList);
+      return nextList;
+    });
   };
 
   const handleDeleteRow = (id: string) => {
-    setRows(prev => prev.filter(r => r.id !== id));
+    setRows(prev => {
+      const target = prev.find(r => r.id === id);
+      const nextList = prev.filter(r => r.id !== id);
+      if (target?.isCustomRow) {
+        persistCustomRowsSnapshot(nextList);
+      }
+      return nextList;
+    });
   };
 
   // 即時計算每一列之實付金額、油資公式文字、總計金額與底部 8 位數拆解
@@ -505,14 +631,14 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
    * 產生 1:1 還原《東森寵物雲股份有限公司 零用金單據黏存單》＋《附件：點對點真實 Google Maps 距離圖》之列印／Word HTML
    */
   const buildPrintableDocumentHtml = (forWord = false, withAttachments = true): string => {
-    const totalRowsCount = Math.max(12, calculated.computedRows.length);
     const emptyCount = Math.max(0, 10 - calculated.computedRows.length);
+    const actualRenderedRows = calculated.computedRows.length + emptyCount;
 
     const dataRowsHtml = calculated.computedRows
       .map((r, idx) => {
         const leftPasteCell =
           idx === 0
-            ? `<td rowspan="${totalRowsCount + 1}" class="paste-strip">
+            ? `<td rowspan="${actualRenderedRows + 1}" class="paste-strip">
                  <div class="paste-vertical-text">報 銷 時 請 經 手 人 將 發 票 或 其 他 單 據 黏 在 此 處</div>
                </td>`
             : '';

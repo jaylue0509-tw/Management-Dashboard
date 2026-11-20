@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Users, History, Save, Plus, ShieldCheck, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL } from '../api/api';
 import { storeRegions } from '../data/storeRegions';
 
 interface User {
@@ -46,8 +47,8 @@ export const AdminSettings: React.FC = () => {
     setLoading(true);
     try {
       const [usersRes, logsRes] = await Promise.all([
-        fetch('https://management-dashboard-rust.vercel.app/api/admin/users', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('https://management-dashboard-rust.vercel.app/api/admin/audit-logs', { headers: { Authorization: `Bearer ${token}` } })
+        fetch(`${API_BASE_URL}/admin/users`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/admin/audit-logs`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
       
       if (usersRes.ok) setUsers(await usersRes.json());
@@ -69,7 +70,7 @@ export const AdminSettings: React.FC = () => {
     const username = isExisting ? editingUser.username : trimmedName;
 
     try {
-      const res = await fetch('https://management-dashboard-rust.vercel.app/api/admin/users', {
+      const res = await fetch(`${API_BASE_URL}/admin/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

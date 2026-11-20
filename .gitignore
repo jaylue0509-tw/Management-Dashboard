@@ -38,3 +38,6 @@ env/
 
 .vercel
 .env*
+
+# Local scratch scripts & backups
+scratch/

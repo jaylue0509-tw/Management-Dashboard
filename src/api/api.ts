@@ -1,11 +1,12 @@
 import type { Manager } from '../types';
 
 // ==========================================
-// API 網址設定：Vercel 生產環境自動使用同網域的 /api，本機開發指向遠端 API
+// API 網址設定：優先採用環境變數 VITE_API_BASE_URL；
+// 生產環境預設同網域 /api，本機開發預設指向測試／正式 API
 // ==========================================
-export const API_BASE_URL = import.meta.env.PROD
-  ? '/api'
-  : 'https://management-dashboard-rust.vercel.app/api';
+export const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
+  (import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api');
 
 /**
  * 產生包含 Bearer Token 的認證 Header

@@ -1,5 +1,24 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
+import { API_BASE_URL } from '../api/api';
+import { clearCustomHubPointsCache } from '../utils/address-geocoder';
+
+/** 切換帳號或登出時必須一併清除的帳號專屬本機快取鍵，避免共用裝置資料殘留 */
+const ACCOUNT_SCOPED_STORAGE_KEYS = [
+  'petty_cash_google_evidence_v2',
+  'petty_cash_custom_rows_v1',
+];
+
+const clearAccountScopedCaches = (): void => {
+  clearCustomHubPointsCache();
+  try {
+    for (const key of ACCOUNT_SCOPED_STORAGE_KEYS) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // 忽略私密瀏覽等儲存異常
+  }
+};
 
 export interface User {
   sub: string; // username
@@ -38,10 +57,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const syncLatestUser = async () => {
         try {
-          const apiBase = import.meta.env.PROD ? '/api' : 'https://management-dashboard-rust.vercel.app/api';
-          const res = await fetch(`${apiBase}/auth/me`, {
+          const res = await fetch(`${API_BASE_URL}/auth/me`, {
             headers: { Authorization: `Bearer ${storedToken}` }
           });
+          if (res.status === 401) {
+            // Token 已失效或過期時，清除登入狀態與本機快取
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            clearAccountScopedCaches();
+            setToken(null);
+            setUser(null);
+            return;
+          }
           if (res.ok) {
             const latestUser = await res.json();
             if (latestUser && latestUser.sub) {
@@ -49,7 +76,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               localStorage.setItem('user', JSON.stringify(latestUser));
             }
           }
-        } catch (err) {
+        } catch {
           // 網路離線時保留本機快取使用者狀態
         }
       };
@@ -59,6 +86,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = (newToken: string, newUser: User) => {
+    clearAccountScopedCaches();
     localStorage.setItem('token', newToken);
     localStorage.setItem('user', JSON.stringify(newUser));
     setToken(newToken);
@@ -68,6 +96,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    clearAccountScopedCaches();
     setToken(null);
     setUser(null);
   };

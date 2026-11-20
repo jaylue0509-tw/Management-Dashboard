@@ -68,6 +68,24 @@ const MAP_WIDTH = 560;
 const MAP_HEIGHT = 340;
 
 /**
+ * 將顯示用站點文字清洗為地理編碼查詢字串，保留完整台灣門牌地址（避免含空白地址被截斷）
+ */
+const extractGeocodeQuery = (labelText: string): string => {
+  const withoutRegionTag = labelText.replace(/（台灣[^）]*）/g, '').trim();
+  if (!withoutRegionTag) return '';
+
+  // 若格式為「地標別名 220台灣新北市板橋區...」或含郵遞區號＋縣市路名，保留完整台灣地址段
+  const fullAddrMatch = withoutRegionTag.match(/(?:\d{3,5}\s*)?(?:台灣|臺灣)?[台臺北中南高新桃竹苗彰雲嘉屏宜花東澎金馬][^\s]*(?:縣|市).+/);
+  if (fullAddrMatch && /(?:路|街|大道|段|巷|弄|號)/.test(fullAddrMatch[0])) {
+    return fullAddrMatch[0].replace(/^\d{3,5}\s*/, '').replace(/^(?:台灣|臺灣)/, '').trim();
+  }
+
+  // 若為東森寵物門市格式（如「東森寵物雲 彰化中正店」），移除品牌前綴以命中內建精準門市座標表
+  const storeStripped = withoutRegionTag.replace(/^東森寵物雲?\s*/, '').trim();
+  return storeStripped || withoutRegionTag;
+};
+
+/**
  * 零用金單據黏存單附件卡：
  * 一鍵直接產生並顯示「點對點距離 真實 Google Maps 路線截圖畫面」（左側起訖站點、途經道路、時間與公里數；右側真實 Google Maps 街道圖＋藍紫導航線＋公里氣泡），
  * 並即時將點對點真實道路公里數連動回主表公式與金額。
@@ -87,6 +105,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoFetchedRoadRef = useRef<boolean>(false);
+  const dirtyStopIndicesRef = useRef<Set<number>>(new Set());
 
   const [isGeneratingMap, setIsGeneratingMap] = useState(false);
   const [isRecognizingKm, setIsRecognizingKm] = useState(false);
@@ -123,20 +142,30 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
       try {
         let resolvedWaypoints: GeoPoint[] = [...evidence.waypoints];
 
-        // 若站點數量變更或使用者編輯了地址文字，重新定位各點座標
+        // 僅在站點數變更、該站點文字曾被使用者編輯、或缺少既有座標時才重跑地理編碼（避免觸發 Nominatim 限速與錯誤截斷）
         if (targetLabels.length >= 2) {
+          const isSameLength = targetLabels.length === evidence.waypoints.length;
           const nextPts: GeoPoint[] = [];
           for (let i = 0; i < targetLabels.length; i++) {
             const labelText = targetLabels[i];
-            const existingPt = evidence.waypoints[i];
-            const cleanQuery = labelText
-              .replace(/^東森寵物雲?\s*/, '')
-              .replace(/（台灣[^）]*）/g, '')
-              .split(' ')[0]
-              .trim();
-            const geo = await geocodeTaiwanAddress(cleanQuery || labelText);
+            const existingPt = isSameLength ? evidence.waypoints[i] : undefined;
+            const isDirty = dirtyStopIndicesRef.current.has(i) || Boolean(customLabels);
+
+            if (
+              existingPt &&
+              !isDirty &&
+              Number.isFinite(existingPt.lat) &&
+              Number.isFinite(existingPt.lng)
+            ) {
+              nextPts.push({ ...existingPt, label: labelText });
+              continue;
+            }
+
+            const query = extractGeocodeQuery(labelText);
+            const geo = await geocodeTaiwanAddress(query || labelText);
             if (geo) {
               nextPts.push({ lat: geo.lat, lng: geo.lng, label: labelText });
+              dirtyStopIndicesRef.current.delete(i);
             } else if (existingPt) {
               nextPts.push({ ...existingPt, label: labelText });
             }
@@ -245,6 +274,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
   };
 
   const handleUpdateStopLabel = (stopIdx: number, val: string) => {
+    dirtyStopIndicesRef.current.add(stopIdx);
     const next = [...evidence.stopLabels];
     next[stopIdx] = val;
     onUpdateEvidence({ stopLabels: next });
@@ -255,6 +285,7 @@ export const ExpenseRouteAttachmentCard: React.FC<ExpenseRouteAttachmentCardProp
     // 插入於終點（返程點）之前
     const insertIdx = Math.max(1, next.length - 1);
     next.splice(insertIdx, 0, '');
+    dirtyStopIndicesRef.current.add(insertIdx);
     onUpdateEvidence({ stopLabels: next });
   };
 

@@ -278,6 +278,18 @@ export const saveCustomHubPoints = (data: StoredCustomHubs): void => {
 };
 
 /**
+ * 清除本機自訂起始點快取（登出、切換帳號或權限失效時呼叫，避免跨帳號資料殘留）
+ */
+export const clearCustomHubPointsCache = (): void => {
+  try {
+    localStorage.removeItem(CUSTOM_HUBS_STORAGE_KEY);
+    window.dispatchEvent(new CustomEvent(CUSTOM_HUBS_UPDATED_EVENT));
+  } catch {
+    // 忽略儲存異常
+  }
+};
+
+/**
  * 將 CustomHubConfig 轉換為里程引擎與地圖共用的 GeoPoint
  */
 export const customHubToGeoPoint = (cfg: CustomHubConfig | null | undefined): GeoPoint | undefined => {
@@ -299,6 +311,10 @@ export const syncCustomHubPointsFromServer = async (): Promise<StoredCustomHubs>
       method: 'GET',
       headers: getAuthHeaders(),
     });
+    if (res.status === 401 || res.status === 403) {
+      clearCustomHubPointsCache();
+      return { global: null, byManager: {} };
+    }
     if (!res.ok) return local;
     const json = await res.json();
     const serverData: StoredCustomHubs = {

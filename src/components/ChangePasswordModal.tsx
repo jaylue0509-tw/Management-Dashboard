@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { KeyRound, X, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL } from '../api/api';
 
-const API_URL = import.meta.env.PROD
-  ? '/api/auth/change-password'
-  : 'https://management-dashboard-rust.vercel.app/api/auth/change-password';
+const API_URL = `${API_BASE_URL}/auth/change-password`;
 const MIN_PASSWORD_LENGTH = 6;
 
 interface ChangePasswordModalProps {
