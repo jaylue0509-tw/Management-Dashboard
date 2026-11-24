@@ -1545,6 +1545,18 @@ export const AuditApp = () => {
             ) : (
               pastActionItems.map(item => (
                 <div key={item.id} className="border p-4 rounded-xl bg-white shadow-sm">
+                  <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                    {item.auditDepartment === '美容' && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-200">
+                        🌸 美容總監交辦
+                      </span>
+                    )}
+                    {item.crossDepartment && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-blue-100 text-blue-800 border border-blue-200">
+                        🔗 跨部門硬體修繕協同
+                      </span>
+                    )}
+                  </div>
                   <div className="text-sm font-semibold text-gray-800 mb-2">{item.issueDescription || item.desc}</div>
                   <div className="text-xs text-gray-500 mb-3 flex gap-4">
                     <span>負責人: {item.assignee}</span>

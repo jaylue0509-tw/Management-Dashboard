@@ -54,7 +54,7 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
                             assigned = list(u_row[0])
                     if store not in assigned and _normalize_store(store) not in {_normalize_store(s) for s in assigned}:
                         return []
-                    cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
+                    cur.execute("SELECT data FROM action_items WHERE replace(store_name, '店', '') = %s ORDER BY created_at DESC", (_normalize_store(store),))
                 else:
                     cur.execute(
                         "SELECT data FROM action_items WHERE store_name = ANY(%s) OR data->>'assignee' = %s OR data->>'createdBy' = %s ORDER BY created_at DESC LIMIT 200",
@@ -62,7 +62,7 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
                     )
             else:
                 if store:
-                    cur.execute("SELECT data FROM action_items WHERE store_name = %s ORDER BY created_at DESC", (store,))
+                    cur.execute("SELECT data FROM action_items WHERE replace(store_name, '店', '') = %s ORDER BY created_at DESC", (_normalize_store(store),))
                 else:
                     cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 200")
             rows = cur.fetchall()
@@ -85,19 +85,21 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
                     remarks_vr = vr_data.get("categoryRemarks") or {}
                     defects_found = []
                     for ck, cv in {**core_checks_vr, **cat_checks}.items():
-                        if cv in ("缺失", "待改善"):
+                        if cv in ("缺失", "待改善", "違規"):
                             label = _build_defect_label(ck)
                             rmk = remarks_vr.get(ck)
                             defects_found.append(f"{label} ({cv})" + (f"：{rmk}" if rmk else ""))
                     if not defects_found and vr_data.get("abnormalFlag"):
                         defects_found.append("前次巡檢發現異常待複查確認")
                     if defects_found:
+                        is_beauty_vr = vr_data.get("auditType") == "beauty" or vr_data.get("actionType") == "美容總監巡店"
                         items.append({
                             "id": f"vr-{vr_id}",
                             "storeName": store,
+                            "auditDepartment": "美容" if is_beauty_vr else "營運",
                             "desc": "；".join(defects_found),
                             "issueDescription": "；".join(defects_found),
-                            "assignee": "店長",
+                            "assignee": "美容組長" if is_beauty_vr else "店長",
                             "dueDate": (vr_created.date().isoformat() if vr_created else _taipei_date_after(0)),
                             "status": "Open",
                             "sourceRecordId": vr_id

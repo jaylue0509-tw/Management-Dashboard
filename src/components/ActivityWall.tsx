@@ -3,6 +3,7 @@ import type { VisitRecord } from '../types';
 import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck, Search, Compass } from 'lucide-react';
 import { formatTaipeiReportTime, formatTimeAgo, getMinutesAgo } from '../utils/time-utils';
 import { API_ORIGIN } from '../api/api';
+import { BEAUTY_ITEM_LABEL_MAP } from '../data/beautyAuditConfig';
 
 export type ActivityCategoryFilter = 'all' | 'store' | 'abnormal' | 'normal' | 'photo' | 'schedule';
 
@@ -22,7 +23,8 @@ const ITEM_NAMES: Record<string, string> = {
   '3-1': '美容房環境與衛生', '3-2': '美容操作 SOP 與安全', '3-3': '活體照護與環境', '3-4': '保健/醫療專區維護',
   '4-1': '儀容儀態與招呼', '4-2': '專業導購與衛教', '4-3': '櫃檯結帳與附加銷售',
   '5-1': '門面與整體環境清潔', '5-2': '賣場氣氛與燈光空調', '5-3': '後勤倉庫與公安動線', '5-4': '系統與設備安全運作',
-  '6-1': '業績與 KPI 指標跟進', '6-2': '人員 1-on-1 面談紀錄', '6-3': '團隊士氣與排班合理性'
+  '6-1': '業績與 KPI 指標跟進', '6-2': '人員 1-on-1 面談紀錄', '6-3': '團隊士氣與排班合理性',
+  ...BEAUTY_ITEM_LABEL_MAP,
 };
 
 const resolvePhotoUrl = (url?: string): string => {
@@ -41,10 +43,10 @@ const checkActivityAbnormal = (activity: VisitRecord): boolean => {
   if (isSpecialSchedule) return false;
 
   const coreAbnormals = (activity as any).coreChecks
-    ? Object.entries((activity as any).coreChecks).filter(([_, val]) => val === '缺失')
+    ? Object.entries((activity as any).coreChecks).filter(([_, val]) => val === '缺失' || val === '違規' || val === '待改善')
     : [];
   const categoryAbnormals = (activity as any).categoryChecks
-    ? Object.entries((activity as any).categoryChecks).filter(([_, val]) => val === '缺失' || val === '待改善')
+    ? Object.entries((activity as any).categoryChecks).filter(([_, val]) => val === '缺失' || val === '待改善' || val === '違規')
     : [];
   if (coreAbnormals.length > 0 || categoryAbnormals.length > 0) return true;
 

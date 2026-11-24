@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown, Settings, KeyRound, LogOut, UserCheck } from 'lucide-react';
+import { Clock, ClipboardSignature, LayoutDashboard, ChevronDown, Settings, KeyRound, LogOut, UserCheck, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -73,6 +73,16 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
 
           {/* Mobile Quick CTA & Auth Buttons (僅在 < lg 顯示於第一列右側) */}
           <div className="flex lg:hidden items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('/beauty-audit')}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer whitespace-nowrap"
+              style={{ background: 'linear-gradient(135deg, #e11d48, #a21caf)' }}
+              title="美容總監巡店表"
+            >
+              <Sparkles size={13} />
+              <span>美容巡店</span>
+            </button>
             <button
               type="button"
               onClick={() => navigate('/audit')}
@@ -205,6 +215,19 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
             >
               <LogOut size={13} />
               登出
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/beauty-audit')}
+              className="flex items-center gap-1.5 text-white rounded-lg px-3.5 py-2 text-xs font-bold cursor-pointer transition-all shadow-sm hover:-translate-y-0.5 whitespace-nowrap"
+              style={{
+                background: 'linear-gradient(135deg, #e11d48, #a21caf)',
+                boxShadow: '0 2px 8px rgba(190,24,93,0.28)',
+              }}
+            >
+              <Sparkles size={14} />
+              美容總監巡店
             </button>
 
             <button

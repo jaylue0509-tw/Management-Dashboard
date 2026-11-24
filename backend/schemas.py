@@ -35,7 +35,9 @@ class VisitRecord(BaseModel):
     photoPairs: List[PhotoPair] = []
     createdAt: datetime = Field(default_factory=datetime.utcnow)
 
-    # AuditApp 擴充欄位
+    # AuditApp / BeautyAuditApp 擴充欄位
+    auditType: Optional[str] = "operations"
+    auditDepartment: Optional[str] = "營運"
     auditMode: Optional[str] = ""
     selectedTopics: Optional[List[int]] = []
     coreChecks: Optional[Dict[str, str]] = {}
@@ -43,6 +45,13 @@ class VisitRecord(BaseModel):
     categoryRemarks: Optional[Dict[str, str]] = {}
     pdcaResults: Optional[Dict[str, str]] = {}
     overallRating: Optional[str] = ""
+    coreRedlineViolated: Optional[bool] = False
+    storeManagerName: Optional[str] = ""
+    beautyLeaderName: Optional[str] = ""
+    coachingConducted: Optional[bool] = False
+    coachingTargets: Optional[List[str]] = []
+    coachingNotes: Optional[str] = ""
+    signerRole: Optional[str] = ""
 
 class LoginRequest(BaseModel):
     username: str

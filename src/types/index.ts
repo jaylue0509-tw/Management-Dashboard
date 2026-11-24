@@ -48,7 +48,9 @@ export interface VisitRecord {
   abnormalFlag: boolean;
   createdAt?: string;
 
-  // New AuditApp fields
+  // New AuditApp & BeautyAuditApp fields
+  auditType?: 'operations' | 'beauty';
+  auditDepartment?: '營運' | '美容';
   auditMode?: 'A' | 'B' | 'C' | '';
   selectedTopics?: number[];
   coreChecks?: Record<string, string>;
@@ -56,6 +58,13 @@ export interface VisitRecord {
   categoryRemarks?: Record<string, string>;
   pdcaResults?: Record<string, string>;
   overallRating?: string;
+  coreRedlineViolated?: boolean;
+  storeManagerName?: string;
+  beautyLeaderName?: string;
+  coachingConducted?: boolean;
+  coachingTargets?: string[];
+  coachingNotes?: string;
+  signerRole?: string;
   signature?: string | null;
 }
 

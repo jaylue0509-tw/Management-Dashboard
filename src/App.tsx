@@ -6,6 +6,7 @@ import { ChangePasswordModal } from './components/ChangePasswordModal';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const AuditApp = lazy(() => import('./pages/AuditApp').then(m => ({ default: m.AuditApp })));
+const BeautyAuditApp = lazy(() => import('./pages/BeautyAuditApp').then(m => ({ default: m.BeautyAuditApp })));
 const AdminSettings = lazy(() => import('./pages/AdminSettings').then(m => ({ default: m.AdminSettings })));
 
 const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles?: ('admin' | 'manager')[] }) => {
@@ -57,6 +58,12 @@ const App: React.FC = () => {
             <Route path="/audit" element={
               <ProtectedRoute allowedRoles={['manager', 'admin']}>
                 <AuditApp />
+              </ProtectedRoute>
+            } />
+
+            <Route path="/beauty-audit" element={
+              <ProtectedRoute allowedRoles={['manager', 'admin']}>
+                <BeautyAuditApp />
               </ProtectedRoute>
             } />
             

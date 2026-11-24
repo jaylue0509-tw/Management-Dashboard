@@ -34,6 +34,9 @@ const MileageExpensePanel = lazy(() =>
 const AuditRouteMapPanel = lazy(() =>
   import('../components/AuditRouteMapPanel').then(m => ({ default: m.AuditRouteMapPanel }))
 );
+const BeautyDashboardPanel = lazy(() =>
+  import('../components/BeautyDashboardPanel').then(m => ({ default: m.BeautyDashboardPanel }))
+);
 const DashboardChartsSection = lazy(() =>
   import('../components/charts/DashboardChartsSection').then(m => ({ default: m.DashboardChartsSection }))
 );
@@ -106,7 +109,10 @@ const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
 };
 
 export const DashboardPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'route_map' | 'expense' | 'org_map' | 'map'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'beauty' | 'route_map' | 'expense' | 'org_map' | 'map'>(() => {
+    const qView = new URLSearchParams(window.location.search).get('view')?.trim();
+    return qView === 'beauty' ? 'beauty' : 'dashboard';
+  });
   const [routeMapInitialManager, setRouteMapInitialManager] = useState<string>('');
   const [routeMapInitialDate, setRouteMapInitialDate] = useState<string>('');
   const [allActivities, setAllActivities] = useState<VisitRecord[]>([]);
@@ -1091,6 +1097,7 @@ export const DashboardPage: React.FC = () => {
           <div className="flex gap-1 min-w-0 overflow-x-auto">
             {[
               { id: 'dashboard', label: '即時動態牆' },
+              { id: 'beauty', label: '🌸 美容住宿專項' },
               { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
               {
                 id: 'expense',
@@ -1103,7 +1110,7 @@ export const DashboardPage: React.FC = () => {
             ].map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as 'dashboard' | 'route_map' | 'expense' | 'org_map')}
+                onClick={() => setActiveTab(tab.id as 'dashboard' | 'beauty' | 'route_map' | 'expense' | 'org_map')}
                 className="px-3 py-2.5 sm:px-4 sm:py-2.5 text-xs sm:text-[0.88rem] whitespace-nowrap cursor-pointer transition-all"
                 style={{
                   fontWeight: activeTab === tab.id || (tab.id === 'route_map' && activeTab === 'map') ? 700 : 500,
@@ -1654,6 +1661,15 @@ export const DashboardPage: React.FC = () => {
                   </main>
                 </div>
               </>
+            ) : activeTab === 'beauty' ? (
+              <Suspense fallback={<TabLoadingFallback />}>
+                <BeautyDashboardPanel
+                  allActivities={allActivities}
+                  actionItems={actionItems}
+                  canEditActivity={canEditActivityRecord}
+                  onEditActivity={activity => openEditActivityModal(activity)}
+                />
+              </Suspense>
             ) : activeTab === 'expense' ? (
               <Suspense fallback={<TabLoadingFallback />}>
                 <MileageExpensePanel

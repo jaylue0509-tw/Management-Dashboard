@@ -12,6 +12,7 @@ from backend.utils import (
     trigger_teams_notify,
     TAIPEI_OFFSET,
     MODULE_NAMES,
+    BEAUTY_MODULE_NAMES,
     _taipei_date_after,
     _normalize_activity_time,
     _normalize_store,
@@ -23,24 +24,40 @@ logger = logging.getLogger("dashboard-api")
 router = APIRouter(prefix="/api", tags=["巡店與活動管理"])
 
 @router.get("/visit-records/last-audit")
-def get_last_audit_record(store: str, user: Optional[dict] = Depends(get_optional_user)):
+def get_last_audit_record(
+    store: str,
+    audit_type: str = "",
+    user: Optional[dict] = Depends(get_optional_user)
+):
     """
-    查詢特定門市前次實地巡檢紀錄與缺失清單（供區主管進店時進行 PDCA 複查與歷史對比）
+    查詢特定門市前次實地巡檢紀錄與缺失清單（供區主管或美容總監進店時進行 PDCA 複查與歷史對比）
+    - audit_type='beauty'：精準回溯上一次美容總監巡店紀錄與面談備忘
+    - audit_type='operations' 或留空：回溯上一次營運區主管巡店紀錄
     """
     store_name = str(store or "").strip()
     if not store_name:
         raise HTTPException(status_code=400, detail="缺少門市名稱")
     
     norm_store = _normalize_store(store_name)
+    type_filter = str(audit_type or "").strip().lower()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # 查詢排除純公務行程後的最新實地巡檢
-            cur.execute("""
-                SELECT data, created_at FROM visit_records 
-                WHERE replace(data->>'storeName', '店', '') = %s
-                  AND data->>'actionType' NOT IN ('總部行程', '會議行程', '特殊行程')
-                ORDER BY created_at DESC LIMIT 1
-            """, (norm_store,))
+            if type_filter == "beauty":
+                cur.execute("""
+                    SELECT data, created_at FROM visit_records 
+                    WHERE replace(data->>'storeName', '店', '') = %s
+                      AND (data->>'auditType' = 'beauty' OR data->>'actionType' = '美容總監巡店')
+                    ORDER BY created_at DESC LIMIT 1
+                """, (norm_store,))
+            else:
+                # 查詢排除純公務行程與美容專項後的最新營運實地巡檢
+                cur.execute("""
+                    SELECT data, created_at FROM visit_records 
+                    WHERE replace(data->>'storeName', '店', '') = %s
+                      AND data->>'actionType' NOT IN ('總部行程', '會議行程', '特殊行程', '美容總監巡店')
+                      AND COALESCE(data->>'auditType', '') != 'beauty'
+                    ORDER BY created_at DESC LIMIT 1
+                """, (norm_store,))
             row = cur.fetchone()
             if not row or not row[0]:
                 return {"hasHistory": False, "storeName": store_name}
@@ -58,7 +75,7 @@ def get_last_audit_record(store: str, user: Optional[dict] = Depends(get_optiona
             suggested_topics = set()
             
             for k, v in core_checks.items():
-                if v == '缺失':
+                if v in ('缺失', '違規', '待改善'):
                     rmk = category_remarks.get(k) or ""
                     defects.append({
                         "key": k,
@@ -69,11 +86,12 @@ def get_last_audit_record(store: str, user: Optional[dict] = Depends(get_optiona
                     })
                     
             for k, v in category_checks.items():
-                if v in ('缺失', '待改善'):
+                if v in ('缺失', '待改善', '違規'):
                     rmk = category_remarks.get(k) or ""
                     topic_idx = None
-                    if '-' in k and k.split('-')[0].isdigit():
-                        topic_idx = int(k.split('-')[0])
+                    clean_key = k[2:] if k.startswith('b-') else k
+                    if '-' in clean_key and clean_key.split('-')[0].isdigit():
+                        topic_idx = int(clean_key.split('-')[0])
                         suggested_topics.add(topic_idx)
                     defects.append({
                         "key": k,
@@ -95,9 +113,16 @@ def get_last_audit_record(store: str, user: Optional[dict] = Depends(get_optiona
                 "createdAt": norm_item.get("createdAt"),
                 "taipeiDate": taipei_date_str,
                 "areaManagerName": norm_item.get("areaManagerName"),
+                "auditType": norm_item.get("auditType") or ("beauty" if type_filter == "beauty" else "operations"),
+                "auditMode": norm_item.get("auditMode") or "",
+                "selectedTopics": norm_item.get("selectedTopics") or [],
                 "overallRating": norm_item.get("overallRating") or "正常",
                 "abnormalFlag": norm_item.get("abnormalFlag") or False,
                 "immediateImprovement": norm_item.get("immediateImprovement") or "",
+                "coachingNotes": norm_item.get("coachingNotes") or "",
+                "coachingTargets": norm_item.get("coachingTargets") or [],
+                "beautyLeaderName": norm_item.get("beautyLeaderName") or "",
+                "storeManagerName": norm_item.get("storeManagerName") or "",
                 "pdcaResolved": norm_item.get("pdcaResolved") or False,
                 "defects": defects,
                 "suggestedTopicIndices": sorted(list(suggested_topics))
@@ -248,22 +273,45 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                     cleaned_pairs.append({"beforeUrl": before_url, "afterUrl": after_url})
             payload["photoPairs"] = cleaned_pairs
 
+            is_beauty_audit = (
+                str(payload.get("auditType") or "").strip().lower() == "beauty"
+                or payload.get("actionType") == "美容總監巡店"
+            )
+            audit_dept = "美容" if is_beauty_audit else "營運"
+            payload["auditType"] = "beauty" if is_beauty_audit else "operations"
+            payload["auditDepartment"] = audit_dept
+
             defect_lines = []
+            has_core_violation = False
             for k, v in core_checks.items():
-                if v == '缺失':
-                    remark = category_remarks.get(k) or "未提供說明"
-                    defect_lines.append(f"{_build_defect_label(k)}：{remark}")
-            for k, v in category_checks.items():
-                if v in ('缺失', '待改善'):
+                if v in ('缺失', '違規', '待改善'):
+                    has_core_violation = True
                     remark = category_remarks.get(k) or "未提供說明"
                     defect_lines.append(f"{_build_defect_label(k)} ({v})：{remark}")
-            has_defect = len(defect_lines) > 0 or payload.get("overallRating") == "需重點輔導"
+            for k, v in category_checks.items():
+                if v in ('缺失', '待改善', '違規'):
+                    remark = category_remarks.get(k) or "未提供說明"
+                    defect_lines.append(f"{_build_defect_label(k)} ({v})：{remark}")
+
+            rating_val = str(payload.get("overallRating") or "")
+            is_high_risk = (
+                rating_val in ("需重點輔導", "高風險", "高風險（立即重點輔導）")
+                or (is_beauty_audit and has_core_violation)
+            )
+            has_defect = len(defect_lines) > 0 or is_high_risk
             payload["abnormalFlag"] = bool(has_defect)
+            payload["coreRedlineViolated"] = bool(has_core_violation)
             if not payload.get("immediateImprovement") and defect_lines:
                 payload["immediateImprovement"] = "\n".join(defect_lines)
-            tags = list(payload.get("tags") or ["實地巡店"])
+
+            default_tag = "美容總監巡店" if is_beauty_audit else "實地巡店"
+            tags = list(payload.get("tags") or [default_tag])
+            if is_beauty_audit and "美容總監巡店" not in tags:
+                tags.insert(0, "美容總監巡店")
             if has_defect and "發現異常" not in tags:
                 tags.append("發現異常")
+            if is_beauty_audit and has_core_violation and "安全紅線違規" not in tags:
+                tags.append("安全紅線違規")
             payload["tags"] = tags
 
             cur.execute("""
@@ -271,39 +319,47 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                 VALUES (%s, %s, %s, %s)
             """, (record_id, region, created_at, Json(payload)))
 
+            default_assignee = "美容組長" if is_beauty_audit else "店長"
             new_items = []
             for k, v in core_checks.items():
-                if v == '缺失':
+                if v in ('缺失', '違規', '待改善'):
                     remark = category_remarks.get(k) or "未提供說明"
-                    desc_text = f"{_build_defect_label(k)}：{remark}"
+                    desc_text = f"{_build_defect_label(k)} ({v})：{remark}"
                     new_items.append({
-                        "category": "必看核心底線",
+                        "category": "美容安全紅線" if is_beauty_audit else "必看核心底線",
+                        "auditDepartment": audit_dept,
                         "desc": desc_text,
                         "issueDescription": desc_text,
-                        "assignee": "店長",
+                        "assignee": default_assignee,
                         "dueDate": _taipei_date_after(3)
                     })
             for k, v in category_checks.items():
-                if v in ('缺失', '待改善'):
+                if v in ('缺失', '待改善', '違規'):
                     remark = category_remarks.get(k) or "未提供說明"
-                    mod_idx = int(k.split('-')[0]) - 1 if '-' in k and k.split('-')[0].isdigit() else -1
-                    cat_label = MODULE_NAMES[mod_idx] if 0 <= mod_idx < len(MODULE_NAMES) else "模組細項"
+                    clean_k = k[2:] if k.startswith('b-') else k
+                    mod_idx = int(clean_k.split('-')[0]) - 1 if '-' in clean_k and clean_k.split('-')[0].isdigit() else -1
+                    mod_list = BEAUTY_MODULE_NAMES if is_beauty_audit else MODULE_NAMES
+                    cat_label = mod_list[mod_idx] if 0 <= mod_idx < len(mod_list) else ("美容細項" if is_beauty_audit else "模組細項")
                     desc_text = f"{_build_defect_label(k)} ({v})：{remark}"
                     new_items.append({
                         "category": cat_label,
+                        "auditDepartment": audit_dept,
                         "desc": desc_text,
                         "issueDescription": desc_text,
-                        "assignee": "店長",
+                        "assignee": default_assignee,
                         "dueDate": _taipei_date_after(7)
                     })
             for act in payload.get("newActionItems") or []:
                 desc = str((act or {}).get("desc") or "").strip()
                 if desc:
+                    item_dept = str(act.get("auditDepartment") or "").strip() or audit_dept
                     new_items.append({
-                        "category": "主管交辦事項",
+                        "category": "跨部門硬體修繕" if act.get("crossDepartment") else ("美容交辦事項" if is_beauty_audit else "主管交辦事項"),
+                        "auditDepartment": item_dept,
+                        "crossDepartment": bool(act.get("crossDepartment")),
                         "desc": desc,
                         "issueDescription": desc,
-                        "assignee": str(act.get("assignee") or "").strip() or "店長",
+                        "assignee": str(act.get("assignee") or "").strip() or default_assignee,
                         "dueDate": str(act.get("dueDate") or "").strip() or _taipei_date_after(7)
                     })
 
@@ -337,34 +393,41 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                         cur.execute("UPDATE action_items SET data = data || %s WHERE id = %s",
                                     (Json({"status": "Closed", "updatedAt": now_iso, "closedByRecordId": record_id}), item_id))
             if resolved_any_pdca or not has_defect:
-                cur.execute(
-                    "UPDATE visit_records SET data = data || %s WHERE id != %s AND replace(data->>'storeName', '店', '') = %s",
-                    (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso}), record_id, _normalize_store(store_name))
-                )
-            for item_id, result in (payload.get("pdcaResults") or {}).items():
-                if result == '已改善':
-                    cur.execute("UPDATE action_items SET data = data || %s WHERE id = %s",
-                                (Json({"status": "Closed", "updatedAt": now_iso, "closedByRecordId": record_id}), item_id))
+                # NOTE: 美容與營運各自結案同部門之歷史異常，避免營運正常巡店把美容未結案安全紅線一併沖銷
+                if is_beauty_audit:
+                    cur.execute(
+                        "UPDATE visit_records SET data = data || %s WHERE id != %s AND replace(data->>'storeName', '店', '') = %s AND (data->>'auditType' = 'beauty' OR data->>'actionType' = '美容總監巡店')",
+                        (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso}), record_id, _normalize_store(store_name))
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE visit_records SET data = data || %s WHERE id != %s AND replace(data->>'storeName', '店', '') = %s AND COALESCE(data->>'auditType', '') != 'beauty' AND data->>'actionType' != '美容總監巡店'",
+                        (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso}), record_id, _normalize_store(store_name))
+                    )
 
             log_id = str(uuid.uuid4())
             cur.execute("""
                 INSERT INTO audit_logs (id, action, target_user, changed_by, before_data, after_data, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (log_id, "CREATE_VISIT_RECORD", store_name, mgr_name, None,
+            """, (log_id, "CREATE_BEAUTY_AUDIT" if is_beauty_audit else "CREATE_VISIT_RECORD", store_name, mgr_name, None,
                   Json({
                       "storeName": store_name,
                       "region": region,
+                      "auditType": payload["auditType"],
                       "auditMode": payload.get("auditMode"),
                       "overallRating": payload.get("overallRating"),
+                      "coreRedlineViolated": has_core_violation,
                       "actionItemsCreated": action_items_created,
                       "recordId": record_id
                   }), datetime.utcnow()))
         conn.commit()
 
-    if payload.get("overallRating") == "需重點輔導":
-        defects = [f"• {_build_defect_label(k)}" for k, v in {**core_checks, **category_checks}.items() if v in ['缺失', '待改善']]
+    if is_high_risk:
+        defects = [f"• {_build_defect_label(k)} ({v})" for k, v in {**core_checks, **category_checks}.items() if v in ['缺失', '待改善', '違規']]
         defects_text = "\n".join(defects) if defects else "• 未記錄具體異常選項"
-        msg = f"🚨 **【警示】高風險門市通報**\n\n門市：{store_name}\n\n區主管：{mgr_name}\n\n狀態：需重點輔導\n\n**扣分原因 / 異常項目：**\n{defects_text}\n\n請高層主管多加留意！"
+        role_label = "美容總監" if is_beauty_audit else "區主管"
+        title_prefix = "🚨 **【美容/住宿安全紅線高風險警示】**" if is_beauty_audit else "🚨 **【警示】高風險門市通報**"
+        msg = f"{title_prefix}\n\n門市：{store_name}\n\n{role_label}：{mgr_name}\n\n評價：{rating_val or '高風險（立即重點輔導）'}\n\n**扣分原因 / 違規項目：**\n{defects_text}\n\n請營運主管與高層立即關注並啟動重點輔導！"
         background_tasks.add_task(trigger_teams_notify, msg)
 
     return {"success": True, "data": {"recordId": record_id, "actionItemsCreated": action_items_created}}
