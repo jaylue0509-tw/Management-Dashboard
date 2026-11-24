@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
 import { normalizeStoreName, normalizeRegionName, compareRegion } from '../utils/store-region';
 import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
+import { isRegionInBeautyDirectorScope } from '../data/beautyAuditConfig';
 import {
   CUSTOM_HUBS_UPDATED_EVENT,
   customHubToGeoPoint,
@@ -316,13 +317,12 @@ export const DashboardPage: React.FC = () => {
               coManagerNames.has(i.createdBy)
           );
         } else if (user?.role === 'beauty_director') {
-          // 美容總監前端雙重保險隔離：僅保留所屬處別門市、本人提交之巡店紀錄與該處美容相關待辦
+          // 美容總監前端雙重保險隔離：依美容一處（新北/北桃/竹苗/宜花/嘉南）與美容二處（其餘區域）切分，並僅留本人巡店紀錄
           const bdName = user.name;
           const assignedStores = new Set(user.assigned_stores || []);
           validManagers = validManagers.filter(
             (m: any) =>
-              (user.department && m.department === user.department) ||
-              (user.supervisor && m.directorName === user.supervisor) ||
+              isRegionInBeautyDirectorScope(m.region, user.department) ||
               assignedStores.has(m.storeName)
           );
           const deptStoreSet = new Set<string>([

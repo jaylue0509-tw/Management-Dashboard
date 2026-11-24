@@ -4,7 +4,10 @@ import type { Manager } from '../types';
 import { MapPin, Building, Users, Sparkles } from 'lucide-react';
 import { importManagers } from '../api/api';
 import { normalizeRegionName } from '../utils/store-region';
-import { BEAUTY_DIRECTORS_CONFIG } from '../data/beautyAuditConfig';
+import {
+  getBeautyDirectorByRegion,
+  isRegionInBeautyDirectorScope,
+} from '../data/beautyAuditConfig';
 import Papa from 'papaparse';
 
 interface Props {
@@ -34,8 +37,7 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
     if (user?.role === 'beauty_director') {
       return managers.filter(
         m =>
-          (user.department && m.department === user.department) ||
-          (user.supervisor && m.directorName === user.supervisor) ||
+          isRegionInBeautyDirectorScope(m.region, user.department) ||
           (user.assigned_stores && user.assigned_stores.includes(m.storeName))
       );
     }
@@ -189,33 +191,26 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
               {/* Department Header */}
               <div className="flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'rgba(255, 255, 255, 0.4)', padding: '12px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.4)' }}>
                 <div className="font-bold text-lg text-gray-900">{dept || '未分類處別'}</div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="text-sm text-gray-800 font-medium">處長：{director || '未設定'}</div>
-                  {(() => {
-                    const matchedBd = BEAUTY_DIRECTORS_CONFIG.find(
-                      bd => bd.department === dept || bd.supervisor === director
-                    );
-                    if (!matchedBd) return null;
-                    return (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs font-extrabold">
-                        <Sparkles size={12} />
-                        美容總監：{matchedBd.name}（{matchedBd.nickname}）
-                      </span>
-                    );
-                  })()}
-                </div>
+                <div className="text-sm text-gray-800 font-medium">處長：{director || '未設定'}</div>
               </div>
               
               {/* Regions */}
               <div className="flex flex-row gap-8" style={{ padding: '16px', overflowX: 'auto', flexWrap: 'nowrap' }}>
                 {Object.entries(regions).map(([region, regManagers]) => {
                   const areaManagers = groupBy(regManagers, m => m.areaManagerName);
+                  const beautyDir = getBeautyDirectorByRegion(region);
                   
                   return (
                     <div key={region} className="flex flex-col gap-4" style={{ minWidth: '320px', width: '320px', flexShrink: 0 }}>
-                      <div className="font-semibold text-primary flex items-center justify-center gap-2" style={{ borderBottom: '2px solid var(--color-primary-100)', paddingBottom: '8px' }}>
-                        <MapPin size={18} />
-                        <span style={{ fontSize: '1.1rem' }}>{region}（{regManagers.length} 店）</span>
+                      <div className="flex flex-col items-center gap-1" style={{ borderBottom: '2px solid var(--color-primary-100)', paddingBottom: '8px' }}>
+                        <div className="font-semibold text-primary flex items-center justify-center gap-2">
+                          <MapPin size={18} />
+                          <span style={{ fontSize: '1.1rem' }}>{region}（{regManagers.length} 店）</span>
+                        </div>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-[11px] font-extrabold">
+                          <Sparkles size={11} />
+                          {beautyDir.department}：{beautyDir.name}（{beautyDir.nickname}）
+                        </span>
                       </div>
                       
                       <div className="flex flex-row flex-wrap items-stretch gap-4" style={{ paddingLeft: '0' }}>

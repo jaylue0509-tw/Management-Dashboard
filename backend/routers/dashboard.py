@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 from psycopg2.extras import Json
 
-from backend.database import get_db_connection
+from backend.database import get_db_connection, BEAUTY_DEPT_1_REGIONS, sync_beauty_directors
 from backend.security import get_current_user, get_optional_user
 from backend.schemas import Manager
 from backend.utils import _normalize_activity_time
@@ -37,15 +37,19 @@ def get_managers(user: Optional[dict] = Depends(get_optional_user)):
                         or m.get("storeName") in assigned
                     ]
                 if user and user.get("role") == "beauty_director":
-                    dept = (user.get("department") or "").strip()
-                    supervisor = (user.get("supervisor") or "").strip()
+                    bd_dept = (user.get("department") or "").strip()
                     assigned = set(user.get("assigned_stores") or [])
-                    return [
-                        m for m in data
-                        if (dept and m.get("department") == dept)
-                        or (supervisor and m.get("directorName") == supervisor)
-                        or m.get("storeName") in assigned
-                    ]
+                    if bd_dept == "美容一處":
+                        return [
+                            m for m in data
+                            if m.get("region") in BEAUTY_DEPT_1_REGIONS or m.get("storeName") in assigned
+                        ]
+                    if bd_dept == "美容二處":
+                        return [
+                            m for m in data
+                            if (m.get("region") not in BEAUTY_DEPT_1_REGIONS) or m.get("storeName") in assigned
+                        ]
+                    return [m for m in data if m.get("storeName") in assigned]
                 return data
             return []
 
@@ -63,6 +67,7 @@ def import_managers(managers: List[Manager] = Body(...), user: dict = Depends(ge
                 ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
             """, (Json([m.dict() for m in managers]),))
         conn.commit()
+        sync_beauty_directors(conn)
     return {"success": True, "count": len(managers)}
 
 @router.get("/dashboard-data")
@@ -200,17 +205,22 @@ def get_dashboard_data(
                     or i.get("createdBy") in co_mgrs
                 ]
             elif user and user.get("role") == "beauty_director":
-                # 美容總監嚴格隔離：僅能檢視自己所屬處別門市、本人提交之巡店紀錄與該處美容相關待辦
+                # 美容總監嚴格隔離：依美容一處（新北/北桃/竹苗/宜花/嘉南）與美容二處（其餘區域）切分，並僅回傳本人巡店紀錄
                 bd_name = (user.get("name") or "").strip()
                 bd_dept = (user.get("department") or "").strip()
-                bd_sup = (user.get("supervisor") or "").strip()
                 assigned = set(user.get("assigned_stores") or [])
-                managers = [
-                    m for m in managers
-                    if (bd_dept and m.get("department") == bd_dept)
-                    or (bd_sup and m.get("directorName") == bd_sup)
-                    or m.get("storeName") in assigned
-                ]
+                if bd_dept == "美容一處":
+                    managers = [
+                        m for m in managers
+                        if m.get("region") in BEAUTY_DEPT_1_REGIONS or m.get("storeName") in assigned
+                    ]
+                elif bd_dept == "美容二處":
+                    managers = [
+                        m for m in managers
+                        if (m.get("region") not in BEAUTY_DEPT_1_REGIONS) or m.get("storeName") in assigned
+                    ]
+                else:
+                    managers = [m for m in managers if m.get("storeName") in assigned]
                 dept_store_names = {m.get("storeName") for m in managers if m.get("storeName")} | assigned
                 activities = [
                     a for a in activities

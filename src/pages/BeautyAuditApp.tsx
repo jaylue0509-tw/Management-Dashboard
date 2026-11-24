@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import SignatureCanvas from 'react-signature-canvas';
 import {
   ArrowLeft,
   Calendar,
@@ -31,6 +30,7 @@ import {
   BEAUTY_COACHING_TARGET_OPTIONS,
   BEAUTY_CORE_SAFETY_ITEMS,
   BEAUTY_TOPIC_GROUPS,
+  isRegionInBeautyDirectorScope,
   type BeautyAuditMode,
   type BeautyCheckStatus,
   type BeautyOverallRating,
@@ -160,7 +160,6 @@ const compressImageFile = (file: File): Promise<string> =>
 export const BeautyAuditApp: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const sigCanvasRef = useRef<SignatureCanvas | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   const todayStr = getTaipeiTodayStr();
@@ -208,6 +207,7 @@ export const BeautyAuditApp: React.FC = () => {
   ]);
   const [overallRating, setOverallRating] = useState<BeautyOverallRating | ''>('');
   const [signerRole, setSignerRole] = useState<'美容組長' | '店長'>('美容組長');
+  const [signerName, setSignerName] = useState<string>('');
 
   // 語音輸入狀態與送出狀態
   const [listeningField, setListeningField] = useState<string | null>(null);
@@ -264,6 +264,7 @@ export const BeautyAuditApp: React.FC = () => {
         }
         if (d.overallRating) setOverallRating(d.overallRating);
         if (d.signerRole) setSignerRole(d.signerRole);
+        if (typeof d.signerName === 'string') setSignerName(d.signerName);
       }
     } catch {
       // 忽略損壞的草稿
@@ -274,7 +275,7 @@ export const BeautyAuditApp: React.FC = () => {
     setIsDraftHydrated(true);
   }, [user?.name, directorName]);
 
-  // 自動暫存文字草稿至本機（照片與簽名留在記憶體，避免超出 localStorage 容量）
+  // 自動暫存文字草稿至本機（照片留在記憶體，避免超出 localStorage 容量）
   useEffect(() => {
     if (!isDraftHydrated) return;
     try {
@@ -299,6 +300,7 @@ export const BeautyAuditApp: React.FC = () => {
         newActionItems,
         overallRating,
         signerRole,
+        signerName,
       };
       localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(payload));
       setDraftSavedHint('草稿已自動暫存');
@@ -327,6 +329,7 @@ export const BeautyAuditApp: React.FC = () => {
     newActionItems,
     overallRating,
     signerRole,
+    signerName,
   ]);
 
   // 門市下拉選項清單（美容總監嚴格僅顯示自己所屬處別門市；管理員顯示全區門市）
@@ -343,11 +346,14 @@ export const BeautyAuditApp: React.FC = () => {
           map.set(normalizeStoreName(sName), { storeName: sName, region: reg, beautyLeader: '' });
         }
       }
-    } else if (managersCatalog.length === 0 && assignedSet.size > 0) {
-      // 離線備援：僅放入自己所屬處別之 assigned_stores
+    } else if (managersCatalog.length === 0) {
+      // 離線備援：依美容一處（新北/北桃/竹苗/宜花/嘉南）與美容二處（其餘）或 assigned_stores 精準過濾
       for (const [reg, stores] of Object.entries(storeRegions)) {
         for (const sName of stores) {
-          if (assignedSet.has(normalizeStoreName(sName))) {
+          if (
+            isRegionInBeautyDirectorScope(reg, user?.department) ||
+            assignedSet.has(normalizeStoreName(sName))
+          ) {
             map.set(normalizeStoreName(sName), { storeName: sName, region: reg, beautyLeader: '' });
           }
         }
@@ -357,10 +363,9 @@ export const BeautyAuditApp: React.FC = () => {
     for (const m of managersCatalog) {
       if (!m.storeName || m.storeName.includes('測試')) continue;
       if (isBeautyDirector) {
-        const matchDept = user?.department && m.department === user.department;
-        const matchSup = user?.supervisor && m.directorName === user.supervisor;
+        const matchRegion = isRegionInBeautyDirectorScope(m.region, user?.department);
         const matchAssigned = assignedSet.has(normalizeStoreName(m.storeName));
-        if (!matchDept && !matchSup && !matchAssigned) continue;
+        if (!matchRegion && !matchAssigned) continue;
       }
       const key = normalizeStoreName(m.storeName);
       map.set(key, {
@@ -380,7 +385,7 @@ export const BeautyAuditApp: React.FC = () => {
         item.region.toLowerCase().includes(q) ||
         item.beautyLeader.toLowerCase().includes(q)
     );
-  }, [managersCatalog, storeKeyword, isBeautyDirector, user?.assigned_stores, user?.department, user?.supervisor]);
+  }, [managersCatalog, storeKeyword, isBeautyDirector, user?.assigned_stores, user?.department]);
 
   // 選擇門市後，自動帶出該店上一次美容巡店摘要、未結案事項與上次輔導筆記（第 0 區塊連動）
   const fetchStoreHistory = useCallback(async (targetStore: string) => {
@@ -620,10 +625,10 @@ export const BeautyAuditApp: React.FC = () => {
       { id: 'act-2', desc: '', assignee: '店長', dueDate: defaultDueDateStr, crossDepartment: false },
     ]);
     setOverallRating('');
+    setSignerName('');
     setPdcaResults({});
     setLastAuditData(null);
     setPendingItems([]);
-    sigCanvasRef.current?.clear();
   };
 
   // 送出美容總監巡店表
@@ -682,10 +687,7 @@ export const BeautyAuditApp: React.FC = () => {
         : { beforeUrl: '', afterUrl: p.url }
     );
 
-    const signatureDataUrl =
-      sigCanvasRef.current && !sigCanvasRef.current.isEmpty()
-        ? sigCanvasRef.current.getTrimmedCanvas().toDataURL('image/png')
-        : null;
+    const trimmedSigner = signerName.trim();
 
     const highlightParts: string[] = [];
     if (modeMeta) {
@@ -696,6 +698,9 @@ export const BeautyAuditApp: React.FC = () => {
     }
     if (storeManagerName.trim()) {
       highlightParts.push(`店長：${storeManagerName.trim()}`);
+    }
+    if (trimmedSigner) {
+      highlightParts.push(`簽認人員（${signerRole}）：${trimmedSigner}`);
     }
     if (coachingConducted) {
       highlightParts.push(
@@ -742,7 +747,7 @@ export const BeautyAuditApp: React.FC = () => {
       highlightDescription: highlightParts.join(' ｜ '),
       photoPairs,
       signerRole,
-      signature: signatureDataUrl,
+      signature: trimmedSigner ? `${signerRole}：${trimmedSigner}` : null,
       tags: [
         '美容總監巡店',
         modeMeta ? `${modeMeta.badge}·${modeMeta.title.split('（')[0]}` : '美容巡店',
@@ -1986,7 +1991,7 @@ export const BeautyAuditApp: React.FC = () => {
               </div>
             </div>
 
-            {/* 4-4 門市主責人員線上簽認 */}
+            {/* 4-4 門市主責人員線上簽認（文字輸入姓名） */}
             <div className="pt-2 border-t border-slate-100">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -2008,25 +2013,29 @@ export const BeautyAuditApp: React.FC = () => {
                     ))}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => sigCanvasRef.current?.clear()}
-                  className="text-xs font-bold text-slate-500 hover:text-rose-600 cursor-pointer"
-                >
-                  清除重簽
-                </button>
+                {(signerRole === '美容組長' ? beautyLeaderName : storeManagerName).trim() && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSignerName(
+                        (signerRole === '美容組長' ? beautyLeaderName : storeManagerName).trim()
+                      )
+                    }
+                    className="text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-lg cursor-pointer transition-colors"
+                  >
+                    帶入{signerRole}姓名
+                  </button>
+                )}
               </div>
-              <div className="border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50 overflow-hidden">
-                <SignatureCanvas
-                  ref={sigCanvasRef}
-                  penColor="#0f172a"
-                  canvasProps={{
-                    className: 'w-full h-36 cursor-crosshair touch-none',
-                  }}
-                />
-              </div>
+              <input
+                type="text"
+                value={signerName}
+                onChange={e => setSignerName(e.target.value)}
+                placeholder={`請輸入簽認之${signerRole}姓名...`}
+                className="w-full px-3.5 py-2.5 text-sm font-bold bg-white border border-slate-300 rounded-xl outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
+              />
               <p className="text-[11px] text-slate-400 mt-1">
-                請由「{signerRole}」以手指或觸控筆於上方簽名框內完成巡店確認簽認
+                直接輸入「{signerRole}」姓名即可完成線上簽認（免手寫簽名）
               </p>
             </div>
           </div>

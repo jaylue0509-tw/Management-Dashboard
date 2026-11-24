@@ -1,7 +1,10 @@
 import type { Manager, VisitRecord } from '../types';
 import { getTaipeiDateStr, formatTaipeiReportTime } from './time-utils';
 import { normalizeRegionName, normalizeStoreName, compareRegion } from './store-region';
-import { BEAUTY_DIRECTORS_CONFIG } from '../data/beautyAuditConfig';
+import {
+  BEAUTY_DIRECTORS_CONFIG,
+  isRegionInBeautyDirectorScope,
+} from '../data/beautyAuditConfig';
 import {
   HEADQUARTERS_POINT,
   RAW_STORE_COORDINATES,
@@ -581,20 +584,12 @@ export const buildExpenseDashboardReport = (params: {
     }
   }
 
-  // 納入各處美容總監（廖羿蓁／戴欐蘐），讓美容總監登入時也能檢視個人車資與零用金黏存單
+  // 納入美容一處（廖羿蓁：新北/北桃/竹苗/宜花/嘉南）與美容二處（戴欐蘐：其餘區域），讓美容總監登入時也能檢視個人車資與黏存單
   for (const bd of BEAUTY_DIRECTORS_CONFIG) {
     if (restrictToManagerName && bd.name !== restrictToManagerName.trim()) continue;
-    if (
-      !restrictToManagerName &&
-      selectedDepartment !== 'all' &&
-      !bd.department.includes(deptKeyword) &&
-      bd.department !== selectedDepartment
-    ) {
-      continue;
-    }
     const deptStores = new Set(
       filteredRawManagers
-        .filter(m => m.department === bd.department || m.directorName === bd.supervisor)
+        .filter(m => isRegionInBeautyDirectorScope(m.region, bd.department))
         .map(m => m.storeName)
         .filter(Boolean)
     );
@@ -602,7 +597,7 @@ export const buildExpenseDashboardReport = (params: {
       rosterMap.set(bd.name, {
         managerName: bd.name,
         roleLabel: '美容總監',
-        region: bd.department === '營業二處' ? '中投區' : '新北區',
+        region: bd.department === '美容二處' ? '中投區' : '新北區',
         department: bd.department,
         stores: deptStores,
       });

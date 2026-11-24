@@ -265,28 +265,59 @@ export const BEAUTY_TOPIC_GROUPS: BeautyTopicGroup[] = [
 
 export const BEAUTY_COACHING_TARGET_OPTIONS = ['美容組長', '資深美容師', '助理/實習生'] as const;
 
-/** 各營運處美容總監固定組織配置（與後端 backend/database.py 保持一致） */
+/** 美容一處固定轄區（其餘區域全歸屬美容二處） */
+export const BEAUTY_DEPT_1_REGIONS = new Set(['新北區', '北桃區', '竹苗區', '宜花區', '嘉南區', '台南區']);
+
+/** 各美容處總監固定組織配置（與後端 backend/database.py 保持 1:1 一致） */
 export interface BeautyDirectorProfile {
   name: string;
   nickname: string;
-  department: '營業一處' | '營業二處';
+  department: '美容一處' | '美容二處';
   supervisor: string;
+  regions: string[];
 }
 
 export const BEAUTY_DIRECTORS_CONFIG: BeautyDirectorProfile[] = [
   {
     name: '廖羿蓁',
     nickname: 'kelly',
-    department: '營業一處',
+    department: '美容一處',
     supervisor: '簡楷潔',
+    regions: ['新北區', '北桃區', '竹苗區', '宜花區', '嘉南區'],
   },
   {
     name: '戴欐蘐',
     nickname: '小貝',
-    department: '營業二處',
+    department: '美容二處',
     supervisor: '蔡嘉峯',
+    regions: ['中投區', '彰雲區', '高雄區', '高屏區'],
   },
 ];
+
+/**
+ * 依據區域名稱取得負責的美容總監配置（美容一處：新北/北桃/竹苗/宜花/嘉南；其餘為美容二處）
+ */
+export const getBeautyDirectorByRegion = (region?: string): BeautyDirectorProfile => {
+  const clean = (region || '').trim();
+  if (BEAUTY_DEPT_1_REGIONS.has(clean)) {
+    return BEAUTY_DIRECTORS_CONFIG[0];
+  }
+  return BEAUTY_DIRECTORS_CONFIG[1];
+};
+
+/**
+ * 判斷指定門市／區域是否屬於該位美容總監的管轄範圍
+ */
+export const isRegionInBeautyDirectorScope = (
+  region: string | undefined,
+  department: string | undefined
+): boolean => {
+  const cleanRegion = (region || '').trim();
+  const inDept1 = BEAUTY_DEPT_1_REGIONS.has(cleanRegion);
+  if (department === '美容一處') return inDept1;
+  if (department === '美容二處') return !inDept1;
+  return false;
+};
 
 /** 供動態牆與報表快速查找之美容巡店細項名稱對照表 */
 export const BEAUTY_ITEM_LABEL_MAP: Record<string, string> = {

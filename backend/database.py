@@ -331,29 +331,35 @@ def sync_region_reorg_2026(conn):
     conn.commit()
 
 
+# 美容一處固定負責區域（新北、北桃、竹苗、宜花、嘉南）；其餘區域一律歸屬美容二處
+BEAUTY_DEPT_1_REGIONS = {"新北區", "北桃區", "竹苗區", "宜花區", "嘉南區", "台南區"}
+
 # 兩位美容總監固定組織配置（初始密碼 admin1234，首次登入須修改密碼）
 BEAUTY_DIRECTORS_SEED = [
     {
         "username": "廖羿蓁",
         "name": "廖羿蓁",
         "nickname": "kelly",
-        "department": "營業一處",
+        "department": "美容一處",
         "supervisor": "簡楷潔",
+        "is_dept_1": True,
     },
     {
         "username": "戴欐蘐",
         "name": "戴欐蘐",
         "nickname": "小貝",
-        "department": "營業二處",
+        "department": "美容二處",
         "supervisor": "蔡嘉峯",
+        "is_dept_1": False,
     },
 ]
 
 
 def sync_beauty_directors(conn):
     """
-    同步建立／更新美容總監專屬帳號（營業一處：廖羿蓁/kelly；營業二處：戴欐蘐/小貝），
-    並自動將各自所屬處別之門市名單寫入 assigned_stores，確保兩位美容總監嚴格隔離僅能看自己處別資料
+    同步建立／更新美容總監專屬帳號：
+    - 美容一處（廖羿蓁 / kelly，直屬：簡楷潔）：新北區、北桃區、竹苗區、宜花區、嘉南區
+    - 美容二處（戴欐蘐 / 小貝，直屬：蔡嘉峯）：其餘全部區域（中投區、彰雲區、高雄區、高屏區等）
     """
     with conn.cursor() as cur:
         cur.execute("SELECT data FROM store WHERE id = 'managers'")
@@ -363,15 +369,16 @@ def sync_beauty_directors(conn):
         for bd in BEAUTY_DIRECTORS_SEED:
             dept = bd["department"]
             supervisor = bd["supervisor"]
+            is_dept_1 = bd["is_dept_1"]
             dept_stores: list[str] = []
             seen = set()
             for m in managers:
                 s_name = str(m.get("storeName") or "").strip()
                 if not s_name or "測試" in s_name or "文心秀泰" in s_name:
                     continue
-                m_dept = str(m.get("department") or "").strip()
-                m_dir = str(m.get("directorName") or "").strip()
-                if m_dept == dept or m_dir == supervisor:
+                m_region = str(m.get("region") or "").strip()
+                in_dept_1 = m_region in BEAUTY_DEPT_1_REGIONS
+                if (is_dept_1 and in_dept_1) or (not is_dept_1 and not in_dept_1):
                     if s_name not in seen:
                         seen.add(s_name)
                         dept_stores.append(s_name)
