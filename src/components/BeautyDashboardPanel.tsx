@@ -126,59 +126,59 @@ export const BeautyDashboardPanel: React.FC<Props> = ({
         </button>
       </div>
 
-      {/* 四大專項 KPI 卡 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-fuchsia-600 p-4 shadow-2xs">
-          <div className="text-xs font-extrabold text-fuchsia-700 flex items-center gap-1.5">
-            <ClipboardCheck size={14} />
-            美容專項巡檢總次
+      {/* 四大專項 KPI 卡（手機 2×2 緊湊排布，首屏即可一覽全部核心指標） */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
+        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-fuchsia-600 p-3 sm:p-4 shadow-2xs">
+          <div className="text-[11px] sm:text-xs font-extrabold text-fuchsia-700 flex items-center gap-1 sm:gap-1.5">
+            <ClipboardCheck size={14} className="shrink-0" />
+            <span className="truncate">美容專項巡檢總次</span>
           </div>
-          <div className="text-3xl font-black text-slate-900 mt-1 tabular-nums">
-            {stats.totalCount} <span className="text-sm font-bold text-slate-500">次</span>
+          <div className="text-2xl sm:text-3xl font-black text-slate-900 mt-1 tabular-nums">
+            {stats.totalCount} <span className="text-xs sm:text-sm font-bold text-slate-500">次</span>
           </div>
-          <div className="text-xs text-slate-500 font-semibold mt-1.5">
+          <div className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-1 sm:mt-1.5 truncate">
             涵蓋 <strong className="text-slate-800">{stats.uniqueStores}</strong> 間門市
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-rose-600 p-4 shadow-2xs">
-          <div className="text-xs font-extrabold text-rose-700 flex items-center gap-1.5">
-            <ShieldAlert size={14} />
-            安全紅線違規率
+        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-rose-600 p-3 sm:p-4 shadow-2xs">
+          <div className="text-[11px] sm:text-xs font-extrabold text-rose-700 flex items-center gap-1 sm:gap-1.5">
+            <ShieldAlert size={14} className="shrink-0" />
+            <span className="truncate">安全紅線違規率</span>
           </div>
-          <div className="text-3xl font-black text-rose-600 mt-1 tabular-nums">
+          <div className="text-2xl sm:text-3xl font-black text-rose-600 mt-1 tabular-nums">
             {stats.redlineRate}%
           </div>
-          <div className="text-xs text-slate-500 font-semibold mt-1.5">
-            觸發零容忍紅線 <strong className="text-rose-700">{stats.redlineViolatedCount}</strong> 筆
+          <div className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-1 sm:mt-1.5 truncate">
+            觸發紅線 <strong className="text-rose-700">{stats.redlineViolatedCount}</strong> 筆
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-amber-500 p-4 shadow-2xs">
-          <div className="text-xs font-extrabold text-amber-700 flex items-center gap-1.5">
-            <AlertTriangle size={14} />
-            高風險重點輔導
+        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-amber-500 p-3 sm:p-4 shadow-2xs">
+          <div className="text-[11px] sm:text-xs font-extrabold text-amber-700 flex items-center gap-1 sm:gap-1.5">
+            <AlertTriangle size={14} className="shrink-0" />
+            <span className="truncate">高風險重點輔導</span>
           </div>
-          <div className="text-3xl font-black text-amber-600 mt-1 tabular-nums">
-            {stats.highRiskRecords.length} <span className="text-sm font-bold text-slate-500">筆</span>
+          <div className="text-2xl sm:text-3xl font-black text-amber-600 mt-1 tabular-nums">
+            {stats.highRiskRecords.length} <span className="text-xs sm:text-sm font-bold text-slate-500">筆</span>
           </div>
-          <div className="text-xs text-slate-500 font-semibold mt-1.5 truncate">
+          <div className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-1 sm:mt-1.5 truncate">
             {stats.highRiskRecords.length > 0
               ? `最新：${stats.highRiskRecords[0].storeName}`
-              : '目前無高風險預警門市'}
+              : '無高風險預警門市'}
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-emerald-600 p-4 shadow-2xs">
-          <div className="text-xs font-extrabold text-emerald-700 flex items-center gap-1.5">
-            <CheckCircle2 size={14} />
-            美容待辦結案率
+        <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-emerald-600 p-3 sm:p-4 shadow-2xs">
+          <div className="text-[11px] sm:text-xs font-extrabold text-emerald-700 flex items-center gap-1 sm:gap-1.5">
+            <CheckCircle2 size={14} className="shrink-0" />
+            <span className="truncate">美容待辦結案率</span>
           </div>
-          <div className="text-3xl font-black text-emerald-600 mt-1 tabular-nums">
+          <div className="text-2xl sm:text-3xl font-black text-emerald-600 mt-1 tabular-nums">
             {stats.closeRate}%
           </div>
-          <div className="text-xs text-slate-500 font-semibold mt-1.5">
-            未結案 <strong className="text-rose-600">{stats.openActions}</strong> / 總計 {stats.beautyActionsTotal} 筆
+          <div className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-1 sm:mt-1.5 truncate">
+            未結案 <strong className="text-rose-600">{stats.openActions}</strong> / {stats.beautyActionsTotal} 筆
           </div>
         </div>
       </div>

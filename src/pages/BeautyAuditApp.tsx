@@ -5,8 +5,11 @@ import {
   Calendar,
   Camera,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
   History,
+  Image as ImageIcon,
   Mic,
   MicOff,
   Plus,
@@ -161,6 +164,8 @@ export const BeautyAuditApp: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const [collapsedTopics, setCollapsedTopics] = useState<Record<number, boolean>>({});
 
   const todayStr = getTaipeiTodayStr();
   const minDateStr = useMemo(() => shiftTaipeiDate(-MAX_BACKFILL_DAYS), []);
@@ -541,6 +546,49 @@ export const BeautyAuditApp: React.FC = () => {
     });
   };
 
+  // 一鍵將指定大項全部設為「合格」，方便現場有異常再單獨改 🟡/🔴
+  const handleSetTopicAllPass = (topicId: number) => {
+    const group = BEAUTY_TOPIC_GROUPS.find(g => g.id === topicId);
+    if (!group) return;
+    setCategoryChecks(prev => {
+      const next = { ...prev };
+      for (const item of group.items) {
+        next[item.id] = '合格';
+      }
+      return next;
+    });
+  };
+
+  // 切換大項摺疊狀態以縮短手機端捲動距離
+  const toggleTopicCollapse = (topicId: number) => {
+    setCollapsedTopics(prev => ({ ...prev, [topicId]: !prev[topicId] }));
+  };
+
+  // 快速跳轉至指定表單章節
+  const scrollToSection = (sectionId: string) => {
+    const el = document.getElementById(sectionId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const coreCheckedCount = useMemo(
+    () => BEAUTY_CORE_SAFETY_ITEMS.filter(item => Boolean(coreChecks[item.id])).length,
+    [coreChecks]
+  );
+
+  const visibleTopicCheckedCount = useMemo(() => {
+    let checked = 0;
+    let total = 0;
+    for (const g of visibleTopics) {
+      total += g.items.length;
+      for (const item of g.items) {
+        if (categoryChecks[item.id]) checked++;
+      }
+    }
+    return { checked, total };
+  }, [visibleTopics, categoryChecks]);
+
   // 自訂新增大項細目
   const handleAddCustomCheck = (topicId: number) => {
     setCustomItemsByTopic(prev => ({
@@ -783,22 +831,22 @@ export const BeautyAuditApp: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-rose-50/60 via-slate-50 to-slate-100 pb-24">
-      {/* 頂部導覽列 */}
+    <div className="min-h-screen bg-gradient-to-b from-rose-50/60 via-slate-50 to-slate-100 pb-28 sm:pb-24">
+      {/* 頂部導覽列 ＋ 手機快速跳轉章節膠囊條 */}
       <header className="sticky top-0 z-40 bg-gradient-to-r from-rose-700 via-fuchsia-700 to-purple-800 text-white shadow-md">
-        <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 min-w-0">
+        <div className="max-w-4xl mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={() => navigate('/dashboard')}
-              className="p-2 rounded-xl bg-white/15 hover:bg-white/25 transition-colors cursor-pointer shrink-0"
+              className="p-2 min-w-[38px] min-h-[38px] flex items-center justify-center rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 transition-all cursor-pointer shrink-0"
               title="返回戰情牆"
             >
               <ArrowLeft size={18} />
             </button>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-300 text-slate-950">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-300 text-slate-950 shrink-0">
                   美容住宿專項
                 </span>
                 <h1 className="text-sm sm:text-lg font-extrabold truncate">
@@ -811,7 +859,7 @@ export const BeautyAuditApp: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {draftSavedHint && (
               <span className="hidden sm:inline-flex items-center gap-1 text-[11px] bg-white/15 px-2.5 py-1 rounded-full text-rose-100 font-semibold">
                 <Save size={11} />
@@ -821,19 +869,92 @@ export const BeautyAuditApp: React.FC = () => {
             <button
               type="button"
               onClick={handleClearDraft}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold cursor-pointer transition-colors"
+              className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 text-xs font-bold cursor-pointer transition-all"
               title="清空目前草稿"
             >
-              <RotateCcw size={13} />
+              <RotateCcw size={14} />
               <span className="hidden sm:inline">重設</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 快速跳轉章節膠囊條（手機單手快速切換各層，同步顯示必填完成進度） */}
+        <div className="border-t border-white/15 bg-black/15">
+          <div className="max-w-4xl mx-auto px-3 sm:px-6 py-1.5 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => scrollToSection('beauty-sec-1')}
+              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-white/15 hover:bg-white/25 active:scale-95 transition-all cursor-pointer"
+            >
+              <span className={`w-2 h-2 rounded-full ${storeName ? 'bg-emerald-300' : 'bg-amber-300'}`} />
+              <span>1 基本</span>
+            </button>
+            {storeName && (
+              <button
+                type="button"
+                onClick={() => scrollToSection('beauty-sec-0')}
+                className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-white/15 hover:bg-white/25 active:scale-95 transition-all cursor-pointer"
+              >
+                <span>0 歷程</span>
+                {pendingItems.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-amber-300 text-slate-950 text-[10px] font-black">
+                    {pendingItems.length}
+                  </span>
+                )}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => scrollToSection('beauty-sec-2')}
+              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-white/15 hover:bg-white/25 active:scale-95 transition-all cursor-pointer"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  hasCoreRedlineViolation
+                    ? 'bg-rose-300 animate-pulse'
+                    : coreCheckedCount === BEAUTY_CORE_SAFETY_ITEMS.length
+                    ? 'bg-emerald-300'
+                    : 'bg-amber-300'
+                }`}
+              />
+              <span>
+                2 紅線 {coreCheckedCount}/{BEAUTY_CORE_SAFETY_ITEMS.length}
+              </span>
+            </button>
+            {auditMode !== 'A' && (
+              <button
+                type="button"
+                onClick={() => scrollToSection('beauty-sec-3')}
+                className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-white/15 hover:bg-white/25 active:scale-95 transition-all cursor-pointer"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    visibleTopicCheckedCount.total > 0 &&
+                    visibleTopicCheckedCount.checked === visibleTopicCheckedCount.total
+                      ? 'bg-emerald-300'
+                      : 'bg-white/60'
+                  }`}
+                />
+                <span>
+                  3 檢核 {visibleTopicCheckedCount.checked}/{visibleTopicCheckedCount.total}
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => scrollToSection('beauty-sec-4')}
+              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-white/15 hover:bg-white/25 active:scale-95 transition-all cursor-pointer"
+            >
+              <span className={`w-2 h-2 rounded-full ${overallRating ? 'bg-emerald-300' : 'bg-amber-300'}`} />
+              <span>4 結尾送出</span>
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-3 sm:px-6 pt-4 sm:pt-6 space-y-5">
+      <main className="max-w-4xl mx-auto px-3 sm:px-6 pt-3.5 sm:pt-6 space-y-4 sm:space-y-5">
         {/* ==================== 1. 第一層：基本資訊與【美容巡店模式選擇】 ==================== */}
-        <section className="bg-white rounded-2xl border border-rose-200/80 shadow-xs overflow-hidden">
+        <section id="beauty-sec-1" className="scroll-mt-28 bg-white rounded-2xl border border-rose-200/80 shadow-xs overflow-hidden">
           <div className="bg-gradient-to-r from-rose-50 to-fuchsia-50 px-4 sm:px-5 py-3 border-b border-rose-100 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-lg bg-rose-600 text-white text-xs font-black flex items-center justify-center">
@@ -858,18 +979,18 @@ export const BeautyAuditApp: React.FC = () => {
                   <Store size={13} className="inline mr-1 text-rose-600" />
                   巡店門市（必選，選完自動帶出歷程與交辦）
                 </label>
-                <div className="flex gap-1.5">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"
                     value={storeKeyword}
                     onChange={e => setStoreKeyword(e.target.value)}
-                    placeholder="輸入店名快篩..."
-                    className="w-28 sm:w-32 px-2.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-rose-500"
+                    placeholder="輸入店名或區域快篩..."
+                    className="w-full sm:w-36 min-h-[44px] px-3 py-2 text-sm sm:text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-rose-500"
                   />
                   <select
                     value={storeName}
                     onChange={e => setStoreName(e.target.value)}
-                    className="flex-1 px-3 py-2 text-sm font-bold bg-white border border-slate-300 rounded-xl outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-200 cursor-pointer"
+                    className="w-full sm:flex-1 min-h-[44px] px-3 py-2 text-sm font-bold bg-white border border-slate-300 rounded-xl outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-200 cursor-pointer"
                   >
                     <option value="">-- 請選擇巡店門市 --</option>
                     {storeOptions.map(opt => (
@@ -1059,7 +1180,7 @@ export const BeautyAuditApp: React.FC = () => {
 
         {/* ==================== 0. 進店前：歷程回溯與交辦追蹤（前次紀錄連動） ==================== */}
         {storeName && (
-          <section className="bg-white rounded-2xl border-2 border-indigo-200 shadow-xs overflow-hidden">
+          <section id="beauty-sec-0" className="scroll-mt-28 bg-white rounded-2xl border-2 border-indigo-200 shadow-xs overflow-hidden">
             <div className="bg-gradient-to-r from-indigo-50 to-purple-50 px-4 sm:px-5 py-3 border-b border-indigo-100 flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white text-xs font-black flex items-center justify-center">
@@ -1168,13 +1289,13 @@ export const BeautyAuditApp: React.FC = () => {
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0 w-full sm:w-auto">
                                 <button
                                   type="button"
                                   onClick={() =>
                                     setPdcaResults(prev => ({ ...prev, [item.id]: '已改善' }))
                                   }
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold border cursor-pointer transition-all ${
+                                  className={`min-h-[40px] px-3 py-2 rounded-xl text-xs font-extrabold border cursor-pointer active:scale-[0.98] transition-all ${
                                     currentVal === '已改善'
                                       ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                                       : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50'
@@ -1187,7 +1308,7 @@ export const BeautyAuditApp: React.FC = () => {
                                   onClick={() =>
                                     setPdcaResults(prev => ({ ...prev, [item.id]: '未改善' }))
                                   }
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold border cursor-pointer transition-all ${
+                                  className={`min-h-[40px] px-3 py-2 rounded-xl text-xs font-extrabold border cursor-pointer active:scale-[0.98] transition-all ${
                                     currentVal === '未改善'
                                       ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
                                       : 'bg-white text-rose-700 border-rose-300 hover:bg-rose-50'
@@ -1222,7 +1343,8 @@ export const BeautyAuditApp: React.FC = () => {
 
         {/* ==================== 2. 第二層：每次進店【必看安全與衛生底線】 ==================== */}
         <section
-          className={`bg-white rounded-2xl border-2 shadow-xs overflow-hidden ${
+          id="beauty-sec-2"
+          className={`scroll-mt-28 bg-white rounded-2xl border-2 shadow-xs overflow-hidden ${
             hasCoreRedlineViolation ? 'border-rose-500 ring-2 ring-rose-200' : 'border-rose-200'
           }`}
         >
@@ -1271,11 +1393,11 @@ export const BeautyAuditApp: React.FC = () => {
                       <div className="text-sm font-extrabold text-slate-900">{item.title}</div>
                       <p className="text-xs text-slate-600 mt-1 leading-relaxed">{item.standard}</p>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0 w-full sm:w-auto">
                       <button
                         type="button"
                         onClick={() => setCoreChecks(prev => ({ ...prev, [item.id]: item.passLabel }))}
-                        className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold border cursor-pointer transition-all ${
+                        className={`min-h-[44px] sm:min-h-[40px] px-4 py-2 rounded-xl text-sm sm:text-xs font-extrabold border cursor-pointer active:scale-[0.98] transition-all ${
                           isPass
                             ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                             : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50'
@@ -1286,7 +1408,7 @@ export const BeautyAuditApp: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setCoreChecks(prev => ({ ...prev, [item.id]: item.failLabel }))}
-                        className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold border cursor-pointer transition-all ${
+                        className={`min-h-[44px] sm:min-h-[40px] px-4 py-2 rounded-xl text-sm sm:text-xs font-extrabold border cursor-pointer active:scale-[0.98] transition-all ${
                           isFail
                             ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
                             : 'bg-white text-rose-700 border-rose-300 hover:bg-rose-50'
@@ -1308,7 +1430,7 @@ export const BeautyAuditApp: React.FC = () => {
                       placeholder={
                         isFail ? '請填寫違規／異常現場細節（必填建議）...' : '備註／現場狀況（選填）...'
                       }
-                      className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:border-rose-500"
+                      className="flex-1 min-h-[42px] px-3 py-2 text-sm sm:text-xs bg-white border border-slate-200 rounded-xl outline-none focus:border-rose-500"
                     />
                     <button
                       type="button"
@@ -1320,14 +1442,14 @@ export const BeautyAuditApp: React.FC = () => {
                           }))
                         )
                       }
-                      className={`p-2 rounded-xl border cursor-pointer transition-colors ${
+                      className={`min-w-[42px] min-h-[42px] flex items-center justify-center rounded-xl border cursor-pointer active:scale-95 transition-all ${
                         listeningField === `core-${item.id}`
                           ? 'bg-rose-600 text-white border-rose-600 animate-pulse'
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-rose-50 hover:text-rose-600'
                       }`}
                       title="語音輸入備註"
                     >
-                      {listeningField === `core-${item.id}` ? <MicOff size={14} /> : <Mic size={14} />}
+                      {listeningField === `core-${item.id}` ? <MicOff size={16} /> : <Mic size={16} />}
                     </button>
                   </div>
                 </div>
@@ -1337,7 +1459,7 @@ export const BeautyAuditApp: React.FC = () => {
         </section>
 
         {/* ==================== 3. 第三層：【美容與住宿六大核心大項庫 + 自訂擴充】 ==================== */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <section id="beauty-sec-3" className="scroll-mt-28 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="bg-gradient-to-r from-fuchsia-50 to-purple-50 px-4 sm:px-5 py-3 border-b border-fuchsia-100 flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-lg bg-fuchsia-600 text-white text-xs font-black flex items-center justify-center">
@@ -1350,7 +1472,7 @@ export const BeautyAuditApp: React.FC = () => {
             <span className="text-[11px] font-bold text-fuchsia-700">
               {auditMode === 'A'
                 ? '目前為模式 A 快閃抽查（自動跳過第三層）'
-                : `已展開 ${visibleTopics.length} / 6 大項 · 支援語音自訂`}
+                : `已展開 ${visibleTopics.length} / 6 大項 · 可點標題摺疊或一鍵全合格`}
             </span>
           </div>
 
@@ -1364,33 +1486,75 @@ export const BeautyAuditApp: React.FC = () => {
               </p>
             </div>
           ) : (
-            <div className="p-4 sm:p-5 space-y-5">
+            <div className="p-3 sm:p-5 space-y-4 sm:space-y-5">
               {visibleTopics.map(group => {
                 const customRows = customItemsByTopic[group.id] || [];
+                const isCollapsed = Boolean(collapsedTopics[group.id]);
+                const checkedInGroup = group.items.filter(i => Boolean(categoryChecks[i.id])).length;
+                const issueInGroup = group.items.filter(
+                  i => categoryChecks[i.id] === '缺失' || categoryChecks[i.id] === '待改善'
+                ).length;
+
                 return (
                   <div
                     key={group.id}
                     className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-50/40"
                   >
-                    <div className="bg-slate-900 text-white px-4 py-2.5 flex items-center justify-between gap-2 flex-wrap">
-                      <div>
-                        <h3 className="text-xs sm:text-sm font-extrabold">{group.title}</h3>
-                        {group.subtitle && (
-                          <div className="text-[11px] text-slate-300">{group.subtitle}</div>
-                        )}
-                      </div>
-                      {group.allowBatchNA && (
+                    <div className="bg-slate-900 text-white px-3.5 sm:px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleTopicCollapse(group.id)}
+                        className="flex items-center justify-between sm:justify-start gap-2 text-left cursor-pointer flex-1 min-w-0"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h3 className="text-xs sm:text-sm font-extrabold">{group.title}</h3>
+                            <span
+                              className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
+                                checkedInGroup === group.items.length
+                                  ? 'bg-emerald-500/25 text-emerald-200 border border-emerald-400/40'
+                                  : 'bg-white/15 text-slate-200'
+                              }`}
+                            >
+                              {checkedInGroup}/{group.items.length}
+                            </span>
+                            {issueInGroup > 0 && (
+                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white">
+                                異常 {issueInGroup}
+                              </span>
+                            )}
+                          </div>
+                          {group.subtitle && (
+                            <div className="text-[11px] text-slate-300 mt-0.5">{group.subtitle}</div>
+                          )}
+                        </div>
+                        <span className="p-1 rounded-lg bg-white/10 text-slate-200 shrink-0">
+                          {isCollapsed ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+                        </span>
+                      </button>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <button
                           type="button"
-                          onClick={() => handleSetTopicAllNA(group.id)}
-                          className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white border border-white/20 cursor-pointer"
+                          onClick={() => handleSetTopicAllPass(group.id)}
+                          className="text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 text-white border border-emerald-400/40 cursor-pointer transition-all"
                         >
-                          ⚪ 該店無住宿業務（全項設 N/A）
+                          🟢 本大項全合格
                         </button>
-                      )}
+                        {group.allowBatchNA && (
+                          <button
+                            type="button"
+                            onClick={() => handleSetTopicAllNA(group.id)}
+                            className="text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 active:scale-95 text-white border border-white/20 cursor-pointer transition-all"
+                          >
+                            ⚪ 無住宿全 N/A
+                          </button>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="p-3.5 sm:p-4 space-y-3">
+                    {!isCollapsed && (
+                    <div className="p-3 sm:p-4 space-y-3">
                       {group.items.map(item => {
                         const status = categoryChecks[item.id];
                         const needsRemark = status === '待改善' || status === '缺失' || Boolean(categoryRemarks[item.id]);
@@ -1405,9 +1569,9 @@ export const BeautyAuditApp: React.FC = () => {
                                 : 'border-slate-200'
                             }`}
                           >
-                            <div className="flex flex-col gap-2">
+                            <div className="flex flex-col gap-2.5">
                               <div>
-                                <div className="text-xs sm:text-sm font-extrabold text-slate-900">
+                                <div className="text-sm font-extrabold text-slate-900">
                                   {item.code}. {item.title}
                                 </div>
                                 <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
@@ -1415,8 +1579,8 @@ export const BeautyAuditApp: React.FC = () => {
                                 </p>
                               </div>
 
-                              {/* 四選一評估按鈕列 */}
-                              <div className="grid grid-cols-4 gap-1.5">
+                              {/* 四選一評估按鈕列（手機端 2x2 大面積觸控熱區，電腦端 4 格單行） */}
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-1.5">
                                 {(['N/A', '合格', '待改善', '缺失'] as BeautyCheckStatus[]).map(opt => {
                                   const active = status === opt;
                                   const styleMap: Record<BeautyCheckStatus, string> = {
@@ -1446,7 +1610,7 @@ export const BeautyAuditApp: React.FC = () => {
                                       onClick={() =>
                                         setCategoryChecks(prev => ({ ...prev, [item.id]: opt }))
                                       }
-                                      className={`py-1.5 px-2 rounded-lg border text-[11px] sm:text-xs font-extrabold cursor-pointer transition-all ${styleMap[opt]}`}
+                                      className={`min-h-[42px] sm:min-h-[36px] py-2 sm:py-1.5 px-2 rounded-xl sm:rounded-lg border text-xs font-extrabold cursor-pointer active:scale-[0.98] transition-all ${styleMap[opt]}`}
                                     >
                                       {iconMap[opt]} {opt}
                                     </button>
@@ -1463,7 +1627,7 @@ export const BeautyAuditApp: React.FC = () => {
                                       setCategoryRemarks(prev => ({ ...prev, [item.id]: e.target.value }))
                                     }
                                     placeholder="補充現場缺失／改善說明（將自動帶入待改善清單）..."
-                                    className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:border-rose-500"
+                                    className="flex-1 min-h-[40px] px-3 py-1.5 text-sm sm:text-xs bg-white border border-slate-300 rounded-xl outline-none focus:border-rose-500"
                                   />
                                   <button
                                     type="button"
@@ -1475,14 +1639,14 @@ export const BeautyAuditApp: React.FC = () => {
                                         }))
                                       )
                                     }
-                                    className={`p-1.5 rounded-lg border cursor-pointer ${
+                                    className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl border cursor-pointer active:scale-95 transition-all ${
                                       listeningField === `item-${item.id}`
                                         ? 'bg-rose-600 text-white border-rose-600 animate-pulse'
                                         : 'bg-white text-slate-600 border-slate-200 hover:text-rose-600'
                                     }`}
                                     title="語音輸入"
                                   >
-                                    {listeningField === `item-${item.id}` ? <MicOff size={13} /> : <Mic size={13} />}
+                                    {listeningField === `item-${item.id}` ? <MicOff size={15} /> : <Mic size={15} />}
                                   </button>
                                 </div>
                               )}
@@ -1635,7 +1799,7 @@ export const BeautyAuditApp: React.FC = () => {
                                 <Trash2 size={14} />
                               </button>
                             </div>
-                            <div className="grid grid-cols-4 gap-1.5">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                               {(['N/A', '合格', '待改善', '缺失'] as BeautyCheckStatus[]).map(opt => (
                                 <button
                                   key={opt}
@@ -1643,7 +1807,7 @@ export const BeautyAuditApp: React.FC = () => {
                                   onClick={() =>
                                     handleUpdateCustomCheck(group.id, row.id, { status: opt })
                                   }
-                                  className={`py-1 rounded-lg border text-[11px] font-bold cursor-pointer ${
+                                  className={`min-h-[38px] sm:min-h-[32px] py-1.5 sm:py-1 rounded-lg border text-xs sm:text-[11px] font-bold cursor-pointer active:scale-[0.98] transition-all ${
                                     row.status === opt
                                       ? opt === '缺失'
                                         ? 'bg-rose-600 text-white border-rose-600'
@@ -1676,13 +1840,14 @@ export const BeautyAuditApp: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => handleAddCustomCheck(group.id)}
-                          className="w-full py-2 rounded-xl border border-dashed border-fuchsia-300 bg-white hover:bg-fuchsia-50 text-fuchsia-700 text-xs font-extrabold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                          className="w-full min-h-[42px] py-2 rounded-xl border border-dashed border-fuchsia-300 bg-white hover:bg-fuchsia-50 text-fuchsia-700 text-xs font-extrabold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                         >
                           <Plus size={14} />
                           <span>➕ 自訂新增大項 {group.id} 檢核項目（支援語音輸入）</span>
                         </button>
                       </div>
                     </div>
+                    )}
                   </div>
                 );
               })}
@@ -1691,7 +1856,7 @@ export const BeautyAuditApp: React.FC = () => {
         </section>
 
         {/* ==================== 4. 表尾：【管理閉環】與高層數據連動 ==================== */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <section id="beauty-sec-4" className="scroll-mt-28 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white px-4 sm:px-5 py-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-lg bg-amber-400 text-slate-950 text-xs font-black flex items-center justify-center">
@@ -1727,6 +1892,17 @@ export const BeautyAuditApp: React.FC = () => {
                   e.target.value = '';
                 }}
               />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={e => {
+                  handlePhotoUpload(e.target.files);
+                  e.target.value = '';
+                }}
+              />
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {photos.map(photo => (
@@ -1734,7 +1910,7 @@ export const BeautyAuditApp: React.FC = () => {
                     key={photo.id}
                     className="rounded-xl border border-slate-200 overflow-hidden bg-slate-50 flex flex-col"
                   >
-                    <div className="relative h-36 bg-slate-100">
+                    <div className="relative h-40 sm:h-36 bg-slate-100">
                       <img
                         src={photo.url}
                         alt={photo.kind}
@@ -1743,13 +1919,13 @@ export const BeautyAuditApp: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setPhotos(prev => prev.filter(p => p.id !== photo.id))}
-                        className="absolute top-1.5 right-1.5 p-1.5 rounded-full bg-slate-900/75 text-white hover:bg-rose-600 cursor-pointer"
+                        className="absolute top-2 right-2 p-2 rounded-full bg-slate-900/75 text-white hover:bg-rose-600 cursor-pointer"
                         title="移除照片"
                       >
-                        <Trash2 size={12} />
+                        <Trash2 size={14} />
                       </button>
                     </div>
-                    <div className="p-2 flex gap-1">
+                    <div className="p-2 flex gap-1.5">
                       {(['亮點照片', '缺失存證'] as const).map(kind => (
                         <button
                           key={kind}
@@ -1759,7 +1935,7 @@ export const BeautyAuditApp: React.FC = () => {
                               prev.map(p => (p.id === photo.id ? { ...p, kind } : p))
                             )
                           }
-                          className={`flex-1 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                          className={`flex-1 min-h-[36px] py-1.5 rounded-lg text-xs sm:text-[11px] font-bold border cursor-pointer ${
                             photo.kind === kind
                               ? kind === '缺失存證'
                                 ? 'bg-rose-600 text-white border-rose-600'
@@ -1775,15 +1951,26 @@ export const BeautyAuditApp: React.FC = () => {
                 ))}
 
                 {photos.length < MAX_PHOTOS && (
-                  <button
-                    type="button"
-                    onClick={() => photoInputRef.current?.click()}
-                    className="h-44 rounded-xl border-2 border-dashed border-rose-300 bg-rose-50/40 hover:bg-rose-50 flex flex-col items-center justify-center gap-1.5 text-rose-700 cursor-pointer transition-colors"
-                  >
-                    <Camera size={24} />
-                    <span className="text-xs font-extrabold">點擊拍照／上傳照片</span>
-                    <span className="text-[11px] text-rose-500">自動壓縮上傳至雲端</span>
-                  </button>
+                  <div className="grid grid-cols-2 sm:grid-cols-1 gap-2 sm:h-44">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="min-h-[88px] sm:min-h-0 sm:flex-1 rounded-xl border-2 border-dashed border-rose-400 bg-rose-50/70 hover:bg-rose-100/70 active:scale-[0.98] flex flex-col items-center justify-center gap-1 text-rose-700 cursor-pointer transition-all p-3"
+                    >
+                      <Camera size={22} />
+                      <span className="text-xs font-extrabold">📷 現場直接拍照</span>
+                      <span className="text-[10px] text-rose-500">自動壓縮上傳</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => photoInputRef.current?.click()}
+                      className="min-h-[88px] sm:min-h-0 sm:flex-1 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 active:scale-[0.98] flex flex-col items-center justify-center gap-1 text-slate-700 cursor-pointer transition-all p-3"
+                    >
+                      <ImageIcon size={20} />
+                      <span className="text-xs font-extrabold">🖼️ 從相簿選取</span>
+                      <span className="text-[10px] text-slate-500">可多選（上限 {MAX_PHOTOS} 張）</span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -1877,38 +2064,40 @@ export const BeautyAuditApp: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <div className="flex items-center gap-1">
-                        <span className="font-bold text-slate-600">負責人：</span>
-                        <input
-                          type="text"
-                          value={row.assignee}
-                          onChange={e =>
-                            setNewActionItems(prev =>
-                              prev.map(r =>
-                                r.id === row.id ? { ...r, assignee: e.target.value } : r
+                    <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 text-xs">
+                      <div className="grid grid-cols-2 sm:flex gap-2">
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-slate-600 shrink-0">負責人：</span>
+                          <input
+                            type="text"
+                            value={row.assignee}
+                            onChange={e =>
+                              setNewActionItems(prev =>
+                                prev.map(r =>
+                                  r.id === row.id ? { ...r, assignee: e.target.value } : r
+                                )
                               )
-                            )
-                          }
-                          className="w-24 px-2 py-1 bg-white border border-slate-300 rounded-lg font-bold outline-none focus:border-rose-500"
-                        />
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span className="font-bold text-slate-600">時限：</span>
-                        <input
-                          type="date"
-                          value={row.dueDate}
-                          onChange={e =>
-                            setNewActionItems(prev =>
-                              prev.map(r =>
-                                r.id === row.id ? { ...r, dueDate: e.target.value } : r
+                            }
+                            className="w-full sm:w-24 min-h-[38px] px-2 py-1 bg-white border border-slate-300 rounded-lg font-bold outline-none focus:border-rose-500"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-slate-600 shrink-0">時限：</span>
+                          <input
+                            type="date"
+                            value={row.dueDate}
+                            onChange={e =>
+                              setNewActionItems(prev =>
+                                prev.map(r =>
+                                  r.id === row.id ? { ...r, dueDate: e.target.value } : r
+                                )
                               )
-                            )
-                          }
-                          className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-bold outline-none focus:border-rose-500"
-                        />
+                            }
+                            className="w-full sm:w-auto min-h-[38px] px-2 py-1 bg-white border border-slate-300 rounded-lg font-bold outline-none focus:border-rose-500"
+                          />
+                        </div>
                       </div>
-                      <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 font-bold cursor-pointer select-none">
+                      <label className="inline-flex items-center gap-1.5 min-h-[38px] px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 font-bold cursor-pointer select-none">
                         <input
                           type="checkbox"
                           checked={row.crossDepartment}
@@ -2041,32 +2230,38 @@ export const BeautyAuditApp: React.FC = () => {
           </div>
         </section>
 
-        {/* 底部固定送出列 */}
-        <div className="sticky bottom-3 z-30">
-          <div className="bg-slate-900/95 backdrop-blur-xs text-white rounded-2xl p-3 sm:p-4 shadow-xl border border-white/15 flex flex-wrap items-center justify-between gap-3">
-            <div className="text-xs">
-              <div className="font-extrabold flex items-center gap-1.5">
-                <Sparkles size={14} className="text-amber-300" />
-                <span>{storeName ? `目前巡檢：${storeName}` : '請先於上方選擇巡店門市'}</span>
-              </div>
-              <div className="text-[11px] text-slate-300 mt-0.5">
-                {hasCoreRedlineViolation
-                  ? '⚠️ 已偵測安全紅線違規，送出將即時推播高風險警示'
-                  : '送出後自動同步至戰情牆「美容住宿專項視角」與跨部門待辦追蹤'}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={submitting}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-fuchsia-600 hover:from-rose-400 hover:to-fuchsia-500 disabled:opacity-60 text-white text-sm font-black shadow-md cursor-pointer transition-all"
-            >
-              <Send size={15} />
-              <span>{submitting ? '安全上傳中...' : '送出美容總監巡店表'}</span>
-            </button>
-          </div>
-        </div>
       </main>
+
+      {/* 底部貼底固定送出列（支援 iOS/Android 安全區域留白，手機單行緊湊不擋欄位） */}
+      <div className="fixed bottom-0 inset-x-0 z-30 bg-slate-900/95 backdrop-blur-md text-white border-t border-white/15 shadow-2xl px-3 sm:px-6 pt-2.5 safe-bottom">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-2.5 sm:gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="text-xs sm:text-sm font-extrabold flex items-center gap-1.5 truncate">
+              <Sparkles size={14} className="text-amber-300 shrink-0" />
+              <span className="truncate">
+                {storeName ? storeName : '尚未選擇門市'}
+              </span>
+              {hasCoreRedlineViolation && (
+                <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-[10px] font-black shrink-0">
+                  紅線警示
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-slate-300 truncate">
+              底線 {coreCheckedCount}/{BEAUTY_CORE_SAFETY_ITEMS.length} · 評價：{overallRating ? overallRating.split('（')[0] : '待選'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="shrink-0 min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 sm:px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-fuchsia-600 hover:from-rose-400 hover:to-fuchsia-500 active:scale-[0.98] disabled:opacity-60 text-white text-xs sm:text-sm font-black shadow-md cursor-pointer transition-all whitespace-nowrap"
+          >
+            <Send size={15} />
+            <span>{submitting ? '上傳中...' : '送出巡店表'}</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

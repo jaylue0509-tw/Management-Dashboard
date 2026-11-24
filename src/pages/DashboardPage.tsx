@@ -1121,26 +1121,26 @@ export const DashboardPage: React.FC = () => {
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6">
         {/* Tab Bar */}
         <div className="flex items-center justify-between mb-3.5 border-b border-gray-200 gap-2">
-          <div className="flex gap-1 min-w-0 overflow-x-auto">
+          <div className="flex gap-1 min-w-0 overflow-x-auto no-scrollbar snap-x">
             {(user?.role === 'beauty_director'
               ? [
-                  { id: 'beauty', label: '🌸 我的美容巡店看板' },
-                  { id: 'expense', label: '🚗 個人車資與零用金黏存單' },
-                  { id: 'org_map', label: '轄屬處別組織架構' },
-                ]
+                { id: 'beauty', label: '🌸 我的美容巡店看板' },
+                { id: 'expense', label: '🚗 個人車資與零用金黏存單' },
+                { id: 'org_map', label: '轄屬處別組織架構' },
+              ]
               : [
-                  { id: 'dashboard', label: '即時動態牆' },
-                  { id: 'beauty', label: '🌸 美容住宿專項' },
-                  { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
-                  {
-                    id: 'expense',
-                    label:
-                      user?.role === 'admin'
-                        ? '🚗 巡店車資與黏存單（全區）'
-                        : '🚗 個人車資與零用金黏存單',
-                  },
-                  { id: 'org_map', label: '組織架構配置' },
-                ]
+                { id: 'dashboard', label: '即時動態牆' },
+                { id: 'beauty', label: '🌸 美容住宿專項' },
+                { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
+                {
+                  id: 'expense',
+                  label:
+                    user?.role === 'admin'
+                      ? '🚗 巡店車資與黏存單（全區）'
+                      : '🚗 個人車資與零用金黏存單',
+                },
+                { id: 'org_map', label: '組織架構配置' },
+              ]
             ).map(tab => (
               <button
                 key={tab.id}
@@ -1192,8 +1192,8 @@ export const DashboardPage: React.FC = () => {
         {/* 僅在「巡店與異常戰情儀表板」分頁顯示全域時間篩選列，避免與地圖／車資分頁的單日選擇器重複混淆 */}
         {activeTab === 'dashboard' && (
           <div className="mb-3.5 sm:mb-4 bg-white border border-gray-200 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
-            {/* 左側：今日 / 本週 / 上週 / 本月 / 自選日期 / 所有紀錄 快速切換 */}
-            <div className="flex items-center gap-1.5 flex-wrap w-full sm:w-auto">
+            {/* 左側：今日 / 本週 / 上週 / 本月 / 自選日期 / 所有紀錄 快速切換（手機單行橫滑省高度） */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-nowrap sm:flex-wrap w-full sm:w-auto pb-0.5 sm:pb-0">
               {([
                 { id: 'day', label: '今日' },
                 { id: 'week', label: '本週' },
@@ -1208,7 +1208,7 @@ export const DashboardPage: React.FC = () => {
                     key={opt.id}
                     type="button"
                     onClick={() => handleTimeRangeChange(opt.id)}
-                    className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${active
+                    className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer border ${active
                       ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                       : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
                       }`}
@@ -1751,7 +1751,8 @@ export const DashboardPage: React.FC = () => {
         <button
           type="button"
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="fixed bottom-6 right-5 z-40 flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-slate-900/90 hover:bg-slate-900 text-white text-xs font-extrabold shadow-lg border border-slate-700/60 backdrop-blur-xs transition-all cursor-pointer"
+          className="fixed bottom-5 right-4 z-40 flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-slate-900/90 hover:bg-slate-900 active:scale-95 text-white text-xs font-extrabold shadow-lg border border-slate-700/60 backdrop-blur-xs transition-all cursor-pointer"
+          style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
           title="回到頁面頂部"
           aria-label="回到頂部"
         >

@@ -76,7 +76,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
             <button
               type="button"
               onClick={() => navigate('/beauty-audit')}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer whitespace-nowrap"
+              className="min-h-[36px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs active:scale-95 transition-transform cursor-pointer whitespace-nowrap"
               style={{ background: 'linear-gradient(135deg, #e11d48, #a21caf)' }}
               title="美容總監巡店表"
             >
@@ -87,7 +87,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               <button
                 type="button"
                 onClick={() => navigate('/audit')}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer whitespace-nowrap"
+                className="min-h-[36px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs active:scale-95 transition-transform cursor-pointer whitespace-nowrap"
                 style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
               >
                 <ClipboardSignature size={13} />
@@ -99,10 +99,10 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               <button
                 type="button"
                 onClick={() => navigate('/admin/settings')}
-                className="p-1.5 rounded-lg bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 cursor-pointer"
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 active:scale-95 transition-transform cursor-pointer"
                 title="系統設定"
               >
-                <Settings size={14} />
+                <Settings size={15} />
               </button>
             )}
 
@@ -110,10 +110,10 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               <button
                 type="button"
                 onClick={() => setIsChangePasswordOpen(true)}
-                className="p-1.5 rounded-lg bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 cursor-pointer"
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 active:scale-95 transition-transform cursor-pointer"
                 title="修改密碼"
               >
-                <KeyRound size={14} />
+                <KeyRound size={15} />
               </button>
             )}
 
@@ -125,10 +125,10 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
                   navigate('/login');
                 }
               }}
-              className="p-1.5 rounded-lg bg-white text-gray-500 border border-gray-200 hover:text-red-600 hover:border-red-200 cursor-pointer"
+              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg bg-white text-gray-500 border border-gray-200 hover:text-red-600 hover:border-red-200 active:scale-95 transition-transform cursor-pointer"
               title="登出"
             >
-              <LogOut size={14} />
+              <LogOut size={15} />
             </button>
           </div>
         </div>

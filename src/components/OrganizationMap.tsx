@@ -130,21 +130,25 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
   };
 
   return (
-    <div className="card" style={{ 
-      padding: 'var(--space-6)', 
-      minHeight: '600px',
-      background: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)',
-      border: 'none',
-      boxShadow: 'var(--shadow-md)'
-    }}>
-      <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-6)' }}>
-        <h2 className="text-xl font-bold flex items-center gap-2">
-          <Building className="text-primary" size={24} />
-          {user?.role === 'beauty_director'
-            ? `${user.name}${user.nickname ? ` (${user.nickname})` : ''} 美容總監轄屬門店配置（${user.department || ''}）`
-            : user?.role === 'manager'
-            ? `${user.name} 區主管轄區門店配置`
-            : '區主管門店配置圖'}
+    <div
+      className="card p-3.5 sm:p-6"
+      style={{
+        minHeight: '600px',
+        background: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)',
+        border: 'none',
+        boxShadow: 'var(--shadow-md)',
+      }}
+    >
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4 sm:mb-6">
+        <h2 className="text-base sm:text-xl font-bold flex items-center gap-2">
+          <Building className="text-primary shrink-0" size={22} />
+          <span>
+            {user?.role === 'beauty_director'
+              ? `${user.name}${user.nickname ? ` (${user.nickname})` : ''} 美容總監轄屬門店配置（${user.department || ''}）`
+              : user?.role === 'manager'
+              ? `${user.name} 區主管轄區門店配置`
+              : '區主管門店配置圖'}
+          </span>
         </h2>
         
         {user?.role === 'admin' && (
@@ -194,14 +198,25 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                 <div className="text-sm text-gray-800 font-medium">處長：{director || '未設定'}</div>
               </div>
               
-              {/* Regions */}
-              <div className="flex flex-row gap-8" style={{ padding: '16px', overflowX: 'auto', flexWrap: 'nowrap' }}>
+              {/* Regions（手機端支援 snap 左右滑動卡片，不超出螢幕寬度） */}
+              {Object.keys(regions).length > 1 && (
+                <div className="sm:hidden px-3.5 pt-2 text-[11px] font-bold text-sky-900/70">
+                  ← 左右滑動切換各區域（共 {Object.keys(regions).length} 區）→
+                </div>
+              )}
+              <div
+                className="flex flex-row gap-4 sm:gap-8 p-3.5 sm:p-4 overflow-x-auto no-scrollbar snap-x snap-mandatory"
+                style={{ flexWrap: 'nowrap' }}
+              >
                 {Object.entries(regions).map(([region, regManagers]) => {
                   const areaManagers = groupBy(regManagers, m => m.areaManagerName);
                   const beautyDir = getBeautyDirectorByRegion(region);
                   
                   return (
-                    <div key={region} className="flex flex-col gap-4" style={{ minWidth: '320px', width: '320px', flexShrink: 0 }}>
+                    <div
+                      key={region}
+                      className="flex flex-col gap-3.5 sm:gap-4 w-[84vw] max-w-[320px] sm:w-[320px] shrink-0 snap-start"
+                    >
                       <div className="flex flex-col items-center gap-1" style={{ borderBottom: '2px solid var(--color-primary-100)', paddingBottom: '8px' }}>
                         <div className="font-semibold text-primary flex items-center justify-center gap-2">
                           <MapPin size={18} />
