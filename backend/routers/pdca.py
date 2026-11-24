@@ -43,18 +43,23 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
     """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            if user and user.get("role") == "manager":
+            if user and user.get("role") in ("manager", "beauty_director"):
                 mgr_name = user.get("name")
                 assigned = list(user.get("assigned_stores") or [])
+                if user.get("sub"):
+                    cur.execute("SELECT assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
+                    u_row = cur.fetchone()
+                    if u_row and u_row[0]:
+                        assigned = list(u_row[0])
                 if store:
-                    if user.get("sub"):
-                        cur.execute("SELECT assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
-                        u_row = cur.fetchone()
-                        if u_row and u_row[0]:
-                            assigned = list(u_row[0])
                     if store not in assigned and _normalize_store(store) not in {_normalize_store(s) for s in assigned}:
                         return []
                     cur.execute("SELECT data FROM action_items WHERE replace(store_name, '店', '') = %s ORDER BY created_at DESC", (_normalize_store(store),))
+                elif user.get("role") == "beauty_director":
+                    cur.execute(
+                        "SELECT data FROM action_items WHERE data->>'createdBy' = %s OR (store_name = ANY(%s) AND data->>'auditDepartment' = '美容') ORDER BY created_at DESC LIMIT 200",
+                        (mgr_name, assigned)
+                    )
                 else:
                     cur.execute(
                         "SELECT data FROM action_items WHERE store_name = ANY(%s) OR data->>'assignee' = %s OR data->>'createdBy' = %s ORDER BY created_at DESC LIMIT 200",

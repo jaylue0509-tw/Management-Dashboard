@@ -22,8 +22,11 @@ const clearAccountScopedCaches = (): void => {
 
 export interface User {
   sub: string; // username
-  role: 'admin' | 'manager';
+  role: 'admin' | 'manager' | 'beauty_director';
   name: string;
+  nickname?: string;
+  department?: string;
+  supervisor?: string;
   assigned_stores: string[];
   must_change_password?: boolean;
 }

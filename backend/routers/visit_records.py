@@ -42,13 +42,33 @@ def get_last_audit_record(
     type_filter = str(audit_type or "").strip().lower()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            # 美容總監嚴格權限隔離：僅能查詢自己所屬處別門市的歷史紀錄
+            if user and user.get("role") == "beauty_director":
+                assigned = list(user.get("assigned_stores") or [])
+                if user.get("sub"):
+                    cur.execute("SELECT assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
+                    u_row = cur.fetchone()
+                    if u_row and u_row[0]:
+                        assigned = list(u_row[0])
+                if norm_store not in {_normalize_store(s) for s in assigned}:
+                    return {"hasHistory": False, "storeName": store_name}
+
             if type_filter == "beauty":
-                cur.execute("""
-                    SELECT data, created_at FROM visit_records 
-                    WHERE replace(data->>'storeName', '店', '') = %s
-                      AND (data->>'auditType' = 'beauty' OR data->>'actionType' = '美容總監巡店')
-                    ORDER BY created_at DESC LIMIT 1
-                """, (norm_store,))
+                if user and user.get("role") == "beauty_director":
+                    cur.execute("""
+                        SELECT data, created_at FROM visit_records 
+                        WHERE replace(data->>'storeName', '店', '') = %s
+                          AND (data->>'auditType' = 'beauty' OR data->>'actionType' = '美容總監巡店')
+                          AND data->>'areaManagerName' = %s
+                        ORDER BY created_at DESC LIMIT 1
+                    """, (norm_store, user.get("name") or ""))
+                else:
+                    cur.execute("""
+                        SELECT data, created_at FROM visit_records 
+                        WHERE replace(data->>'storeName', '店', '') = %s
+                          AND (data->>'auditType' = 'beauty' OR data->>'actionType' = '美容總監巡店')
+                        ORDER BY created_at DESC LIMIT 1
+                    """, (norm_store,))
             else:
                 # 查詢排除純公務行程與美容專項後的最新營運實地巡檢
                 cur.execute("""
@@ -174,6 +194,9 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
                 assigned = list(user.get("assigned_stores") or [])
                 conditions.append("(data->>'areaManagerName' = %s OR data->>'storeName' = ANY(%s))")
                 params.extend([mgr_name, assigned])
+            elif user and user.get("role") == "beauty_director":
+                conditions.append("data->>'areaManagerName' = %s")
+                params.append(user.get("name") or "")
                 
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
@@ -211,15 +234,15 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
         except (ValueError, TypeError):
             created_at = now_utc
 
-    is_manager = bool(user and user.get("role") == "manager")
-    if is_manager:
+    is_scoped_user = bool(user and user.get("role") in ("manager", "beauty_director"))
+    if is_scoped_user:
         payload["areaManagerName"] = user.get("name") or payload.get("areaManagerName")
 
     taipei_today = (now_utc + TAIPEI_OFFSET).date()
     min_backfill_date = taipei_today - timedelta(days=5)
     record_taipei_date = (created_at + TAIPEI_OFFSET).date()
 
-    if is_manager:
+    if is_scoped_user:
         if record_taipei_date < min_backfill_date:
             raise HTTPException(
                 status_code=400,

@@ -127,7 +127,10 @@ def init_db():
                     );
                 """)
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT TRUE;")
-                cur.execute("UPDATE users SET must_change_password = TRUE WHERE must_change_password IS NULL AND role = 'manager';")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname VARCHAR(50);")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(50);")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS supervisor VARCHAR(50);")
+                cur.execute("UPDATE users SET must_change_password = TRUE WHERE must_change_password IS NULL AND role IN ('manager', 'beauty_director');")
                 cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin';")
                 cur.execute("DELETE FROM visit_records WHERE id = '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c';")
                 cur.execute("DELETE FROM action_items WHERE id = '86ed0b29-dc30-4825-808d-9a58d6c5e38f';")
@@ -146,9 +149,10 @@ def init_db():
                 """)
             conn.commit()
 
-            # 初始化預設帳號與 2026 組織同步
+            # 初始化預設帳號、2026 組織同步與美容總監專屬帳號
             init_default_users(conn)
             sync_region_reorg_2026(conn)
+            sync_beauty_directors(conn)
 
     except Exception as e:
         logger.error("DB Init Error: %s", e)
@@ -325,4 +329,102 @@ def sync_region_reorg_2026(conn):
             (jianan_stores,)
         )
     conn.commit()
+
+
+# 兩位美容總監固定組織配置（初始密碼 admin1234，首次登入須修改密碼）
+BEAUTY_DIRECTORS_SEED = [
+    {
+        "username": "廖羿蓁",
+        "name": "廖羿蓁",
+        "nickname": "kelly",
+        "department": "營業一處",
+        "supervisor": "簡楷潔",
+    },
+    {
+        "username": "戴欐蘐",
+        "name": "戴欐蘐",
+        "nickname": "小貝",
+        "department": "營業二處",
+        "supervisor": "蔡嘉峯",
+    },
+]
+
+
+def sync_beauty_directors(conn):
+    """
+    同步建立／更新美容總監專屬帳號（營業一處：廖羿蓁/kelly；營業二處：戴欐蘐/小貝），
+    並自動將各自所屬處別之門市名單寫入 assigned_stores，確保兩位美容總監嚴格隔離僅能看自己處別資料
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT data FROM store WHERE id = 'managers'")
+        row = cur.fetchone()
+        managers = row[0] if row and isinstance(row[0], list) else []
+
+        for bd in BEAUTY_DIRECTORS_SEED:
+            dept = bd["department"]
+            supervisor = bd["supervisor"]
+            dept_stores: list[str] = []
+            seen = set()
+            for m in managers:
+                s_name = str(m.get("storeName") or "").strip()
+                if not s_name or "測試" in s_name or "文心秀泰" in s_name:
+                    continue
+                m_dept = str(m.get("department") or "").strip()
+                m_dir = str(m.get("directorName") or "").strip()
+                if m_dept == dept or m_dir == supervisor:
+                    if s_name not in seen:
+                        seen.add(s_name)
+                        dept_stores.append(s_name)
+
+            cur.execute(
+                "SELECT role, assigned_stores, nickname, department, supervisor FROM users WHERE username = %s",
+                (bd["username"],),
+            )
+            u_row = cur.fetchone()
+            if not u_row:
+                pwd_hash = pwd_context.hash("admin1234")
+                cur.execute(
+                    """
+                    INSERT INTO users (
+                        username, password_hash, role, name, assigned_stores,
+                        plain_password, must_change_password, nickname, department, supervisor
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        bd["username"],
+                        pwd_hash,
+                        "beauty_director",
+                        bd["name"],
+                        Json(dept_stores),
+                        "admin1234",
+                        True,
+                        bd["nickname"],
+                        dept,
+                        supervisor,
+                    ),
+                )
+            else:
+                cur_role, cur_stores, cur_nick, cur_dept, cur_sup = u_row
+                if (
+                    cur_role != "beauty_director"
+                    or (cur_stores or []) != dept_stores
+                    or cur_nick != bd["nickname"]
+                    or cur_dept != dept
+                    or cur_sup != supervisor
+                ):
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET role = 'beauty_director',
+                            name = %s,
+                            assigned_stores = %s,
+                            nickname = %s,
+                            department = %s,
+                            supervisor = %s
+                        WHERE username = %s
+                        """,
+                        (bd["name"], Json(dept_stores), bd["nickname"], dept, supervisor, bd["username"]),
+                    )
+        conn.commit()
 

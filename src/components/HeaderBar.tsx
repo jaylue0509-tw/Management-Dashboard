@@ -83,15 +83,17 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               <Sparkles size={13} />
               <span>美容巡店</span>
             </button>
-            <button
-              type="button"
-              onClick={() => navigate('/audit')}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer whitespace-nowrap"
-              style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
-            >
-              <ClipboardSignature size={13} />
-              <span>巡店作業</span>
-            </button>
+            {user?.role !== 'beauty_director' && (
+              <button
+                type="button"
+                onClick={() => navigate('/audit')}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer whitespace-nowrap"
+                style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
+              >
+                <ClipboardSignature size={13} />
+                <span>巡店作業</span>
+              </button>
+            )}
 
             {user?.role === 'admin' && (
               <button
@@ -104,7 +106,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               </button>
             )}
 
-            {user?.role === 'manager' && (
+            {(user?.role === 'manager' || user?.role === 'beauty_director') && (
               <button
                 type="button"
                 onClick={() => setIsChangePasswordOpen(true)}
@@ -146,8 +148,32 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             </div>
 
-            {/* Dept Select or Manager Identity Badge */}
-            {user?.role === 'manager' ? (
+            {/* Dept Select or Manager / Beauty Director Identity Badge */}
+            {user?.role === 'beauty_director' ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs font-bold min-w-0 truncate">
+                <Sparkles size={13} className="text-rose-600 shrink-0" />
+                <span className="truncate">
+                  美容總監：{user.name}
+                  {user.nickname ? ` (${user.nickname})` : ''}
+                </span>
+                {user.department && (
+                  <>
+                    <span className="text-rose-300 font-normal shrink-0">|</span>
+                    <span className="text-[11px] text-rose-700 font-extrabold shrink-0">
+                      {user.department}
+                    </span>
+                  </>
+                )}
+                {user.supervisor && (
+                  <>
+                    <span className="hidden sm:inline text-rose-300 font-normal shrink-0">|</span>
+                    <span className="hidden sm:inline text-[11px] text-rose-600 font-semibold shrink-0">
+                      直屬：{user.supervisor}
+                    </span>
+                  </>
+                )}
+              </div>
+            ) : user?.role === 'manager' ? (
               <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-xs font-bold min-w-0 truncate">
                 <UserCheck size={13} className="text-blue-600 shrink-0" />
                 <span className="truncate">區主管：{user.name}</span>
@@ -191,7 +217,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               </button>
             )}
 
-            {user?.role === 'manager' && (
+            {(user?.role === 'manager' || user?.role === 'beauty_director') && (
               <button
                 id="header-change-password"
                 type="button"
@@ -230,18 +256,20 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               美容總監巡店
             </button>
 
-            <button
-              type="button"
-              onClick={() => navigate('/audit')}
-              className="flex items-center gap-1.5 text-white rounded-lg px-4 py-2 text-xs font-bold cursor-pointer transition-all shadow-sm hover:-translate-y-0.5 whitespace-nowrap"
-              style={{
-                background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-                boxShadow: '0 2px 8px rgba(37,99,235,0.3)',
-              }}
-            >
-              <ClipboardSignature size={14} />
-              現場巡店作業
-            </button>
+            {user?.role !== 'beauty_director' && (
+              <button
+                type="button"
+                onClick={() => navigate('/audit')}
+                className="flex items-center gap-1.5 text-white rounded-lg px-4 py-2 text-xs font-bold cursor-pointer transition-all shadow-sm hover:-translate-y-0.5 whitespace-nowrap"
+                style={{
+                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                  boxShadow: '0 2px 8px rgba(37,99,235,0.3)',
+                }}
+              >
+                <ClipboardSignature size={14} />
+                現場巡店作業
+              </button>
+            )}
           </div>
         </div>
       </div>

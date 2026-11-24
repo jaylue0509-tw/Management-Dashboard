@@ -9,7 +9,7 @@ export const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [selectedRole, setSelectedRole] = useState<'admin' | 'manager'>('manager');
+  const [selectedRole, setSelectedRole] = useState<'admin' | 'manager' | 'beauty_director'>('manager');
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -34,7 +34,7 @@ export const Login = () => {
       const data = await res.json();
       login(data.token, data.user);
       
-      navigate('/dashboard');
+      navigate(data.user?.role === 'beauty_director' ? '/dashboard?view=beauty' : '/dashboard');
     } catch (err: any) {
       setError(err.message || '系統連線異常，請稍後再試');
     } finally {
@@ -81,29 +81,41 @@ export const Login = () => {
               <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider ml-1">
                 選擇登入身分
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2">
                 <button 
                   type="button"
                   onClick={() => setSelectedRole('admin')}
-                  className={`relative overflow-hidden py-3 px-4 rounded-2xl border-2 flex items-center justify-center gap-3 transition-all duration-300
+                  className={`relative overflow-hidden py-3 px-2 rounded-2xl border-2 flex flex-col items-center justify-center gap-1.5 transition-all duration-300 cursor-pointer
                     ${selectedRole === 'admin' 
                       ? 'border-indigo-500 bg-indigo-50/50 text-indigo-700 shadow-sm' 
                       : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200 hover:bg-slate-50'}`}
                 >
                   <Building2 size={18} className={selectedRole === 'admin' ? 'text-indigo-600' : 'text-slate-400'} />
-                  <span className="text-sm font-bold">總部管理員</span>
+                  <span className="text-xs font-bold">總部管理員</span>
                 </button>
                 
                 <button 
                   type="button"
                   onClick={() => setSelectedRole('manager')}
-                  className={`relative overflow-hidden py-3 px-4 rounded-2xl border-2 flex items-center justify-center gap-3 transition-all duration-300
+                  className={`relative overflow-hidden py-3 px-2 rounded-2xl border-2 flex flex-col items-center justify-center gap-1.5 transition-all duration-300 cursor-pointer
                     ${selectedRole === 'manager' 
                       ? 'border-purple-500 bg-purple-50/50 text-purple-700 shadow-sm' 
                       : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200 hover:bg-slate-50'}`}
                 >
                   <UserCircle size={18} className={selectedRole === 'manager' ? 'text-purple-600' : 'text-slate-400'} />
-                  <span className="text-sm font-bold">區主管</span>
+                  <span className="text-xs font-bold">區主管</span>
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => setSelectedRole('beauty_director')}
+                  className={`relative overflow-hidden py-3 px-2 rounded-2xl border-2 flex flex-col items-center justify-center gap-1.5 transition-all duration-300 cursor-pointer
+                    ${selectedRole === 'beauty_director' 
+                      ? 'border-rose-500 bg-rose-50/70 text-rose-700 shadow-sm' 
+                      : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200 hover:bg-slate-50'}`}
+                >
+                  <Sparkles size={18} className={selectedRole === 'beauty_director' ? 'text-rose-600' : 'text-slate-400'} />
+                  <span className="text-xs font-bold">美容總監</span>
                 </button>
               </div>
             </div>

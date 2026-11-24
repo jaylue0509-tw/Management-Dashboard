@@ -36,6 +36,16 @@ def get_managers(user: Optional[dict] = Depends(get_optional_user)):
                         or m.get("deputyManagerName") == mgr_name
                         or m.get("storeName") in assigned
                     ]
+                if user and user.get("role") == "beauty_director":
+                    dept = (user.get("department") or "").strip()
+                    supervisor = (user.get("supervisor") or "").strip()
+                    assigned = set(user.get("assigned_stores") or [])
+                    return [
+                        m for m in data
+                        if (dept and m.get("department") == dept)
+                        or (supervisor and m.get("directorName") == supervisor)
+                        or m.get("storeName") in assigned
+                    ]
                 return data
             return []
 
@@ -149,12 +159,21 @@ def get_dashboard_data(
                 logger.warning("Failed to fetch action_items: %s", e)
                 conn.rollback()
 
-            # 區主管權限過濾（同步 users 最新負責門市）
-            if user and user.get("role") == "manager" and user.get("sub"):
-                cur.execute("SELECT name, assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
+            # 區主管／美容總監權限過濾（同步 users 最新負責門市與所屬處別）
+            if user and user.get("role") in ("manager", "beauty_director") and user.get("sub"):
+                cur.execute(
+                    "SELECT name, assigned_stores, department, supervisor FROM users WHERE username = %s",
+                    (user.get("sub"),),
+                )
                 u_row = cur.fetchone()
                 if u_row:
-                    user = {**user, "name": u_row[0] or user.get("name"), "assigned_stores": u_row[1] or []}
+                    user = {
+                        **user,
+                        "name": u_row[0] or user.get("name"),
+                        "assigned_stores": u_row[1] or [],
+                        "department": u_row[2] or user.get("department") or "",
+                        "supervisor": u_row[3] or user.get("supervisor") or "",
+                    }
             if user and user.get("role") == "manager":
                 mgr_name = user.get("name")
                 assigned = set(user.get("assigned_stores") or [])
@@ -179,6 +198,28 @@ def get_dashboard_data(
                     if i.get("storeName") in assigned
                     or i.get("assignee") in co_mgrs
                     or i.get("createdBy") in co_mgrs
+                ]
+            elif user and user.get("role") == "beauty_director":
+                # 美容總監嚴格隔離：僅能檢視自己所屬處別門市、本人提交之巡店紀錄與該處美容相關待辦
+                bd_name = (user.get("name") or "").strip()
+                bd_dept = (user.get("department") or "").strip()
+                bd_sup = (user.get("supervisor") or "").strip()
+                assigned = set(user.get("assigned_stores") or [])
+                managers = [
+                    m for m in managers
+                    if (bd_dept and m.get("department") == bd_dept)
+                    or (bd_sup and m.get("directorName") == bd_sup)
+                    or m.get("storeName") in assigned
+                ]
+                dept_store_names = {m.get("storeName") for m in managers if m.get("storeName")} | assigned
+                activities = [
+                    a for a in activities
+                    if (a.get("areaManagerName") or "").strip() == bd_name
+                ]
+                action_items = [
+                    i for i in action_items
+                    if (i.get("createdBy") or "").strip() == bd_name
+                    or (i.get("storeName") in dept_store_names and i.get("auditDepartment") == "美容")
                 ]
 
             return {

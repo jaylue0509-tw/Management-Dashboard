@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
-import { MapPin, Building, Users } from 'lucide-react';
+import { MapPin, Building, Users, Sparkles } from 'lucide-react';
 import { importManagers } from '../api/api';
 import { normalizeRegionName } from '../utils/store-region';
+import { BEAUTY_DIRECTORS_CONFIG } from '../data/beautyAuditConfig';
 import Papa from 'papaparse';
 
 interface Props {
@@ -27,6 +28,14 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
         m =>
           m.areaManagerName === user.name ||
           m.deputyManagerName === user.name ||
+          (user.assigned_stores && user.assigned_stores.includes(m.storeName))
+      );
+    }
+    if (user?.role === 'beauty_director') {
+      return managers.filter(
+        m =>
+          (user.department && m.department === user.department) ||
+          (user.supervisor && m.directorName === user.supervisor) ||
           (user.assigned_stores && user.assigned_stores.includes(m.storeName))
       );
     }
@@ -129,7 +138,11 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
       <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-6)' }}>
         <h2 className="text-xl font-bold flex items-center gap-2">
           <Building className="text-primary" size={24} />
-          {user?.role === 'manager' ? `${user.name} 區主管轄區門店配置` : '區主管門店配置圖'}
+          {user?.role === 'beauty_director'
+            ? `${user.name}${user.nickname ? ` (${user.nickname})` : ''} 美容總監轄屬門店配置（${user.department || ''}）`
+            : user?.role === 'manager'
+            ? `${user.name} 區主管轄區門店配置`
+            : '區主管門店配置圖'}
         </h2>
         
         {user?.role === 'admin' && (
@@ -174,9 +187,23 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
               boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.05)'
             }}>
               {/* Department Header */}
-              <div className="flex justify-between items-center" style={{ backgroundColor: 'rgba(255, 255, 255, 0.4)', padding: '12px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.4)' }}>
+              <div className="flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'rgba(255, 255, 255, 0.4)', padding: '12px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.4)' }}>
                 <div className="font-bold text-lg text-gray-900">{dept || '未分類處別'}</div>
-                <div className="text-sm text-gray-800 font-medium">處長：{director || '未設定'}</div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="text-sm text-gray-800 font-medium">處長：{director || '未設定'}</div>
+                  {(() => {
+                    const matchedBd = BEAUTY_DIRECTORS_CONFIG.find(
+                      bd => bd.department === dept || bd.supervisor === director
+                    );
+                    if (!matchedBd) return null;
+                    return (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 border border-rose-300 text-rose-800 text-xs font-extrabold">
+                        <Sparkles size={12} />
+                        美容總監：{matchedBd.name}（{matchedBd.nickname}）
+                      </span>
+                    );
+                  })()}
+                </div>
               </div>
               
               {/* Regions */}

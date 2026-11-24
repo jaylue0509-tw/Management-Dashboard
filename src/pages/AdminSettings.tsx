@@ -11,6 +11,9 @@ interface User {
   role: string;
   assigned_stores: string[];
   must_change_password?: boolean;
+  nickname?: string;
+  department?: string;
+  supervisor?: string;
 }
 
 interface AuditLog {
@@ -170,17 +173,28 @@ export const AdminSettings: React.FC = () => {
                 <div key={u.username} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <h3 className="font-bold text-gray-900 text-base">{u.name}</h3>
+                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                        <h3 className="font-bold text-gray-900 text-base">
+                          {u.name}
+                          {u.nickname ? ` (${u.nickname})` : ''}
+                        </h3>
+                        {u.role === 'beauty_director' && (
+                          <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full font-extrabold">
+                            🌸 美容總監{u.department ? ` · ${u.department}` : ''}
+                          </span>
+                        )}
                         {u.must_change_password && (
                           <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
                             待初次變更密碼
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-gray-500 font-medium flex items-center gap-1.5">
+                      <p className="text-xs text-gray-500 font-medium flex items-center gap-1.5 flex-wrap">
                         <span>登入帳號：</span>
                         <span className="text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded font-mono font-semibold">{u.username}</span>
+                        {u.supervisor && (
+                          <span className="text-rose-700 font-semibold">· 直屬長官：{u.supervisor}</span>
+                        )}
                       </p>
                     </div>
                     <button 

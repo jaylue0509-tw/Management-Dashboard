@@ -28,7 +28,9 @@ def get_users(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Forbidden")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT username, role, name, assigned_stores, must_change_password FROM users WHERE role = 'manager' ORDER BY name ASC")
+            cur.execute(
+                "SELECT username, role, name, assigned_stores, must_change_password, nickname, department, supervisor FROM users WHERE role IN ('manager', 'beauty_director') ORDER BY role DESC, name ASC"
+            )
             rows = cur.fetchall()
             return [
                 {
@@ -36,7 +38,10 @@ def get_users(user: dict = Depends(get_current_user)):
                     "role": r[1],
                     "name": r[2],
                     "assigned_stores": r[3],
-                    "must_change_password": True if r[4] is None else bool(r[4])
+                    "must_change_password": True if r[4] is None else bool(r[4]),
+                    "nickname": r[5] or "",
+                    "department": r[6] or "",
+                    "supervisor": r[7] or "",
                 }
                 for r in rows
             ]

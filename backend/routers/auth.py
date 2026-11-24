@@ -24,12 +24,15 @@ def login(req: LoginRequest):
     """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT password_hash, role, name, assigned_stores, must_change_password FROM users WHERE username = %s", (req.username,))
+            cur.execute(
+                "SELECT password_hash, role, name, assigned_stores, must_change_password, nickname, department, supervisor FROM users WHERE username = %s",
+                (req.username,),
+            )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=401, detail="Invalid username or password")
             
-            password_hash, role, name, assigned_stores, must_change_db = row
+            password_hash, role, name, assigned_stores, must_change_db, nickname, department, supervisor = row
             
             # 安全密碼驗證 (以 bcrypt 雜湊比對)
             is_valid_password = False
@@ -53,16 +56,19 @@ def login(req: LoginRequest):
             if not is_valid_password:
                 raise HTTPException(status_code=401, detail="Invalid username or password")
             
-            # 判斷是否需要強制更改密碼 (區主管若被標記為必須修改，登入後強制更改)
+            # 判斷是否需要強制更改密碼 (區主管與美容總監首次登入須強制修改初始密碼)
             must_change = False
-            if role == "manager" and (must_change_db is True or must_change_db is None):
+            if role in ("manager", "beauty_director") and (must_change_db is True or must_change_db is None):
                 must_change = True
             
             token_data = {
                 "sub": req.username,
                 "role": role,
                 "name": name,
-                "assigned_stores": assigned_stores,
+                "nickname": nickname or "",
+                "department": department or "",
+                "supervisor": supervisor or "",
+                "assigned_stores": assigned_stores or [],
                 "must_change_password": must_change
             }
             token = jwt.encode(token_data, JWT_SECRET, algorithm=JWT_ALGORITHM)
@@ -94,15 +100,24 @@ def get_me(user: dict = Depends(get_current_user)):
     if username:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT role, name, assigned_stores, must_change_password FROM users WHERE username = %s", (username,))
+                cur.execute(
+                    "SELECT role, name, assigned_stores, must_change_password, nickname, department, supervisor FROM users WHERE username = %s",
+                    (username,),
+                )
                 row = cur.fetchone()
                 if row:
-                    role, name, assigned_stores, must_change_db = row
-                    must_change = bool(role == "manager" and (must_change_db is True or must_change_db is None))
+                    role, name, assigned_stores, must_change_db, nickname, department, supervisor = row
+                    must_change = bool(
+                        role in ("manager", "beauty_director")
+                        and (must_change_db is True or must_change_db is None)
+                    )
                     return {
                         "sub": username,
                         "role": role,
                         "name": name,
+                        "nickname": nickname or "",
+                        "department": department or "",
+                        "supervisor": supervisor or "",
                         "assigned_stores": assigned_stores or [],
                         "must_change_password": must_change
                     }
@@ -111,10 +126,10 @@ def get_me(user: dict = Depends(get_current_user)):
 @router.post("/change-password")
 def change_password(req: ChangePasswordReq, user: dict = Depends(get_current_user)):
     """
-    區主管自行修改密碼：必須通過目前密碼驗證才可更新
+    區主管與美容總監自行修改密碼：必須通過目前密碼驗證才可更新
     """
-    if user.get("role") != "manager":
-        raise HTTPException(status_code=403, detail="僅區主管可使用此功能")
+    if user.get("role") not in ("manager", "beauty_director"):
+        raise HTTPException(status_code=403, detail="僅區主管與美容總監可使用此功能")
     if req.current_password == req.new_password:
         raise HTTPException(status_code=400, detail="新密碼不可與目前密碼相同")
 

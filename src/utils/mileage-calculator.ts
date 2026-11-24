@@ -1,6 +1,7 @@
 import type { Manager, VisitRecord } from '../types';
 import { getTaipeiDateStr, formatTaipeiReportTime } from './time-utils';
-import { compareRegion, normalizeRegionName, normalizeStoreName } from './store-region';
+import { normalizeRegionName, normalizeStoreName, compareRegion } from './store-region';
+import { BEAUTY_DIRECTORS_CONFIG } from '../data/beautyAuditConfig';
 import {
   HEADQUARTERS_POINT,
   RAW_STORE_COORDINATES,
@@ -577,6 +578,34 @@ export const buildExpenseDashboardReport = (params: {
           rosterMap.get(depName)!.stores.add(m.storeName);
         }
       }
+    }
+  }
+
+  // 納入各處美容總監（廖羿蓁／戴欐蘐），讓美容總監登入時也能檢視個人車資與零用金黏存單
+  for (const bd of BEAUTY_DIRECTORS_CONFIG) {
+    if (restrictToManagerName && bd.name !== restrictToManagerName.trim()) continue;
+    if (
+      !restrictToManagerName &&
+      selectedDepartment !== 'all' &&
+      !bd.department.includes(deptKeyword) &&
+      bd.department !== selectedDepartment
+    ) {
+      continue;
+    }
+    const deptStores = new Set(
+      filteredRawManagers
+        .filter(m => m.department === bd.department || m.directorName === bd.supervisor)
+        .map(m => m.storeName)
+        .filter(Boolean)
+    );
+    if (!rosterMap.has(bd.name)) {
+      rosterMap.set(bd.name, {
+        managerName: bd.name,
+        roleLabel: '美容總監',
+        region: bd.department === '營業二處' ? '中投區' : '新北區',
+        department: bd.department,
+        stores: deptStores,
+      });
     }
   }
 

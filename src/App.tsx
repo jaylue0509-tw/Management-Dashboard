@@ -9,7 +9,13 @@ const AuditApp = lazy(() => import('./pages/AuditApp').then(m => ({ default: m.A
 const BeautyAuditApp = lazy(() => import('./pages/BeautyAuditApp').then(m => ({ default: m.BeautyAuditApp })));
 const AdminSettings = lazy(() => import('./pages/AdminSettings').then(m => ({ default: m.AdminSettings })));
 
-const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles?: ('admin' | 'manager')[] }) => {
+const ProtectedRoute = ({
+  children,
+  allowedRoles,
+}: {
+  children: React.ReactNode;
+  allowedRoles?: ('admin' | 'manager' | 'beauty_director')[];
+}) => {
   const { user, token } = useAuth();
   
   if (!token || !user) {
@@ -17,11 +23,11 @@ const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode,
   }
   
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={user.role === 'beauty_director' ? '/dashboard?view=beauty' : '/'} replace />;
   }
 
-  // 登入後若標記為必須修改密碼，強制攔截並彈出修改密碼視窗，無法略過
-  if (user.role === 'manager' && user.must_change_password) {
+  // 登入後若標記為必須修改密碼，強制攔截並彈出修改密碼視窗，無法略過（區主管與美容總監一體適用）
+  if ((user.role === 'manager' || user.role === 'beauty_director') && user.must_change_password) {
     return (
       <div className="relative">
         <div className="pointer-events-none select-none blur-xs">
@@ -44,7 +50,7 @@ const App: React.FC = () => {
             <Route path="/login" element={<Login />} />
             
             <Route path="/dashboard" element={
-              <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <ProtectedRoute allowedRoles={['admin', 'manager', 'beauty_director']}>
                 <DashboardPage />
               </ProtectedRoute>
             } />
@@ -62,7 +68,7 @@ const App: React.FC = () => {
             } />
 
             <Route path="/beauty-audit" element={
-              <ProtectedRoute allowedRoles={['manager', 'admin']}>
+              <ProtectedRoute allowedRoles={['beauty_director', 'manager', 'admin']}>
                 <BeautyAuditApp />
               </ProtectedRoute>
             } />

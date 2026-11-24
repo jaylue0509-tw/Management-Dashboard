@@ -190,7 +190,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
   onOpenRouteMap,
 }) => {
   const { user } = useAuth();
-  const isManagerOnly = user?.role === 'manager';
+  const isManagerOnly = user?.role === 'manager' || user?.role === 'beauty_director';
   const restrictToManagerName = isManagerOnly ? user?.name : undefined;
 
   const [targetDateStr, setTargetDateStr] = useState<string>(initialDateStr);

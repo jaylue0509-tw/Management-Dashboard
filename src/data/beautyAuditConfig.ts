@@ -265,6 +265,29 @@ export const BEAUTY_TOPIC_GROUPS: BeautyTopicGroup[] = [
 
 export const BEAUTY_COACHING_TARGET_OPTIONS = ['美容組長', '資深美容師', '助理/實習生'] as const;
 
+/** 各營運處美容總監固定組織配置（與後端 backend/database.py 保持一致） */
+export interface BeautyDirectorProfile {
+  name: string;
+  nickname: string;
+  department: '營業一處' | '營業二處';
+  supervisor: string;
+}
+
+export const BEAUTY_DIRECTORS_CONFIG: BeautyDirectorProfile[] = [
+  {
+    name: '廖羿蓁',
+    nickname: 'kelly',
+    department: '營業一處',
+    supervisor: '簡楷潔',
+  },
+  {
+    name: '戴欐蘐',
+    nickname: '小貝',
+    department: '營業二處',
+    supervisor: '蔡嘉峯',
+  },
+];
+
 /** 供動態牆與報表快速查找之美容巡店細項名稱對照表 */
 export const BEAUTY_ITEM_LABEL_MAP: Record<string, string> = {
   'b-core-1': '美容操作防墜與牽繩',

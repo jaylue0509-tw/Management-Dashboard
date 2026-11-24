@@ -109,9 +109,17 @@ const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
 };
 
 export const DashboardPage: React.FC = () => {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'beauty' | 'route_map' | 'expense' | 'org_map' | 'map'>(() => {
     const qView = new URLSearchParams(window.location.search).get('view')?.trim();
-    return qView === 'beauty' ? 'beauty' : 'dashboard';
+    if (qView === 'beauty') return 'beauty';
+    try {
+      const savedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      if (savedUser?.role === 'beauty_director') return 'beauty';
+    } catch {
+      // 忽略解析異常
+    }
+    return 'dashboard';
   });
   const [routeMapInitialManager, setRouteMapInitialManager] = useState<string>('');
   const [routeMapInitialDate, setRouteMapInitialDate] = useState<string>('');
@@ -142,7 +150,6 @@ export const DashboardPage: React.FC = () => {
   const [scheduleModalManager, setScheduleModalManager] = useState('');
   const [focusedRecord, setFocusedRecord] = useState<{ id: string; ts: number } | null>(null);
   const [activityWallFilter, setActivityWallFilter] = useState<{ category: ActivityCategoryFilter; ts: number } | null>(null);
-  const { user } = useAuth();
   const navigate = useNavigate();
 
   const handleTimeRangeChange = (nextRange: string) => {
@@ -307,6 +314,26 @@ export const DashboardPage: React.FC = () => {
               assignedStores.has(i.storeName) ||
               coManagerNames.has(i.assignee) ||
               coManagerNames.has(i.createdBy)
+          );
+        } else if (user?.role === 'beauty_director') {
+          // 美容總監前端雙重保險隔離：僅保留所屬處別門市、本人提交之巡店紀錄與該處美容相關待辦
+          const bdName = user.name;
+          const assignedStores = new Set(user.assigned_stores || []);
+          validManagers = validManagers.filter(
+            (m: any) =>
+              (user.department && m.department === user.department) ||
+              (user.supervisor && m.directorName === user.supervisor) ||
+              assignedStores.has(m.storeName)
+          );
+          const deptStoreSet = new Set<string>([
+            ...assignedStores,
+            ...validManagers.map((m: any) => m.storeName).filter(Boolean),
+          ]);
+          validActivities = validActivities.filter((a: any) => a.areaManagerName === bdName);
+          validActionItems = validActionItems.filter(
+            (i: any) =>
+              i.createdBy === bdName ||
+              (deptStoreSet.has(i.storeName) && i.auditDepartment === '美容')
           );
         }
 
@@ -681,10 +708,10 @@ export const DashboardPage: React.FC = () => {
       : managers.filter(m => m.department.includes(keyword) || m.department === selectedDepartment);
     const validRawManagers = selectedManager
       ? deptManagers.filter(
-          m =>
-            normalizeRegionName(m.region) === normalizeRegionName(selectedManager.region) ||
-            m.areaManagerName === selectedManager.areaManagerName
-        )
+        m =>
+          normalizeRegionName(m.region) === normalizeRegionName(selectedManager.region) ||
+          m.areaManagerName === selectedManager.areaManagerName
+      )
       : deptManagers;
 
     const allAssignedStoresList = Array.from(new Set(validRawManagers.map(m => m.storeName)));
@@ -1095,19 +1122,26 @@ export const DashboardPage: React.FC = () => {
         {/* Tab Bar */}
         <div className="flex items-center justify-between mb-3.5 border-b border-gray-200 gap-2">
           <div className="flex gap-1 min-w-0 overflow-x-auto">
-            {[
-              { id: 'dashboard', label: '即時動態牆' },
-              { id: 'beauty', label: '🌸 美容住宿專項' },
-              { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
-              {
-                id: 'expense',
-                label:
-                  user?.role === 'admin'
-                    ? '🚗 巡店車資與黏存單（全區）'
-                    : '🚗 個人車資與零用金黏存單',
-              },
-              { id: 'org_map', label: '組織架構配置' },
-            ].map(tab => (
+            {(user?.role === 'beauty_director'
+              ? [
+                  { id: 'beauty', label: '🌸 我的美容巡店看板' },
+                  { id: 'expense', label: '🚗 個人車資與零用金黏存單' },
+                  { id: 'org_map', label: '轄屬處別組織架構' },
+                ]
+              : [
+                  { id: 'dashboard', label: '即時動態牆' },
+                  { id: 'beauty', label: '🌸 美容住宿專項' },
+                  { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
+                  {
+                    id: 'expense',
+                    label:
+                      user?.role === 'admin'
+                        ? '🚗 巡店車資與黏存單（全區）'
+                        : '🚗 個人車資與零用金黏存單',
+                  },
+                  { id: 'org_map', label: '組織架構配置' },
+                ]
+            ).map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as 'dashboard' | 'beauty' | 'route_map' | 'expense' | 'org_map')}
@@ -1158,129 +1192,129 @@ export const DashboardPage: React.FC = () => {
         {/* 僅在「巡店與異常戰情儀表板」分頁顯示全域時間篩選列，避免與地圖／車資分頁的單日選擇器重複混淆 */}
         {activeTab === 'dashboard' && (
           <div className="mb-3.5 sm:mb-4 bg-white border border-gray-200 rounded-2xl p-2.5 sm:p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
-          {/* 左側：今日 / 本週 / 上週 / 本月 / 自選日期 / 所有紀錄 快速切換 */}
-          <div className="flex items-center gap-1.5 flex-wrap w-full sm:w-auto">
-            {([
-              { id: 'day', label: '今日' },
-              { id: 'week', label: '本週' },
-              { id: 'last_week', label: '上週' },
-              { id: 'month', label: '本月' },
-              { id: 'custom', label: '📅 自選日期' },
-              { id: 'all', label: '所有紀錄' },
-            ] as const).map(opt => {
-              const active = timeRange === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => handleTimeRangeChange(opt.id)}
-                  className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${active
+            {/* 左側：今日 / 本週 / 上週 / 本月 / 自選日期 / 所有紀錄 快速切換 */}
+            <div className="flex items-center gap-1.5 flex-wrap w-full sm:w-auto">
+              {([
+                { id: 'day', label: '今日' },
+                { id: 'week', label: '本週' },
+                { id: 'last_week', label: '上週' },
+                { id: 'month', label: '本月' },
+                { id: 'custom', label: '📅 自選日期' },
+                { id: 'all', label: '所有紀錄' },
+              ] as const).map(opt => {
+                const active = timeRange === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleTimeRangeChange(opt.id)}
+                    className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${active
                       ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                       : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
-                    }`}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* 右側：日期選擇器（支援單日快速前後切換、本週前後週切換、或自訂起迄日期） */}
-          <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
-            <button
-              type="button"
-              onClick={() => {
-                if (timeRange === 'week' || timeRange === 'last_week') {
-                  const prevW = getTaipeiWeekBounds(customStartDate || getTaipeiTodayStr(), -1);
-                  setCustomStartDate(prevW.start);
-                  setCustomEndDate(prevW.end);
-                  setTimeRange('custom');
-                } else {
-                  const prevDay = shiftDateStr(customStartDate || getTaipeiTodayStr(), -1);
-                  setCustomStartDate(prevDay);
-                  setCustomEndDate(prevDay);
-                  setTimeRange('day');
-                }
-              }}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors cursor-pointer"
-              title={timeRange === 'week' || timeRange === 'last_week' ? '切換至前一週' : '切換至前一天'}
-            >
-              ◀ {timeRange === 'week' || timeRange === 'last_week' ? '前一週' : '前一日'}
-            </button>
-
-            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1">
-              <span className="text-[11px] font-bold text-gray-500">日期：</span>
-              <input
-                type="date"
-                value={customStartDate}
-                onChange={e => {
-                  const val = e.target.value;
-                  if (!val) return;
-                  setCustomStartDate(val);
-                  if (timeRange === 'day') {
-                    setCustomEndDate(val);
-                  } else if (timeRange === 'week') {
-                    const w = getTaipeiWeekBounds(val, 0);
-                    setCustomStartDate(w.start);
-                    setCustomEndDate(w.end);
-                  } else {
-                    if (val > customEndDate) setCustomEndDate(val);
-                    setTimeRange('custom');
-                  }
-                }}
-                className="text-xs font-semibold text-gray-800 bg-transparent outline-none cursor-pointer"
-              />
-              {(timeRange === 'week' || timeRange === 'last_week' || timeRange === 'month' || timeRange === 'custom') && (
-                <>
-                  <span className="text-xs text-gray-400 font-bold">～</span>
-                  <input
-                    type="date"
-                    value={customEndDate}
-                    onChange={e => {
-                      const val = e.target.value;
-                      if (!val) return;
-                      setCustomEndDate(val);
-                      if (val < customStartDate) setCustomStartDate(val);
-                      setTimeRange('custom');
-                    }}
-                    className="text-xs font-semibold text-gray-800 bg-transparent outline-none cursor-pointer"
-                  />
-                </>
-              )}
+                      }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                if (timeRange === 'week' || timeRange === 'last_week') {
-                  const nextW = getTaipeiWeekBounds(customStartDate || getTaipeiTodayStr(), 1);
-                  setCustomStartDate(nextW.start);
-                  setCustomEndDate(nextW.end);
-                  setTimeRange('custom');
-                } else {
-                  const nextDay = shiftDateStr(customStartDate || getTaipeiTodayStr(), 1);
-                  setCustomStartDate(nextDay);
-                  setCustomEndDate(nextDay);
-                  setTimeRange('day');
-                }
-              }}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors cursor-pointer"
-              title={timeRange === 'week' || timeRange === 'last_week' ? '切換至下一週' : '切換至後一天'}
-            >
-              {timeRange === 'week' || timeRange === 'last_week' ? '下一週' : '後一日'} ▶
-            </button>
-
-            {customStartDate !== getTaipeiTodayStr() && timeRange === 'day' && (
+            {/* 右側：日期選擇器（支援單日快速前後切換、本週前後週切換、或自訂起迄日期） */}
+            <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto">
               <button
                 type="button"
-                onClick={() => handleTimeRangeChange('day')}
-                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer"
+                onClick={() => {
+                  if (timeRange === 'week' || timeRange === 'last_week') {
+                    const prevW = getTaipeiWeekBounds(customStartDate || getTaipeiTodayStr(), -1);
+                    setCustomStartDate(prevW.start);
+                    setCustomEndDate(prevW.end);
+                    setTimeRange('custom');
+                  } else {
+                    const prevDay = shiftDateStr(customStartDate || getTaipeiTodayStr(), -1);
+                    setCustomStartDate(prevDay);
+                    setCustomEndDate(prevDay);
+                    setTimeRange('day');
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors cursor-pointer"
+                title={timeRange === 'week' || timeRange === 'last_week' ? '切換至前一週' : '切換至前一天'}
               >
-                回到今日
+                ◀ {timeRange === 'week' || timeRange === 'last_week' ? '前一週' : '前一日'}
               </button>
-            )}
+
+              <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1">
+                <span className="text-[11px] font-bold text-gray-500">日期：</span>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={e => {
+                    const val = e.target.value;
+                    if (!val) return;
+                    setCustomStartDate(val);
+                    if (timeRange === 'day') {
+                      setCustomEndDate(val);
+                    } else if (timeRange === 'week') {
+                      const w = getTaipeiWeekBounds(val, 0);
+                      setCustomStartDate(w.start);
+                      setCustomEndDate(w.end);
+                    } else {
+                      if (val > customEndDate) setCustomEndDate(val);
+                      setTimeRange('custom');
+                    }
+                  }}
+                  className="text-xs font-semibold text-gray-800 bg-transparent outline-none cursor-pointer"
+                />
+                {(timeRange === 'week' || timeRange === 'last_week' || timeRange === 'month' || timeRange === 'custom') && (
+                  <>
+                    <span className="text-xs text-gray-400 font-bold">～</span>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (!val) return;
+                        setCustomEndDate(val);
+                        if (val < customStartDate) setCustomStartDate(val);
+                        setTimeRange('custom');
+                      }}
+                      className="text-xs font-semibold text-gray-800 bg-transparent outline-none cursor-pointer"
+                    />
+                  </>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (timeRange === 'week' || timeRange === 'last_week') {
+                    const nextW = getTaipeiWeekBounds(customStartDate || getTaipeiTodayStr(), 1);
+                    setCustomStartDate(nextW.start);
+                    setCustomEndDate(nextW.end);
+                    setTimeRange('custom');
+                  } else {
+                    const nextDay = shiftDateStr(customStartDate || getTaipeiTodayStr(), 1);
+                    setCustomStartDate(nextDay);
+                    setCustomEndDate(nextDay);
+                    setTimeRange('day');
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors cursor-pointer"
+                title={timeRange === 'week' || timeRange === 'last_week' ? '切換至下一週' : '切換至後一天'}
+              >
+                {timeRange === 'week' || timeRange === 'last_week' ? '下一週' : '後一日'} ▶
+              </button>
+
+              {customStartDate !== getTaipeiTodayStr() && timeRange === 'day' && (
+                <button
+                  type="button"
+                  onClick={() => handleTimeRangeChange('day')}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer"
+                >
+                  回到今日
+                </button>
+              )}
+            </div>
           </div>
-        </div>
         )}
 
         {loading ? (
@@ -1339,8 +1373,8 @@ export const DashboardPage: React.FC = () => {
                         const matchedRecord = sch.recordId
                           ? allActivities.find(a => a.recordId === sch.recordId)
                           : allActivities.find(
-                              a => a.areaManagerName === m.areaManagerName && a.actionType === sch.type
-                            );
+                            a => a.areaManagerName === m.areaManagerName && a.actionType === sch.type
+                          );
                         const canEditThis =
                           user?.role === 'admin' ||
                           user?.name === m.areaManagerName ||

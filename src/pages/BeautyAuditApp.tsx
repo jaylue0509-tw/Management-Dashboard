@@ -329,16 +329,39 @@ export const BeautyAuditApp: React.FC = () => {
     signerRole,
   ]);
 
-  // 門市下拉選項清單（整合後端主檔與內建 storeRegions）
+  // 門市下拉選項清單（美容總監嚴格僅顯示自己所屬處別門市；管理員顯示全區門市）
+  const isBeautyDirector = user?.role === 'beauty_director';
   const storeOptions = useMemo(() => {
     const map = new Map<string, { storeName: string; region: string; beautyLeader: string }>();
-    for (const [reg, stores] of Object.entries(storeRegions)) {
-      for (const sName of stores) {
-        map.set(normalizeStoreName(sName), { storeName: sName, region: reg, beautyLeader: '' });
+    const assignedSet = new Set(
+      (user?.assigned_stores || []).map(s => normalizeStoreName(s))
+    );
+
+    if (!isBeautyDirector) {
+      for (const [reg, stores] of Object.entries(storeRegions)) {
+        for (const sName of stores) {
+          map.set(normalizeStoreName(sName), { storeName: sName, region: reg, beautyLeader: '' });
+        }
+      }
+    } else if (managersCatalog.length === 0 && assignedSet.size > 0) {
+      // 離線備援：僅放入自己所屬處別之 assigned_stores
+      for (const [reg, stores] of Object.entries(storeRegions)) {
+        for (const sName of stores) {
+          if (assignedSet.has(normalizeStoreName(sName))) {
+            map.set(normalizeStoreName(sName), { storeName: sName, region: reg, beautyLeader: '' });
+          }
+        }
       }
     }
+
     for (const m of managersCatalog) {
       if (!m.storeName || m.storeName.includes('測試')) continue;
+      if (isBeautyDirector) {
+        const matchDept = user?.department && m.department === user.department;
+        const matchSup = user?.supervisor && m.directorName === user.supervisor;
+        const matchAssigned = assignedSet.has(normalizeStoreName(m.storeName));
+        if (!matchDept && !matchSup && !matchAssigned) continue;
+      }
       const key = normalizeStoreName(m.storeName);
       map.set(key, {
         storeName: m.storeName,
@@ -357,7 +380,7 @@ export const BeautyAuditApp: React.FC = () => {
         item.region.toLowerCase().includes(q) ||
         item.beautyLeader.toLowerCase().includes(q)
     );
-  }, [managersCatalog, storeKeyword]);
+  }, [managersCatalog, storeKeyword, isBeautyDirector, user?.assigned_stores, user?.department, user?.supervisor]);
 
   // 選擇門市後，自動帶出該店上一次美容巡店摘要、未結案事項與上次輔導筆記（第 0 區塊連動）
   const fetchStoreHistory = useCallback(async (targetStore: string) => {
@@ -864,7 +887,7 @@ export const BeautyAuditApp: React.FC = () => {
                   <input
                     type="date"
                     value={visitDate}
-                    min={user?.role === 'manager' ? minDateStr : undefined}
+                    min={user?.role === 'manager' || user?.role === 'beauty_director' ? minDateStr : undefined}
                     max={todayStr}
                     onChange={e => e.target.value && setVisitDate(e.target.value)}
                     className="w-full px-3 py-2 text-sm font-bold bg-white border border-slate-300 rounded-xl outline-none focus:border-rose-500"
@@ -891,14 +914,26 @@ export const BeautyAuditApp: React.FC = () => {
                 <label className="block text-xs font-extrabold text-slate-700 mb-1">
                   <UserCheck size={13} className="inline mr-1 text-rose-600" />
                   美容總監（巡店者）
+                  {isBeautyDirector && user?.nickname ? ` · ${user.nickname}` : ''}
                 </label>
                 <input
                   type="text"
-                  value={directorName}
-                  onChange={e => setDirectorName(e.target.value)}
+                  value={isBeautyDirector ? user.name : directorName}
+                  readOnly={isBeautyDirector}
+                  onChange={e => !isBeautyDirector && setDirectorName(e.target.value)}
                   placeholder="請輸入總監姓名"
-                  className="w-full px-3 py-2 text-sm font-bold bg-white border border-slate-300 rounded-xl outline-none focus:border-rose-500"
+                  className={`w-full px-3 py-2 text-sm font-bold border rounded-xl outline-none ${
+                    isBeautyDirector
+                      ? 'bg-rose-50 border-rose-200 text-rose-900 cursor-not-allowed'
+                      : 'bg-white border-slate-300 focus:border-rose-500'
+                  }`}
                 />
+                {isBeautyDirector && (user?.department || user?.supervisor) && (
+                  <div className="text-[11px] font-semibold text-rose-700 mt-1">
+                    {user.department}
+                    {user.supervisor ? ` · 直屬長官：${user.supervisor}` : ''}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-extrabold text-slate-700 mb-1">
