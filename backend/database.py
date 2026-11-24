@@ -130,6 +130,16 @@ def init_db():
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname VARCHAR(50);")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(50);")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS supervisor VARCHAR(50);")
+                # 確保 users.role 欄位長度足夠容納 'beauty_director'（15 字元），避免舊環境建表長度不足導致寫入失敗
+                cur.execute("""
+                    SELECT character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'role'
+                """)
+                role_len_row = cur.fetchone()
+                if role_len_row and role_len_row[0] is not None and role_len_row[0] < 32:
+                    cur.execute("ALTER TABLE users ALTER COLUMN role TYPE VARCHAR(32);")
+                    logger.info("Migrated users.role column from VARCHAR(%s) to VARCHAR(32)", role_len_row[0])
                 cur.execute("UPDATE users SET must_change_password = TRUE WHERE must_change_password IS NULL AND role IN ('manager', 'beauty_director');")
                 cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin';")
                 cur.execute("DELETE FROM visit_records WHERE id = '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c';")
@@ -149,10 +159,13 @@ def init_db():
                 """)
             conn.commit()
 
-            # 初始化預設帳號、2026 組織同步與美容總監專屬帳號
-            init_default_users(conn)
-            sync_region_reorg_2026(conn)
-            sync_beauty_directors(conn)
+            # 初始化預設帳號、2026 組織同步與美容總監專屬帳號（各自獨立容錯，避免任一步驟失敗影響後續建帳）
+            for init_fn in (init_default_users, sync_region_reorg_2026, sync_beauty_directors):
+                try:
+                    init_fn(conn)
+                except Exception as step_err:
+                    conn.rollback()
+                    logger.error("DB Init Step %s Error: %s", init_fn.__name__, step_err)
 
     except Exception as e:
         logger.error("DB Init Error: %s", e)
@@ -355,6 +368,16 @@ BEAUTY_DIRECTORS_SEED = [
 ]
 
 
+def _hash_initial_password(plain: str = "admin1234") -> str:
+    """安全產生初始密碼雜湊（含 bcrypt 套件版本差異之降級保護）"""
+    try:
+        return pwd_context.hash(plain)
+    except Exception as e:
+        logger.warning("pwd_context.hash fallback triggered: %s", e)
+        import bcrypt
+        return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
 def sync_beauty_directors(conn):
     """
     同步建立／更新美容總監專屬帳號：
@@ -362,6 +385,20 @@ def sync_beauty_directors(conn):
     - 美容二處（戴欐蘐 / 小貝，直屬：蔡嘉峯）：其餘全部區域（中投區、彰雲區、高雄區、高屏區等）
     """
     with conn.cursor() as cur:
+        # 確保欄位齊全（供熱實例動態補建時也能安全執行）
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT TRUE;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname VARCHAR(50);")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(50);")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS supervisor VARCHAR(50);")
+        cur.execute("""
+            SELECT character_maximum_length
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'role'
+        """)
+        role_len_row = cur.fetchone()
+        if role_len_row and role_len_row[0] is not None and role_len_row[0] < 32:
+            cur.execute("ALTER TABLE users ALTER COLUMN role TYPE VARCHAR(32);")
+
         cur.execute("SELECT data FROM store WHERE id = 'managers'")
         row = cur.fetchone()
         managers = row[0] if row and isinstance(row[0], list) else []
@@ -389,14 +426,15 @@ def sync_beauty_directors(conn):
             )
             u_row = cur.fetchone()
             if not u_row:
-                pwd_hash = pwd_context.hash("admin1234")
+                pwd_hash = _hash_initial_password("admin1234")
                 cur.execute(
                     """
                     INSERT INTO users (
                         username, password_hash, role, name, assigned_stores,
-                        plain_password, must_change_password, nickname, department, supervisor
+                        must_change_password, nickname, department, supervisor
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (username) DO NOTHING
                     """,
                     (
                         bd["username"],
@@ -404,7 +442,6 @@ def sync_beauty_directors(conn):
                         "beauty_director",
                         bd["name"],
                         Json(dept_stores),
-                        "admin1234",
                         True,
                         bd["nickname"],
                         dept,
