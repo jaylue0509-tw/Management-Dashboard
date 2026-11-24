@@ -201,7 +201,7 @@ export const MileageExpensePanel: React.FC<Props> = ({
   const [selectedRegion, setSelectedRegion] = useState<string>(ALL_REGIONS);
   const [keyword, setKeyword] = useState<string>('');
   const [expandedManager, setExpandedManager] = useState<string | null>(() =>
-    user?.role === 'manager' ? user.name : null
+    isManagerOnly && user?.name ? user.name : null
   );
   const [onlyShowActive, setOnlyShowActive] = useState<boolean>(false);
   const [onlyShowMissingHub, setOnlyShowMissingHub] = useState<boolean>(false);
@@ -209,14 +209,14 @@ export const MileageExpensePanel: React.FC<Props> = ({
     Record<string, PettyCashDraftSummaryItem>
   >({});
 
-  // 自訂出發起始點地址狀態（區主管僅能設定與檢視本人專屬起點，並同步雲端資料庫）
+  // 自訂出發起始點地址狀態（區主管與美容總監僅能設定與檢視本人專屬起點，並同步雲端資料庫）
   const [customHubs, setCustomHubs] = useState<StoredCustomHubs>(() => loadCustomHubPoints());
   const [hubTargetScope, setHubTargetScope] = useState<string>(() =>
-    user?.role === 'manager' && user.name ? user.name : '__global__'
+    isManagerOnly && user?.name ? user.name : '__global__'
   );
   const [addressInput, setAddressInput] = useState<string>(() => {
     const hubs = loadCustomHubPoints();
-    if (user?.role === 'manager' && user.name) {
+    if (isManagerOnly && user?.name) {
       return hubs.byManager[user.name]?.address || '';
     }
     return hubs.global?.address || '';

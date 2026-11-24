@@ -204,7 +204,7 @@ export const BeautyDashboardPanel: React.FC<Props> = ({
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="font-extrabold text-slate-900">
                     {rec.storeName}
-                    {rec.beautyLeaderName ? `（美容組長：${rec.beautyLeaderName}）` : ''}
+                    {rec.beautyLeaderName ? `（美容師：${rec.beautyLeaderName}）` : ''}
                   </span>
                   <span className="text-[11px] text-slate-500">
                     {formatTaipeiReportTime(rec.createdAt)}

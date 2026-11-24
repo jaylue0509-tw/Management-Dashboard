@@ -7,6 +7,9 @@ import { clearCustomHubPointsCache } from '../utils/address-geocoder';
 const ACCOUNT_SCOPED_STORAGE_KEYS = [
   'petty_cash_google_evidence_v2',
   'petty_cash_custom_rows_v1',
+  'audit_app_draft',
+  'audit_app_multidrafts_v1',
+  'beauty_director_audit_draft_v1',
 ];
 
 const clearAccountScopedCaches = (): void => {

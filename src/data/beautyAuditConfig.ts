@@ -263,7 +263,7 @@ export const BEAUTY_TOPIC_GROUPS: BeautyTopicGroup[] = [
   },
 ];
 
-export const BEAUTY_COACHING_TARGET_OPTIONS = ['美容組長', '資深美容師', '助理/實習生'] as const;
+export const BEAUTY_COACHING_TARGET_OPTIONS = ['美容師', '資深美容師', '助理/實習生'] as const;
 
 /** 美容一處固定轄區（其餘區域全歸屬美容二處） */
 export const BEAUTY_DEPT_1_REGIONS = new Set(['新北區', '北桃區', '竹苗區', '宜花區', '嘉南區', '台南區']);

@@ -342,7 +342,7 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
                 VALUES (%s, %s, %s, %s)
             """, (record_id, region, created_at, Json(payload)))
 
-            default_assignee = "美容組長" if is_beauty_audit else "店長"
+            default_assignee = "美容師" if is_beauty_audit else "店長"
             new_items = []
             for k, v in core_checks.items():
                 if v in ('缺失', '違規', '待改善'):

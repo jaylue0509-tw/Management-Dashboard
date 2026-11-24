@@ -166,12 +166,16 @@ export const BeautyAuditApp: React.FC = () => {
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const [collapsedTopics, setCollapsedTopics] = useState<Record<number, boolean>>({});
+  const draftStorageKey = useMemo(
+    () => `${DRAFT_STORAGE_KEY}:${user?.sub || user?.name || 'guest'}`,
+    [user?.sub, user?.name]
+  );
 
   const todayStr = getTaipeiTodayStr();
   const minDateStr = useMemo(() => shiftTaipeiDate(-MAX_BACKFILL_DAYS), []);
   const defaultDueDateStr = useMemo(() => shiftTaipeiDate(7), []);
 
-  // 門市主檔（用於自動帶出區域與美容組長）
+  // 門市主檔（用於自動帶出區域與美容師）
   const [managersCatalog, setManagersCatalog] = useState<Manager[]>([]);
   const [storeKeyword, setStoreKeyword] = useState('');
 
@@ -207,11 +211,11 @@ export const BeautyAuditApp: React.FC = () => {
   // 第 4 層：表尾管理閉環
   const [photos, setPhotos] = useState<UploadedBeautyPhoto[]>([]);
   const [newActionItems, setNewActionItems] = useState<NewActionRow[]>([
-    { id: 'act-1', desc: '', assignee: '美容組長', dueDate: defaultDueDateStr, crossDepartment: false },
+    { id: 'act-1', desc: '', assignee: '美容師', dueDate: defaultDueDateStr, crossDepartment: false },
     { id: 'act-2', desc: '', assignee: '店長', dueDate: defaultDueDateStr, crossDepartment: false },
   ]);
   const [overallRating, setOverallRating] = useState<BeautyOverallRating | ''>('');
-  const [signerRole, setSignerRole] = useState<'美容組長' | '店長'>('美容組長');
+  const [signerRole, setSignerRole] = useState<'美容師' | '店長'>('美容師');
   const [signerName, setSignerName] = useState<string>('');
 
   // 語音輸入狀態與送出狀態
@@ -220,7 +224,7 @@ export const BeautyAuditApp: React.FC = () => {
   const [draftSavedHint, setDraftSavedHint] = useState('');
   const [isDraftHydrated, setIsDraftHydrated] = useState(false);
 
-  // 載入門市主檔以自動對應美容組長與分區
+  // 載入門市主檔以自動對應美容師與分區
   useEffect(() => {
     let active = true;
     fetch(`${API_BASE_URL}/managers`, { headers: getAuthHeaders() })
@@ -244,7 +248,7 @@ export const BeautyAuditApp: React.FC = () => {
       setDirectorName(user.name);
     }
     try {
-      const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+      const raw = localStorage.getItem(draftStorageKey);
       if (raw) {
         const d = JSON.parse(raw);
         if (d.visitDate) setVisitDate(d.visitDate);
@@ -268,7 +272,7 @@ export const BeautyAuditApp: React.FC = () => {
           setNewActionItems(d.newActionItems);
         }
         if (d.overallRating) setOverallRating(d.overallRating);
-        if (d.signerRole) setSignerRole(d.signerRole);
+        if (d.signerRole) setSignerRole(d.signerRole === '店長' ? '店長' : '美容師');
         if (typeof d.signerName === 'string') setSignerName(d.signerName);
       }
     } catch {
@@ -278,7 +282,7 @@ export const BeautyAuditApp: React.FC = () => {
     const qStore = new URLSearchParams(window.location.search).get('store')?.trim();
     if (qStore) setStoreName(qStore);
     setIsDraftHydrated(true);
-  }, [user?.name, directorName]);
+  }, [user?.name, directorName, draftStorageKey]);
 
   // 自動暫存文字草稿至本機（照片留在記憶體，避免超出 localStorage 容量）
   useEffect(() => {
@@ -307,13 +311,14 @@ export const BeautyAuditApp: React.FC = () => {
         signerRole,
         signerName,
       };
-      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(draftStorageKey, JSON.stringify(payload));
       setDraftSavedHint('草稿已自動暫存');
     } catch {
       // 忽略儲存空間不足
     }
   }, [
     isDraftHydrated,
+    draftStorageKey,
     visitDate,
     visitTime,
     storeName,
@@ -415,7 +420,7 @@ export const BeautyAuditApp: React.FC = () => {
       if (lastRes.ok) {
         const lastJson: LastBeautyAuditData = await lastRes.json();
         setLastAuditData(lastJson);
-        // 若前次美容巡店有未填寫過之美容組長或店長，貼心回填
+        // 若前次美容巡店有未填寫過之美容師或店長，貼心回填
         if (lastJson.hasHistory) {
           if (lastJson.beautyLeaderName) setBeautyLeaderName(prev => prev || lastJson.beautyLeaderName || '');
           if (lastJson.storeManagerName) setStoreManagerName(prev => prev || lastJson.storeManagerName || '');
@@ -652,7 +657,7 @@ export const BeautyAuditApp: React.FC = () => {
 
   const handleClearDraft = () => {
     if (!window.confirm('確定要清空目前填寫的美容總監巡店表草稿嗎？')) return;
-    localStorage.removeItem(DRAFT_STORAGE_KEY);
+    localStorage.removeItem(draftStorageKey);
     setStoreName('');
     setStoreRegion('');
     setStoreManagerName('');
@@ -669,7 +674,7 @@ export const BeautyAuditApp: React.FC = () => {
     setCoachingNotes('');
     setPhotos([]);
     setNewActionItems([
-      { id: 'act-1', desc: '', assignee: '美容組長', dueDate: defaultDueDateStr, crossDepartment: false },
+      { id: 'act-1', desc: '', assignee: '美容師', dueDate: defaultDueDateStr, crossDepartment: false },
       { id: 'act-2', desc: '', assignee: '店長', dueDate: defaultDueDateStr, crossDepartment: false },
     ]);
     setOverallRating('');
@@ -742,7 +747,7 @@ export const BeautyAuditApp: React.FC = () => {
       highlightParts.push(`模式：${modeMeta.badge} ${modeMeta.title}`);
     }
     if (beautyLeaderName.trim()) {
-      highlightParts.push(`美容組長：${beautyLeaderName.trim()}`);
+      highlightParts.push(`美容師：${beautyLeaderName.trim()}`);
     }
     if (storeManagerName.trim()) {
       highlightParts.push(`店長：${storeManagerName.trim()}`);
@@ -763,7 +768,7 @@ export const BeautyAuditApp: React.FC = () => {
       .filter(a => a.desc.trim())
       .map(a => ({
         desc: a.desc.trim(),
-        assignee: a.assignee.trim() || '美容組長',
+        assignee: a.assignee.trim() || '美容師',
         dueDate: a.dueDate || defaultDueDateStr,
         auditDepartment: a.crossDepartment ? '營運' : '美容',
         crossDepartment: a.crossDepartment,
@@ -815,7 +820,7 @@ export const BeautyAuditApp: React.FC = () => {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `送出失敗（HTTP ${res.status}）`);
       }
-      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      localStorage.removeItem(draftStorageKey);
       alert(
         hasCoreRedlineViolation || overallRating === '高風險（立即重點輔導）'
           ? `✅ 已送出「${storeName}」美容總監巡店表！因偵測到安全紅線或高風險評價，系統已自動啟動高風險預警通報。`
@@ -996,7 +1001,7 @@ export const BeautyAuditApp: React.FC = () => {
                     {storeOptions.map(opt => (
                       <option key={opt.storeName} value={opt.storeName}>
                         [{opt.region || '其他'}] {opt.storeName}
-                        {opt.beautyLeader ? `（美容組長：${opt.beautyLeader}）` : ''}
+                        {opt.beautyLeader ? `（美容師：${opt.beautyLeader}）` : ''}
                       </option>
                     ))}
                   </select>
@@ -1034,7 +1039,7 @@ export const BeautyAuditApp: React.FC = () => {
               </div>
             </div>
 
-            {/* 美容總監 / 店長 / 美容組長 */}
+            {/* 美容總監 / 店長 / 美容師 */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-extrabold text-slate-700 mb-1">
@@ -1075,7 +1080,7 @@ export const BeautyAuditApp: React.FC = () => {
               </div>
               <div>
                 <label className="block text-xs font-extrabold text-slate-700 mb-1">
-                  美容組長（主責美容師）
+                  美容師
                 </label>
                 <input
                   type="text"
@@ -1994,7 +1999,7 @@ export const BeautyAuditApp: React.FC = () => {
                       {
                         id: `act-${Date.now()}`,
                         desc: '',
-                        assignee: '美容組長',
+                        assignee: '美容師',
                         dueDate: defaultDueDateStr,
                         crossDepartment: false,
                       },
@@ -2188,7 +2193,7 @@ export const BeautyAuditApp: React.FC = () => {
                     門市主責人員線上簽認：
                   </span>
                   <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
-                    {(['美容組長', '店長'] as const).map(role => (
+                    {(['美容師', '店長'] as const).map(role => (
                       <button
                         key={role}
                         type="button"
@@ -2202,12 +2207,12 @@ export const BeautyAuditApp: React.FC = () => {
                     ))}
                   </div>
                 </div>
-                {(signerRole === '美容組長' ? beautyLeaderName : storeManagerName).trim() && (
+                {(signerRole === '美容師' ? beautyLeaderName : storeManagerName).trim() && (
                   <button
                     type="button"
                     onClick={() =>
                       setSignerName(
-                        (signerRole === '美容組長' ? beautyLeaderName : storeManagerName).trim()
+                        (signerRole === '美容師' ? beautyLeaderName : storeManagerName).trim()
                       )
                     }
                     className="text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-lg cursor-pointer transition-colors"

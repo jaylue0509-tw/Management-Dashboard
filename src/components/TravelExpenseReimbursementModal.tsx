@@ -377,6 +377,8 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
   >('idle');
   const [cloudSavedTime, setCloudSavedTime] = useState<string>('');
   const cloudSaveTimerRef = useRef<number | null>(null);
+  const hasPendingCloudSaveRef = useRef<boolean>(false);
+  const flushCloudSaveRef = useRef<(() => Promise<void>) | null>(null);
   const formMetaRef = useRef({
     formSerialNo: '',
     purposePrefix: '',
@@ -431,6 +433,7 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
       window.clearTimeout(cloudSaveTimerRef.current);
       cloudSaveTimerRef.current = null;
     }
+    hasPendingCloudSaveRef.current = false;
 
     const mgrName = activeManager.managerName;
     const prefix = `${mgrName}_${targetMonthKey}-`;
@@ -471,9 +474,12 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     }
   }, [activeManager, targetMonthKey]);
 
+  flushCloudSaveRef.current = flushCloudSave;
+
   // 800ms 防抖自動雲端存檔，避免每敲一個字就送出請求
   const scheduleCloudSave = useCallback(() => {
     if (!activeManager) return;
+    hasPendingCloudSaveRef.current = true;
     if (cloudSaveTimerRef.current) {
       window.clearTimeout(cloudSaveTimerRef.current);
     }
@@ -482,10 +488,21 @@ export const TravelExpenseReimbursementModal: React.FC<TravelExpenseReimbursemen
     }, 800);
   }, [activeManager, flushCloudSave]);
 
+  // 關閉彈窗或元件卸載時，若尚有未送出的防抖變更，立即補送一次至雲端避免最後 0.8 秒遺失
+  useEffect(() => {
+    if (!isOpen && hasPendingCloudSaveRef.current) {
+      flushCloudSaveRef.current?.();
+    }
+  }, [isOpen]);
+
   useEffect(() => {
     return () => {
       if (cloudSaveTimerRef.current) {
         window.clearTimeout(cloudSaveTimerRef.current);
+        cloudSaveTimerRef.current = null;
+      }
+      if (hasPendingCloudSaveRef.current) {
+        flushCloudSaveRef.current?.();
       }
     };
   }, []);

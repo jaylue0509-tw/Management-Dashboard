@@ -104,7 +104,7 @@ def get_action_items(store: str = "", user: Optional[dict] = Depends(get_optiona
                             "auditDepartment": "美容" if is_beauty_vr else "營運",
                             "desc": "；".join(defects_found),
                             "issueDescription": "；".join(defects_found),
-                            "assignee": "美容組長" if is_beauty_vr else "店長",
+                            "assignee": "美容師" if is_beauty_vr else "店長",
                             "dueDate": (vr_created.date().isoformat() if vr_created else _taipei_date_after(0)),
                             "status": "Open",
                             "sourceRecordId": vr_id

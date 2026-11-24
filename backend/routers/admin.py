@@ -61,17 +61,18 @@ def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT name, assigned_stores FROM users WHERE username = %s", (req.username,))
+            cur.execute("SELECT name, assigned_stores, role FROM users WHERE username = %s", (req.username,))
             row = cur.fetchone()
             
             is_new = not row
+            target_role = "manager" if is_new else (row[2] or "manager")
             if is_new:
                 req.username = req.name
                 cur.execute("SELECT 1 FROM users WHERE username = %s", (req.username,))
                 if cur.fetchone():
                     raise HTTPException(status_code=409, detail="此姓名帳號已存在")
-            before_data = {"name": row[0], "assigned_stores": row[1]} if row else None
-            after_data = {"name": req.name, "assigned_stores": req.assigned_stores}
+            before_data = {"name": row[0], "assigned_stores": row[1], "role": target_role} if row else None
+            after_data = {"name": req.name, "assigned_stores": req.assigned_stores, "role": target_role}
             
             if req.password:
                 pwd_hash = pwd_context.hash(req.password)
@@ -94,36 +95,38 @@ def update_user(req: UserUpdateReq, user: dict = Depends(get_current_user)):
                             (req.name, Json(req.assigned_stores), req.username))
                             
             log_id = str(uuid.uuid4())
-            cur.execute("SELECT data FROM store WHERE id = 'managers'")
-            mgr_row = cur.fetchone()
-            if mgr_row and isinstance(mgr_row[0], list):
-                managers_list = mgr_row[0]
-                assigned_norm = {_normalize_store(s) for s in (req.assigned_stores or []) if s}
-                old_name = (before_data or {}).get("name")
-                changed_mgrs = False
-                for m in managers_list:
-                    m_store_norm = _normalize_store(m.get("storeName"))
-                    is_deputy_target = (
-                        m.get("deputyManagerName") in (req.name, old_name)
-                        and m.get("areaManagerName") not in (req.name, old_name)
-                    )
-                    if m_store_norm in assigned_norm:
-                        if is_deputy_target:
-                            if m.get("deputyManagerName") != req.name:
+            # NOTE: 僅針對營運區主管 (manager) 回寫組織主檔之區域主管姓名；美容總監 (beauty_director) 獨立管理，絕不可覆蓋營運區主管
+            if target_role == "manager":
+                cur.execute("SELECT data FROM store WHERE id = 'managers'")
+                mgr_row = cur.fetchone()
+                if mgr_row and isinstance(mgr_row[0], list):
+                    managers_list = mgr_row[0]
+                    assigned_norm = {_normalize_store(s) for s in (req.assigned_stores or []) if s}
+                    old_name = (before_data or {}).get("name")
+                    changed_mgrs = False
+                    for m in managers_list:
+                        m_store_norm = _normalize_store(m.get("storeName"))
+                        is_deputy_target = (
+                            m.get("deputyManagerName") in (req.name, old_name)
+                            and m.get("areaManagerName") not in (req.name, old_name)
+                        )
+                        if m_store_norm in assigned_norm:
+                            if is_deputy_target:
+                                if m.get("deputyManagerName") != req.name:
+                                    m["deputyManagerName"] = req.name
+                                    changed_mgrs = True
+                            elif m.get("areaManagerName") != req.name:
+                                m["areaManagerName"] = req.name
+                                changed_mgrs = True
+                        elif old_name and old_name != req.name:
+                            if m.get("deputyManagerName") == old_name:
                                 m["deputyManagerName"] = req.name
                                 changed_mgrs = True
-                        elif m.get("areaManagerName") != req.name:
-                            m["areaManagerName"] = req.name
-                            changed_mgrs = True
-                    elif old_name and old_name != req.name:
-                        if m.get("deputyManagerName") == old_name:
-                            m["deputyManagerName"] = req.name
-                            changed_mgrs = True
-                        elif m.get("areaManagerName") == old_name:
-                            m["areaManagerName"] = req.name
-                            changed_mgrs = True
-                if changed_mgrs:
-                    cur.execute("UPDATE store SET data = %s WHERE id = 'managers'", (Json(managers_list),))
+                            elif m.get("areaManagerName") == old_name:
+                                m["areaManagerName"] = req.name
+                                changed_mgrs = True
+                    if changed_mgrs:
+                        cur.execute("UPDATE store SET data = %s WHERE id = 'managers'", (Json(managers_list),))
 
             action = "CREATE_USER" if is_new else "UPDATE_USER"
             cur.execute("""
