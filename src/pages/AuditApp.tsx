@@ -741,6 +741,85 @@ export const AuditApp = () => {
     }
   };
 
+  /**
+   * 快速送出「前次未結案缺失 (PDCA)」之改善照片與結案結果（免重新跑完步驟 2～5 勾選檢查單）
+   */
+  const submitQuickPdcaFollowup = async () => {
+    if (submitting || !storeName) return;
+
+    const resolvedItems = pastActionItems.filter(item => pdcaResults[item.id] === '已改善');
+    const photoAppendByRecord = new Map<string, { beforeUrl: string; afterUrl: string }[]>();
+
+    for (const item of pastActionItems) {
+      const pair = defectPhotos[`pdca-${item.id}`];
+      if (pair && (pair.beforeUrl || pair.afterUrl)) {
+        const targetRecId =
+          item.sourceRecordId ||
+          item.visitRecordId ||
+          (String(item.id).startsWith('vr-') ? String(item.id).slice(3) : '') ||
+          lastAuditData?.recordId ||
+          '';
+        if (targetRecId) {
+          const list = photoAppendByRecord.get(targetRecId) || [];
+          list.push({ beforeUrl: pair.beforeUrl || '', afterUrl: pair.afterUrl || '' });
+          photoAppendByRecord.set(targetRecId, list);
+        }
+      }
+    }
+
+    if (resolvedItems.length === 0 && photoAppendByRecord.size === 0) {
+      alert('請先點選「✅ 現場已改善」或上傳改善後照片');
+      return;
+    }
+
+    setSubmitting(true);
+    setSubmitStatusText('正在上傳改善後照片並更新結案狀態...');
+    try {
+      // 1. 將補拍照片寫回對應之原巡店紀錄（自動填入綠色「待補拍」空位或新增對比組）
+      for (const [recId, pairs] of photoAppendByRecord.entries()) {
+        const photoRes = await fetch(`${API_BASE_URL}/visit-records/${encodeURIComponent(recId)}/photos`, {
+          method: 'PUT',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ appendPairs: pairs }),
+        });
+        if (!photoRes.ok) {
+          const err = await photoRes.json().catch(() => ({}));
+          throw new Error(err.detail || '照片補傳失敗');
+        }
+      }
+
+      // 2. 將標記為「已改善」的前次待辦直接結案
+      for (const item of resolvedItems) {
+        const closeRes = await fetch(`${API_BASE_URL}/action-items/${encodeURIComponent(item.id)}`, {
+          method: 'PUT',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ status: 'Closed' }),
+        });
+        if (!closeRes.ok) {
+          const err = await closeRes.json().catch(() => ({}));
+          throw new Error(err.detail || '待辦結案失敗');
+        }
+      }
+
+      // 3. 刷新當前門市的待辦與清理已送出的 PDCA 照片暫存
+      const nextDefectPhotos = { ...defectPhotos };
+      for (const item of pastActionItems) {
+        delete nextDefectPhotos[`pdca-${item.id}`];
+      }
+      setDefectPhotos(nextDefectPhotos);
+      setPdcaResults({});
+      await fetchActionItems(storeName);
+
+      alert(`✅ 已完成「${storeName}」缺失照片補傳與結案（無須重跑檢查單），戰情牆已即時同步！`);
+      navigate('/dashboard');
+    } catch (err: any) {
+      alert(`⚠️ 儲存失敗：${err?.message || '網路連線異常，請稍後再試'}`);
+    } finally {
+      setSubmitting(false);
+      setSubmitStatusText('');
+    }
+  };
+
   const submitForm = async () => {
     if (submitting) return;
     if (!storeName) return alert('請選擇門市名稱');
@@ -1571,6 +1650,32 @@ export const AuditApp = () => {
               ))
             )}
           </div>
+
+          {pastActionItems.some(
+            item =>
+              pdcaResults[item.id] === '已改善' ||
+              Boolean(defectPhotos[`pdca-${item.id}`]?.beforeUrl) ||
+              Boolean(defectPhotos[`pdca-${item.id}`]?.afterUrl)
+          ) && (
+            <div className="mt-4 p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-400 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="text-xs text-emerald-950 leading-relaxed">
+                <div className="font-extrabold text-sm text-emerald-800">
+                  ⚡ 僅複查結案／補傳改善照片（免重跑下方檢查單）
+                </div>
+                <div>
+                  若今日僅為補傳改善後照片與確認前次缺失結案，點擊右側按鈕即可直接儲存返回戰情牆，無須重填步驟 2～5！
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={submitQuickPdcaFollowup}
+                className="shrink-0 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold shadow-sm cursor-pointer transition-all whitespace-nowrap"
+              >
+                {submitting ? '上傳結案中...' : '✅ 直接送出補照與結案'}
+              </button>
+            </div>
+          )}
         </div>
         )}
 

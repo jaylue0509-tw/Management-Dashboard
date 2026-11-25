@@ -243,10 +243,28 @@ export const DashboardPage: React.FC = () => {
     setScheduleModalOpen(true);
   };
 
-  const handleResolveStorePdca = async (storeName: string) => {
+  const handleResolveStorePdca = async (storeName: string, afterPhotos?: string[]) => {
     if (isSubmittingResolve) return;
     setIsSubmittingResolve(true);
     try {
+      // 若主管於彈窗內附上了改善後照片，先自動補入原巡店紀錄的「改善後 (After)」位置
+      if (afterPhotos && afterPhotos.length > 0 && resolvingStore?.recordId) {
+        const photoRes = await fetch(
+          `${API_BASE_URL}/visit-records/${encodeURIComponent(resolvingStore.recordId)}/photos`,
+          {
+            method: 'PUT',
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              appendPairs: afterPhotos.map(url => ({ beforeUrl: '', afterUrl: url })),
+            }),
+          }
+        );
+        if (!photoRes.ok) {
+          const err = await photoRes.json().catch(() => ({}));
+          throw new Error(err.detail || '改善後照片上傳失敗');
+        }
+      }
+
       const res = await fetch(`${API_BASE_URL}/pdca/resolve-store`, {
         method: 'POST',
         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -255,13 +273,17 @@ export const DashboardPage: React.FC = () => {
       if (res.ok) {
         setResolvingStore(null);
         await fetchData(true);
-        alert(`✅ 已將「${storeName}」標記為改善完成結案！`);
+        alert(
+          afterPhotos && afterPhotos.length > 0
+            ? `✅ 已將改善後照片存入原巡店紀錄，並將「${storeName}」標記為改善完成結案！`
+            : `✅ 已將「${storeName}」標記為改善完成結案！`
+        );
       } else {
         alert('結案儲存失敗，請稍後再試');
       }
     } catch (e) {
       console.error(e);
-      alert('網路連線異常，請稍後再試');
+      alert(e instanceof Error ? e.message : '網路連線異常，請稍後再試');
     } finally {
       setIsSubmittingResolve(false);
     }
@@ -1690,6 +1712,7 @@ export const DashboardPage: React.FC = () => {
                         externalFilter={activityWallFilter}
                         canEditActivity={canEditActivityRecord}
                         onEditActivity={activity => openEditActivityModal(activity)}
+                        onRefreshData={() => fetchData(true)}
                       />
                     </div>
                   </main>
@@ -1702,6 +1725,7 @@ export const DashboardPage: React.FC = () => {
                   actionItems={actionItems}
                   canEditActivity={canEditActivityRecord}
                   onEditActivity={activity => openEditActivityModal(activity)}
+                  onRefreshData={() => fetchData(true)}
                 />
               </Suspense>
             ) : activeTab === 'expense' ? (

@@ -98,7 +98,10 @@ def _store_photo(cur, record_id: str, url: str) -> str:
     """
     if not url:
         return ""
-    if url.startswith("https://") or url.startswith("/api/photos/"):
+    if "/api/photos/" in url:
+        idx = url.find("/api/photos/")
+        return url[idx:]
+    if url.startswith("https://") or url.startswith("http://"):
         return url
 
     mime_type = "image/jpeg"

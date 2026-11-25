@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { VisitRecord } from '../types';
-import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck, Search, Compass } from 'lucide-react';
+import { MapPin, Clock, AlertCircle, Star, Camera, ArrowRight, X, Calendar, CheckCircle2, ChevronDown, ChevronUp, Tag, ClipboardCheck, Search, Compass, Plus, Loader2 } from 'lucide-react';
 import { formatTaipeiReportTime, formatTimeAgo, getMinutesAgo } from '../utils/time-utils';
-import { API_ORIGIN } from '../api/api';
+import { API_BASE_URL, API_ORIGIN, getAuthHeaders } from '../api/api';
 import { BEAUTY_ITEM_LABEL_MAP } from '../data/beautyAuditConfig';
 
 export type ActivityCategoryFilter = 'all' | 'store' | 'abnormal' | 'normal' | 'photo' | 'schedule';
@@ -14,6 +14,7 @@ export interface Props {
   externalFilter?: { category: ActivityCategoryFilter; ts: number } | null;
   onEditActivity?: (activity: VisitRecord) => void;
   canEditActivity?: (activity: VisitRecord) => boolean;
+  onRefreshData?: () => void | Promise<void>;
 }
 
 const ITEM_NAMES: Record<string, string> = {
@@ -34,6 +35,44 @@ const resolvePhotoUrl = (url?: string): string => {
   }
   return url;
 };
+
+/**
+ * 壓縮現場補拍照片至適合行動網路上傳之尺寸（最長邊 1280px，JPEG 0.78）
+ */
+const compressFollowupPhoto = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxSide = 1280;
+        let { width, height } = img;
+        if (width > maxSide || height > maxSide) {
+          if (width >= height) {
+            height = Math.round((height * maxSide) / width);
+            width = maxSide;
+          } else {
+            width = Math.round((width * maxSide) / height);
+            height = maxSide;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(String(reader.result || ''));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.78));
+      };
+      img.onerror = () => reject(new Error('圖片載入失敗'));
+      img.src = String(reader.result || '');
+    };
+    reader.onerror = () => reject(new Error('檔案讀取失敗'));
+    reader.readAsDataURL(file);
+  });
 
 /**
  * 判斷單筆巡店紀錄是否含有異常或缺失
@@ -74,6 +113,7 @@ export const ActivityWall: React.FC<Props> = ({
   externalFilter,
   onEditActivity,
   canEditActivity,
+  onRefreshData,
 }) => {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxPair, setLightboxPair] = useState<{ beforeUrl: string; afterUrl: string; mode: 'before' | 'after' | 'compare' } | null>(null);
@@ -82,6 +122,91 @@ export const ActivityWall: React.FC<Props> = ({
   const [categoryFilter, setCategoryFilter] = useState<ActivityCategoryFilter>('all');
   const [regionFilter, setRegionFilter] = useState<string>('全部');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [localPhotoPairsByRecord, setLocalPhotoPairsByRecord] = useState<
+    Record<string, { beforeUrl: string; afterUrl: string }[]>
+  >({});
+  const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
+  const [localClosedItemIds, setLocalClosedItemIds] = useState<Record<string, boolean>>({});
+  const [closingItemId, setClosingItemId] = useState<string | null>(null);
+
+  /**
+   * 直接在動態卡片上補拍／更換「改善前」或「改善後」照片，免重新填寫整份檢查單
+   */
+  const handleDirectPhotoUpload = async (
+    activity: VisitRecord,
+    currentPairs: { beforeUrl: string; afterUrl: string }[],
+    pairIdx: number,
+    slot: 'beforeUrl' | 'afterUrl',
+    file?: File | null
+  ) => {
+    if (!file || uploadingSlot) return;
+    const slotKey = `${activity.recordId}:${pairIdx}:${slot}`;
+    setUploadingSlot(slotKey);
+    try {
+      const compressedBase64 = await compressFollowupPhoto(file);
+      const nextPairs = currentPairs.map(p => ({ ...p }));
+      if (pairIdx >= nextPairs.length) {
+        nextPairs.push({
+          beforeUrl: slot === 'beforeUrl' ? compressedBase64 : '',
+          afterUrl: slot === 'afterUrl' ? compressedBase64 : '',
+        });
+      } else {
+        nextPairs[pairIdx] = {
+          ...nextPairs[pairIdx],
+          [slot]: compressedBase64,
+        };
+      }
+
+      const res = await fetch(`${API_BASE_URL}/visit-records/${encodeURIComponent(activity.recordId)}/photos`, {
+        method: 'PUT',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ photoPairs: nextPairs }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `上傳失敗（HTTP ${res.status}）`);
+      }
+      const data = await res.json();
+      const savedPairs = Array.isArray(data?.photoPairs) ? data.photoPairs : nextPairs;
+      setLocalPhotoPairsByRecord(prev => ({
+        ...prev,
+        [activity.recordId]: savedPairs,
+      }));
+      await onRefreshData?.();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '照片上傳失敗，請稍後再試');
+    } finally {
+      setUploadingSlot(null);
+    }
+  };
+
+  /**
+   * 直接在動態牆將單筆 PDCA 追蹤項目結案（免重跑勾選檢查單）
+   */
+  const handleQuickCloseActionItem = async (item: any) => {
+    if (!item?.id || closingItemId) return;
+    if (!window.confirm(`確認「${item.issueDescription || item.desc}」已完成現場改善並直接結案嗎？`)) {
+      return;
+    }
+    setClosingItemId(item.id);
+    try {
+      const res = await fetch(`${API_BASE_URL}/action-items/${encodeURIComponent(item.id)}`, {
+        method: 'PUT',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ status: 'Closed' }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || '結案儲存失敗');
+      }
+      setLocalClosedItemIds(prev => ({ ...prev, [item.id]: true }));
+      await onRefreshData?.();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '網路連線異常，請稍後再試');
+    } finally {
+      setClosingItemId(null);
+    }
+  };
 
   useEffect(() => {
     if (focusedRecord?.id) {
@@ -370,12 +495,15 @@ export const ActivityWall: React.FC<Props> = ({
               !ai.desc?.includes('測試') &&
               !ai.issueDescription?.includes('測試')
           );
-          const validPhotoPairs = (activity.photoPairs || [])
+          const rawPhotoSource =
+            localPhotoPairsByRecord[activity.recordId] ?? (activity.photoPairs || []);
+          const validPhotoPairs = rawPhotoSource
             .filter(p => p && (p.beforeUrl || p.afterUrl))
             .map(p => ({
               beforeUrl: resolvePhotoUrl(p.beforeUrl),
               afterUrl: resolvePhotoUrl(p.afterUrl),
             }));
+          const canEditThis = !canEditActivity || canEditActivity(activity);
           
           const coreAbnormals = (activity as any).coreChecks
             ? Object.entries((activity as any).coreChecks).filter(([_, val]) => val === '缺失')
@@ -770,66 +898,307 @@ export const ActivityWall: React.FC<Props> = ({
                     </div>
                   )}
 
-                  {/* Photo Pairs (改善前 Before & 改善後 After) */}
-                  {validPhotoPairs.length > 0 && (
+                  {/* Photo Pairs (改善前 Before & 改善後 After — 支援直接點擊綠色「待補拍」補傳調整後照片) */}
+                  {(validPhotoPairs.length > 0 || (!isSpecialSchedule && canEditThis)) && (
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '10px' }}>
-                        <Camera size={14} color="#6b7280" />
-                        <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#111827' }}>現場對比（點擊放大／對比）</span>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                          <Camera size={14} color="#6b7280" />
+                          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#111827' }}>
+                            現場對比（點擊照片放大／點擊綠色框可直接補拍改善後照片）
+                          </span>
+                        </div>
+                        {canEditThis && (
+                          <label className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-extrabold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 cursor-pointer transition-colors">
+                            {uploadingSlot === `${activity.recordId}:${validPhotoPairs.length}:afterUrl` ? (
+                              <>
+                                <Loader2 size={12} className="animate-spin" />
+                                <span>上傳中...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Plus size={13} />
+                                <span>新增改善後照片</span>
+                              </>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={Boolean(uploadingSlot)}
+                              onClick={e => {
+                                (e.target as HTMLInputElement).value = '';
+                              }}
+                              onChange={e =>
+                                handleDirectPhotoUpload(
+                                  activity,
+                                  validPhotoPairs,
+                                  validPhotoPairs.length,
+                                  'afterUrl',
+                                  e.target.files?.[0]
+                                )
+                              }
+                            />
+                          </label>
+                        )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {validPhotoPairs.map((pair, pIdx) => (
-                          <div key={pIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', gap: '12px', background: '#ffffff', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', width: '100%', maxWidth: '300px' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#be123c' }}>改善前 (Before)</span>
-                              {pair.beforeUrl ? (
-                                <img
-                                  src={pair.beforeUrl}
-                                  alt="改善前"
-                                  style={{ width: '76px', height: '76px', objectFit: 'cover', borderRadius: '7px', border: '1px solid #fecdd3', cursor: 'pointer' }}
-                                  onClick={() => {
-                                    if (pair.beforeUrl && pair.afterUrl) {
-                                      setLightboxPair({ beforeUrl: pair.beforeUrl, afterUrl: pair.afterUrl, mode: 'compare' });
-                                    } else {
-                                      setLightboxImage(pair.beforeUrl);
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <div style={{ width: '76px', height: '76px', borderRadius: '7px', border: '1px dashed #d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.68rem', color: '#9ca3af', background: '#f9fafb' }}>
-                                  無照片
+
+                      {validPhotoPairs.length === 0 ? (
+                        <div className="text-xs text-gray-500 bg-white border border-dashed border-gray-200 rounded-lg px-3 py-2.5">
+                          尚無現場對比照片，可點擊右上角「＋ 新增改善後照片」直接補傳存證（免重填檢查單）。
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {validPhotoPairs.map((pair, pIdx) => {
+                            const isUploadingBefore =
+                              uploadingSlot === `${activity.recordId}:${pIdx}:beforeUrl`;
+                            const isUploadingAfter =
+                              uploadingSlot === `${activity.recordId}:${pIdx}:afterUrl`;
+
+                            return (
+                              <div
+                                key={pIdx}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-around',
+                                  gap: '12px',
+                                  background: '#ffffff',
+                                  padding: '10px 12px',
+                                  borderRadius: '10px',
+                                  border: '1px solid #e5e7eb',
+                                  width: '100%',
+                                  maxWidth: '340px',
+                                }}
+                              >
+                                {/* 改善前 (Before) */}
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' }}>
+                                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#be123c' }}>
+                                    改善前 (Before)
+                                  </span>
+                                  {pair.beforeUrl ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                                      <img
+                                        src={pair.beforeUrl}
+                                        alt="改善前"
+                                        style={{
+                                          width: '82px',
+                                          height: '82px',
+                                          objectFit: 'cover',
+                                          borderRadius: '8px',
+                                          border: '1px solid #fecdd3',
+                                          cursor: 'pointer',
+                                        }}
+                                        onClick={() => {
+                                          if (pair.beforeUrl && pair.afterUrl) {
+                                            setLightboxPair({
+                                              beforeUrl: pair.beforeUrl,
+                                              afterUrl: pair.afterUrl,
+                                              mode: 'compare',
+                                            });
+                                          } else {
+                                            setLightboxImage(pair.beforeUrl);
+                                          }
+                                        }}
+                                      />
+                                      {canEditThis && (
+                                        <label className="text-[11px] font-bold text-slate-600 hover:text-rose-600 bg-slate-50 hover:bg-rose-50 border border-slate-200 px-2 py-0.5 rounded-md cursor-pointer transition-colors">
+                                          {isUploadingBefore ? '上傳中...' : '更換'}
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            disabled={Boolean(uploadingSlot)}
+                                            onClick={e => {
+                                              (e.target as HTMLInputElement).value = '';
+                                            }}
+                                            onChange={e =>
+                                              handleDirectPhotoUpload(
+                                                activity,
+                                                validPhotoPairs,
+                                                pIdx,
+                                                'beforeUrl',
+                                                e.target.files?.[0]
+                                              )
+                                            }
+                                          />
+                                        </label>
+                                      )}
+                                    </div>
+                                  ) : canEditThis ? (
+                                    <label
+                                      className="w-[82px] h-[82px] rounded-lg border-2 border-dashed border-rose-300 bg-rose-50/60 hover:bg-rose-100/70 active:scale-95 flex flex-col items-center justify-center gap-1 text-rose-700 cursor-pointer transition-all"
+                                      title="點擊補傳改善前照片"
+                                    >
+                                      {isUploadingBefore ? (
+                                        <>
+                                          <Loader2 size={16} className="animate-spin text-rose-600" />
+                                          <span className="text-[10px] font-bold">上傳中</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Camera size={17} />
+                                          <span className="text-[11px] font-extrabold">點擊補拍</span>
+                                        </>
+                                      )}
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        disabled={Boolean(uploadingSlot)}
+                                        onClick={e => {
+                                          (e.target as HTMLInputElement).value = '';
+                                        }}
+                                        onChange={e =>
+                                          handleDirectPhotoUpload(
+                                            activity,
+                                            validPhotoPairs,
+                                            pIdx,
+                                            'beforeUrl',
+                                            e.target.files?.[0]
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                  ) : (
+                                    <div
+                                      style={{
+                                        width: '82px',
+                                        height: '82px',
+                                        borderRadius: '8px',
+                                        border: '1px dashed #d1d5db',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '0.68rem',
+                                        color: '#9ca3af',
+                                        background: '#f9fafb',
+                                      }}
+                                    >
+                                      無照片
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                            <ArrowRight size={15} color="#9ca3af" style={{ marginTop: '16px' }} />
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#15803d' }}>改善後 (After)</span>
-                              {pair.afterUrl ? (
-                                <img
-                                  src={pair.afterUrl}
-                                  alt="改善後"
-                                  style={{ width: '76px', height: '76px', objectFit: 'cover', borderRadius: '7px', border: '1px solid #bbf7d0', cursor: 'pointer' }}
-                                  onClick={() => {
-                                    if (pair.beforeUrl && pair.afterUrl) {
-                                      setLightboxPair({ beforeUrl: pair.beforeUrl, afterUrl: pair.afterUrl, mode: 'compare' });
-                                    } else {
-                                      setLightboxImage(pair.afterUrl);
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <div style={{ width: '76px', height: '76px', borderRadius: '7px', border: '1px dashed #bbf7d0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.68rem', color: '#9ca3af', background: '#f0fdf4' }}>
-                                  待補拍
+
+                                <ArrowRight size={15} color="#9ca3af" style={{ marginTop: '14px' }} />
+
+                                {/* 改善後 (After) — 綠色框支援一鍵點開補拍調整後照片 */}
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' }}>
+                                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#15803d' }}>
+                                    改善後 (After)
+                                  </span>
+                                  {pair.afterUrl ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                                      <img
+                                        src={pair.afterUrl}
+                                        alt="改善後"
+                                        style={{
+                                          width: '82px',
+                                          height: '82px',
+                                          objectFit: 'cover',
+                                          borderRadius: '8px',
+                                          border: '1px solid #86efac',
+                                          cursor: 'pointer',
+                                        }}
+                                        onClick={() => {
+                                          if (pair.beforeUrl && pair.afterUrl) {
+                                            setLightboxPair({
+                                              beforeUrl: pair.beforeUrl,
+                                              afterUrl: pair.afterUrl,
+                                              mode: 'compare',
+                                            });
+                                          } else {
+                                            setLightboxImage(pair.afterUrl);
+                                          }
+                                        }}
+                                      />
+                                      {canEditThis && (
+                                        <label className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-md cursor-pointer transition-colors">
+                                          {isUploadingAfter ? '上傳中...' : '更換'}
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            disabled={Boolean(uploadingSlot)}
+                                            onClick={e => {
+                                              (e.target as HTMLInputElement).value = '';
+                                            }}
+                                            onChange={e =>
+                                              handleDirectPhotoUpload(
+                                                activity,
+                                                validPhotoPairs,
+                                                pIdx,
+                                                'afterUrl',
+                                                e.target.files?.[0]
+                                              )
+                                            }
+                                          />
+                                        </label>
+                                      )}
+                                    </div>
+                                  ) : canEditThis ? (
+                                    <label
+                                      className="w-[82px] h-[82px] rounded-lg border-2 border-dashed border-emerald-400 bg-emerald-50 hover:bg-emerald-100/80 active:scale-95 flex flex-col items-center justify-center gap-1 text-emerald-700 cursor-pointer transition-all shadow-2xs"
+                                      title="點擊直接拍照或從相簿補傳改善後照片"
+                                    >
+                                      {isUploadingAfter ? (
+                                        <>
+                                          <Loader2 size={16} className="animate-spin text-emerald-600" />
+                                          <span className="text-[10px] font-bold">上傳中</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Camera size={18} className="text-emerald-600" />
+                                          <span className="text-[11px] font-extrabold">點擊補拍</span>
+                                        </>
+                                      )}
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        disabled={Boolean(uploadingSlot)}
+                                        onClick={e => {
+                                          (e.target as HTMLInputElement).value = '';
+                                        }}
+                                        onChange={e =>
+                                          handleDirectPhotoUpload(
+                                            activity,
+                                            validPhotoPairs,
+                                            pIdx,
+                                            'afterUrl',
+                                            e.target.files?.[0]
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                  ) : (
+                                    <div
+                                      style={{
+                                        width: '82px',
+                                        height: '82px',
+                                        borderRadius: '8px',
+                                        border: '1px dashed #bbf7d0',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '0.68rem',
+                                        color: '#9ca3af',
+                                        background: '#f0fdf4',
+                                      }}
+                                    >
+                                      待補拍
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {/* PDCA Action Items */}
+                  {/* PDCA Action Items（支援直接點擊標記已改善結案，免重跑檢查單） */}
                   {relatedItems.length > 0 && (
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '10px' }}>
@@ -843,35 +1212,53 @@ export const ActivityWall: React.FC<Props> = ({
                         }}>{relatedItems.length} 項</span>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
-                        {relatedItems.map(ai => (
-                          <div key={ai.id} style={{
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                            background: '#ffffff',
-                            border: '1px solid #e5e7eb',
-                            borderRadius: '8px',
-                            padding: '11px 13px',
-                            gap: '12px',
-                          }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#111827', marginBottom: '3px' }}>
-                                {ai.category ? `${ai.category} — ` : ''}{ai.issueDescription || ai.desc}
+                        {relatedItems.map(ai => {
+                          const effectiveStatus = localClosedItemIds[ai.id] ? 'Closed' : ai.status;
+                          const isOpen = effectiveStatus === 'Open';
+                          const isClosingThis = closingItemId === ai.id;
+                          return (
+                            <div
+                              key={ai.id}
+                              className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-white border border-gray-200 rounded-lg p-3"
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#111827', marginBottom: '3px' }}>
+                                  {ai.category ? `${ai.category} — ` : ''}{ai.issueDescription || ai.desc}
+                                </div>
+                                <div style={{ fontSize: '0.74rem', color: '#9ca3af' }}>
+                                  負責人：{ai.assignee}　|　期限：{new Date(ai.dueDate).toLocaleDateString('zh-TW')}
+                                </div>
                               </div>
-                              <div style={{ fontSize: '0.74rem', color: '#9ca3af' }}>
-                                負責人：{ai.assignee}　|　期限：{new Date(ai.dueDate).toLocaleDateString('zh-TW')}
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span
+                                  style={{
+                                    fontSize: '0.7rem',
+                                    fontWeight: 700,
+                                    padding: '3px 10px',
+                                    borderRadius: '99px',
+                                    whiteSpace: 'nowrap',
+                                    ...(isOpen
+                                      ? { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
+                                      : { color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0' }),
+                                  }}
+                                >
+                                  {isOpen ? '待改善' : '已結案'}
+                                </span>
+                                {isOpen && canEditThis && (
+                                  <button
+                                    type="button"
+                                    disabled={isClosingThis}
+                                    onClick={() => handleQuickCloseActionItem(ai)}
+                                    className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-60 text-white cursor-pointer transition-all whitespace-nowrap"
+                                    title="確認已改善並直接結案（無須重填檢查單）"
+                                  >
+                                    {isClosingThis ? '結案中...' : '✓ 標記已改善'}
+                                  </button>
+                                )}
                               </div>
                             </div>
-                            <span style={{
-                              fontSize: '0.7rem', fontWeight: 700,
-                              padding: '3px 10px', borderRadius: '99px', whiteSpace: 'nowrap', flexShrink: 0,
-                              ...(ai.status === 'Open'
-                                ? { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
-                                : { color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0' }
-                              )
-                            }}>
-                              {ai.status === 'Open' ? '待改善' : '已結案'}
-                            </span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}

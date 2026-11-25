@@ -134,24 +134,75 @@ def create_action_item(payload: dict = Body(...)):
     return {"success": True, "data": payload}
 
 @router.put("/action-items/{item_id}")
-def update_action_item(item_id: str, payload: dict = Body(...)):
+def update_action_item(
+    item_id: str,
+    payload: dict = Body(...),
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """
-    更新待改善事項狀態與註記
+    更新待改善事項狀態與註記（支援單筆直接結案，並於該店同部門待辦全數結案時自動同步更新巡店紀錄結案狀態）
     """
+    now_iso = datetime.utcnow().isoformat()
+    resolved_by = (user or {}).get("name") or payload.get("resolvedBy") or "區主管"
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT data FROM action_items WHERE id = %s", (item_id,))
+            # 相容虛擬合成待辦 ID（vr-{visit_record_id}）直接結案
+            if str(item_id).startswith("vr-"):
+                vr_id = str(item_id)[3:]
+                cur.execute("SELECT data FROM visit_records WHERE id = %s", (vr_id,))
+                vr_row = cur.fetchone()
+                if not vr_row:
+                    raise HTTPException(status_code=404, detail="找不到對應之巡店紀錄")
+                cur.execute(
+                    "UPDATE visit_records SET data = data || %s WHERE id = %s",
+                    (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso, "pdcaResolvedBy": resolved_by}), vr_id),
+                )
+                conn.commit()
+                return {"success": True, "data": {"id": item_id, "status": "Closed", "updatedAt": now_iso}}
+
+            cur.execute("SELECT data, store_name FROM action_items WHERE id = %s", (item_id,))
             row = cur.fetchone()
-            if not row:
+            if not row or not row[0]:
                 raise HTTPException(status_code=404, detail="Item not found")
             
-            data = row[0]
+            data = dict(row[0])
+            store_name = row[1] or data.get("storeName") or ""
             data.update(payload)
-            data["updatedAt"] = datetime.utcnow().isoformat()
+            data["updatedAt"] = now_iso
+            if data.get("status") == "Closed" and not data.get("resolvedBy"):
+                data["resolvedBy"] = resolved_by
             
-            cur.execute("""
-                UPDATE action_items SET data = %s WHERE id = %s
-            """, (Json(data), item_id))
+            cur.execute(
+                "UPDATE action_items SET data = %s WHERE id = %s",
+                (Json(data), item_id),
+            )
+
+            # 若本次將待辦標記為 Closed，檢查該門市同部門是否已無其他 Open 待辦；若已全數結案，同步標記原巡店紀錄 pdcaResolved
+            if data.get("status") == "Closed" and store_name:
+                norm_store = _normalize_store(store_name)
+                item_dept = data.get("auditDepartment") or "營運"
+                cur.execute(
+                    "SELECT data FROM action_items WHERE replace(store_name, '店', '') = %s AND id != %s",
+                    (norm_store, item_id),
+                )
+                remaining_open = [
+                    r[0] for r in cur.fetchall()
+                    if r[0]
+                    and (r[0].get("status") or "Open") == "Open"
+                    and (r[0].get("auditDepartment") or "營運") == item_dept
+                ]
+                if not remaining_open:
+                    if item_dept == "美容":
+                        cur.execute(
+                            "UPDATE visit_records SET data = data || %s WHERE replace(data->>'storeName', '店', '') = %s AND (data->>'auditType' = 'beauty' OR data->>'actionType' = '美容總監巡店')",
+                            (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso, "pdcaResolvedBy": resolved_by}), norm_store),
+                        )
+                    else:
+                        cur.execute(
+                            "UPDATE visit_records SET data = data || %s WHERE replace(data->>'storeName', '店', '') = %s AND COALESCE(data->>'auditType', '') != 'beauty' AND COALESCE(data->>'actionType', '') != '美容總監巡店'",
+                            (Json({"pdcaResolved": True, "pdcaResolvedAt": now_iso, "pdcaResolvedBy": resolved_by}), norm_store),
+                        )
         conn.commit()
     return {"success": True, "data": data}
 

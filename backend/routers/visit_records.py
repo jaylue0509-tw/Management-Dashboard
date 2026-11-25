@@ -456,27 +456,79 @@ def create_visit_record(background_tasks: BackgroundTasks, payload: dict = Body(
     return {"success": True, "data": {"recordId": record_id, "actionItemsCreated": action_items_created}}
 
 @router.put("/visit-records/{record_id}/photos")
-def update_visit_record_photos(record_id: str, payload: dict = Body(...)):
+def update_visit_record_photos(
+    record_id: str,
+    payload: dict = Body(...),
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """
     補傳或更新巡店紀錄之改善前 (Before) / 改善後 (After) 對比照片
+    - 支援整組更新 `photoPairs`
+    - 支援增量補拍 `appendPairs`（優先自動填入既有空的「改善後 After」待補拍格位，若無空位則新增對比組）
     """
-    raw_pairs = payload.get("photoPairs") or []
+    raw_pairs = payload.get("photoPairs")
+    append_pairs = payload.get("appendPairs") or []
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT data FROM visit_records WHERE id = %s", (record_id,))
             row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Visit record not found")
+            if not row or not row[0]:
+                raise HTTPException(status_code=404, detail="找不到該筆巡店紀錄")
 
-            record_data = row[0]
-            cleaned_pairs = []
-            for pair in raw_pairs:
-                before_url = _store_photo(cur, record_id, (pair or {}).get("beforeUrl", ""))
-                after_url = _store_photo(cur, record_id, (pair or {}).get("afterUrl", ""))
-                if before_url or after_url:
-                    cleaned_pairs.append({"beforeUrl": before_url, "afterUrl": after_url})
+            record_data = dict(row[0])
+
+            # 權限檢核（有登入資訊時：限管理員、紀錄本人或轄屬該門市之主管）
+            if user and user.get("role") != "admin":
+                mgr_name = (user.get("name") or "").strip()
+                assigned_norm = {_normalize_store(s) for s in (user.get("assigned_stores") or [])}
+                if user.get("sub"):
+                    cur.execute("SELECT assigned_stores FROM users WHERE username = %s", (user.get("sub"),))
+                    u_row = cur.fetchone()
+                    if u_row and u_row[0]:
+                        assigned_norm |= {_normalize_store(s) for s in u_row[0]}
+                rec_mgr = str(record_data.get("areaManagerName") or "").strip()
+                rec_store_norm = _normalize_store(record_data.get("storeName"))
+                if rec_mgr != mgr_name and rec_store_norm not in assigned_norm:
+                    raise HTTPException(status_code=403, detail="您僅能為自己或轄區門市的巡店紀錄補傳照片")
+
+            if raw_pairs is not None:
+                cleaned_pairs = []
+                for pair in (raw_pairs or []):
+                    before_url = _store_photo(cur, record_id, (pair or {}).get("beforeUrl", ""))
+                    after_url = _store_photo(cur, record_id, (pair or {}).get("afterUrl", ""))
+                    if before_url or after_url:
+                        cleaned_pairs.append({"beforeUrl": before_url, "afterUrl": after_url})
+            else:
+                cleaned_pairs = [
+                    {
+                        "beforeUrl": _store_photo(cur, record_id, (p or {}).get("beforeUrl", "")),
+                        "afterUrl": _store_photo(cur, record_id, (p or {}).get("afterUrl", "")),
+                    }
+                    for p in (record_data.get("photoPairs") or [])
+                    if p and (p.get("beforeUrl") or p.get("afterUrl"))
+                ]
+
+            # 處理增量補拍（若僅傳 afterUrl 且既有對比組有空缺的 afterUrl，自動填入「待補拍」空位）
+            for ap in append_pairs:
+                b_url = _store_photo(cur, record_id, (ap or {}).get("beforeUrl", ""))
+                a_url = _store_photo(cur, record_id, (ap or {}).get("afterUrl", ""))
+                if not b_url and not a_url:
+                    continue
+                if a_url and not b_url:
+                    filled = False
+                    for existing in cleaned_pairs:
+                        if existing.get("beforeUrl") and not existing.get("afterUrl"):
+                            existing["afterUrl"] = a_url
+                            filled = True
+                            break
+                    if not filled:
+                        cleaned_pairs.append({"beforeUrl": "", "afterUrl": a_url})
+                else:
+                    cleaned_pairs.append({"beforeUrl": b_url, "afterUrl": a_url})
 
             record_data["photoPairs"] = cleaned_pairs
+            record_data["updatedAt"] = datetime.utcnow().isoformat() + "Z"
             cur.execute("UPDATE visit_records SET data = %s WHERE id = %s", (Json(record_data), record_id))
         conn.commit()
 

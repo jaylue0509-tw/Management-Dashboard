@@ -19,6 +19,7 @@ interface Props {
   actionItems: any[];
   onEditActivity?: (activity: VisitRecord) => void;
   canEditActivity?: (activity: VisitRecord) => boolean;
+  onRefreshData?: () => void | Promise<void>;
 }
 
 /**
@@ -30,6 +31,7 @@ export const BeautyDashboardPanel: React.FC<Props> = ({
   actionItems,
   onEditActivity,
   canEditActivity,
+  onRefreshData,
 }) => {
   const navigate = useNavigate();
 
@@ -257,6 +259,7 @@ export const BeautyDashboardPanel: React.FC<Props> = ({
           actionItems={actionItems}
           onEditActivity={onEditActivity}
           canEditActivity={canEditActivity}
+          onRefreshData={onRefreshData}
         />
       )}
     </div>
