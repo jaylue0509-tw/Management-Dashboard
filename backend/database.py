@@ -157,6 +157,27 @@ def init_db():
                         created_at TIMESTAMP
                     );
                 """)
+
+                # 建立區經理與美容總監「預排行程」獨立資料表
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS planned_schedules (
+                        id VARCHAR(50) PRIMARY KEY,
+                        person_name VARCHAR(60) NOT NULL,
+                        person_role VARCHAR(32) NOT NULL,
+                        department VARCHAR(60) DEFAULT '',
+                        region VARCHAR(60) DEFAULT '',
+                        schedule_date VARCHAR(10) NOT NULL,
+                        time_slot VARCHAR(30) DEFAULT '全天',
+                        schedule_type VARCHAR(40) NOT NULL,
+                        store_name VARCHAR(120) DEFAULT '',
+                        note TEXT DEFAULT '',
+                        created_by VARCHAR(60) DEFAULT '',
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_planned_schedules_date ON planned_schedules (schedule_date);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_planned_schedules_person ON planned_schedules (person_name);")
             conn.commit()
 
             # 初始化預設帳號、2026 組織同步與美容總監專屬帳號（各自獨立容錯，避免任一步驟失敗影響後續建帳）

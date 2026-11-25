@@ -38,6 +38,12 @@ const AuditRouteMapPanel = lazy(() =>
 const BeautyDashboardPanel = lazy(() =>
   import('../components/BeautyDashboardPanel').then(m => ({ default: m.BeautyDashboardPanel }))
 );
+const PlannedSchedulePanel = lazy(() =>
+  import('../components/PlannedSchedulePanel').then(m => ({ default: m.PlannedSchedulePanel }))
+);
+const ExecutivePlannedOverview = lazy(() =>
+  import('../components/ExecutivePlannedOverview').then(m => ({ default: m.ExecutivePlannedOverview }))
+);
 const DashboardChartsSection = lazy(() =>
   import('../components/charts/DashboardChartsSection').then(m => ({ default: m.DashboardChartsSection }))
 );
@@ -111,9 +117,10 @@ const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'beauty' | 'route_map' | 'expense' | 'org_map' | 'map'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'beauty' | 'planned' | 'route_map' | 'expense' | 'org_map' | 'map'>(() => {
     const qView = new URLSearchParams(window.location.search).get('view')?.trim();
     if (qView === 'beauty') return 'beauty';
+    if (qView === 'planned') return 'planned';
     try {
       const savedUser = JSON.parse(localStorage.getItem('user') || 'null');
       if (savedUser?.role === 'beauty_director') return 'beauty';
@@ -1147,11 +1154,19 @@ export const DashboardPage: React.FC = () => {
             {(user?.role === 'beauty_director'
               ? [
                 { id: 'beauty', label: '🌸 我的美容巡店看板' },
+                { id: 'planned', label: '📅 美容總監預排行程' },
                 { id: 'expense', label: '🚗 個人車資與零用金黏存單' },
                 { id: 'org_map', label: '轄屬處別組織架構' },
               ]
               : [
                 { id: 'dashboard', label: '即時動態牆' },
+                {
+                  id: 'planned',
+                  label:
+                    user?.role === 'admin'
+                      ? '📅 預排行程（區經理／美容總監）'
+                      : '📅 區經理預排行程',
+                },
                 { id: 'beauty', label: '🌸 美容住宿專項' },
                 { id: 'route_map', label: '🗺️ 巡店路徑地圖與最佳化' },
                 {
@@ -1166,7 +1181,7 @@ export const DashboardPage: React.FC = () => {
             ).map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as 'dashboard' | 'beauty' | 'route_map' | 'expense' | 'org_map')}
+                onClick={() => setActiveTab(tab.id as 'dashboard' | 'beauty' | 'planned' | 'route_map' | 'expense' | 'org_map')}
                 className="px-3 py-2.5 sm:px-4 sm:py-2.5 text-xs sm:text-[0.88rem] whitespace-nowrap cursor-pointer transition-all"
                 style={{
                   fontWeight: activeTab === tab.id || (tab.id === 'route_map' && activeTab === 'map') ? 700 : 500,
@@ -1356,6 +1371,13 @@ export const DashboardPage: React.FC = () => {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('planned')}
+                    className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 transition-all cursor-pointer flex items-center justify-center gap-1 shadow-xs whitespace-nowrap"
+                  >
+                    <span>🗓️ 預排行程表</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => openCreateActivityModal(undefined, '總部行程')}
@@ -1613,6 +1635,15 @@ export const DashboardPage: React.FC = () => {
                   })()}
                 </div>
 
+                {/* 獨立區塊：長官速覽每一位區經理與美容總監「今日／明日預排行程」與到店達成燈號 */}
+                <Suspense fallback={null}>
+                  <ExecutivePlannedOverview
+                    managers={managers}
+                    allActivities={allActivities}
+                    onOpenFullPlanner={() => setActiveTab('planned')}
+                  />
+                </Suspense>
+
                 {/* 巡店週期預警：自動偵測超過指定天數未實地巡視的門市（獨立懶載入） */}
                 <Suspense fallback={null}>
                   <OverdueStoresBanner
@@ -1718,6 +1749,13 @@ export const DashboardPage: React.FC = () => {
                   </main>
                 </div>
               </>
+            ) : activeTab === 'planned' ? (
+              <Suspense fallback={<TabLoadingFallback />}>
+                <PlannedSchedulePanel
+                  managers={managers}
+                  allActivities={allActivities}
+                />
+              </Suspense>
             ) : activeTab === 'beauty' ? (
               <Suspense fallback={<TabLoadingFallback />}>
                 <BeautyDashboardPanel
