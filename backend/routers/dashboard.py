@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 from psycopg2.extras import Json
 
-from backend.database import get_db_connection, BEAUTY_DEPT_1_REGIONS, sync_beauty_directors
+from backend.database import get_db_connection, BEAUTY_DEPT_1_REGIONS, sync_beauty_directors, sync_region_reorg_2026
 from backend.security import get_current_user, get_optional_user
 from backend.schemas import Manager
 from backend.utils import _normalize_activity_time
@@ -67,6 +67,7 @@ def import_managers(managers: List[Manager] = Body(...), user: dict = Depends(ge
                 ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
             """, (Json([m.dict() for m in managers]),))
         conn.commit()
+        sync_region_reorg_2026(conn)
         sync_beauty_directors(conn)
     return {"success": True, "count": len(managers)}
 

@@ -26,7 +26,7 @@ import {
   isRegionInBeautyDirectorScope,
 } from '../data/beautyAuditConfig';
 import { getTaipeiDateStr, getTaipeiTodayStr } from '../utils/time-utils';
-import { normalizeStoreName } from '../utils/store-region';
+import { normalizeStoreName, getBusinessDepartment } from '../utils/store-region';
 import type { Manager, VisitRecord } from '../types';
 
 export interface RosterPerson {
@@ -161,13 +161,13 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
         [m.deputyManagerName, '副區主管'],
       ] as const) {
         const trimmed = (name || '').trim();
-        if (!trimmed || trimmed === '無') continue;
+        if (!trimmed || trimmed === '無' || trimmed === '陳育廷') continue;
         if (!mgrMap.has(trimmed)) {
           mgrMap.set(trimmed, {
             name: trimmed,
             role: 'manager',
             title,
-            department: m.department || '',
+            department: getBusinessDepartment(m.region) || m.department || '',
             supervisor: m.directorName || '',
             region: m.region || '',
             nickname: '',
@@ -244,10 +244,13 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
     if (user?.role === 'beauty_director') return [];
     const base =
       serverAreaManagers.length > 0 ? serverAreaManagers : fallbackRoster.areaManagers;
+    const activeManagers = base
+      .filter(p => p.name !== '陳育廷')
+      .map(p => ({ ...p, department: getBusinessDepartment(p.region) || p.department }));
     const scoped =
       user?.role === 'manager'
-        ? base.filter(p => p.name === user.name || p.stores.some(s => user.assigned_stores?.includes(s)))
-        : base;
+        ? activeManagers.filter(p => p.name === user.name || p.stores.some(s => user.assigned_stores?.includes(s)))
+        : activeManagers;
     const q = personKeyword.trim().toLowerCase();
     return scoped.filter(p => {
       if (deptSubFilter !== 'all' && p.department !== deptSubFilter) return false;

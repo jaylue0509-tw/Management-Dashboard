@@ -13,6 +13,7 @@ from backend.database import (
     get_db_connection,
     sync_beauty_directors,
 )
+from backend.organization import business_department_for_region
 from backend.security import get_current_user
 
 logger = logging.getLogger("dashboard-api")
@@ -93,9 +94,12 @@ def _build_full_roster(cur) -> dict:
         deputy_mgr = str(m.get("deputyManagerName") or "").strip()
 
         all_valid_stores_by_region.append((reg, s_name))
+        expected_dept = business_department_for_region(reg)
+        if expected_dept:
+            dept = expected_dept
 
         for name, is_deputy in ((area_mgr, False), (deputy_mgr, True)):
-            if not name or name == "無":
+            if not name or name in ("無", "陳育廷"):
                 continue
             if name not in mgr_map:
                 mgr_map[name] = {
@@ -111,34 +115,38 @@ def _build_full_roster(cur) -> dict:
             entry = mgr_map[name]
             if not is_deputy:
                 entry["title"] = "區經理"
-            if dept and not entry["department"]:
+            if dept and entry["department"] != dept:
                 entry["department"] = dept
             if reg and not entry["region"]:
                 entry["region"] = reg
             if s_name not in entry["stores"]:
                 entry["stores"].append(s_name)
 
-    # 補充 users 表中角色為 manager 但尚未出現在 store.managers 的帳號
+    # 補充 users 表中角色為 manager 且仍有轄屬門市之帳號（排除已無門市之離職／舊帳號）
     cur.execute(
-        "SELECT name, assigned_stores, department, supervisor FROM users WHERE role = 'manager' ORDER BY name ASC"
+        "SELECT name, assigned_stores, department, supervisor FROM users WHERE role = 'manager' AND username != '陳育廷' AND name != '陳育廷' ORDER BY name ASC"
     )
     for u_name, u_stores, u_dept, u_sup in cur.fetchall():
         clean_name = str(u_name or "").strip()
+        valid_stores = [s for s in (u_stores or []) if s and "測試" not in s]
         if not clean_name:
             continue
         if clean_name not in mgr_map:
+            if not valid_stores:
+                continue
+            store_region = next((reg for reg, store in all_valid_stores_by_region if store in valid_stores), "")
             mgr_map[clean_name] = {
                 "name": clean_name,
                 "role": "manager",
                 "title": "區經理",
-                "department": str(u_dept or "").strip(),
+                "department": business_department_for_region(store_region) or str(u_dept or "").strip(),
                 "supervisor": str(u_sup or "").strip(),
-                "region": "",
+                "region": store_region,
                 "nickname": "",
-                "stores": [s for s in (u_stores or []) if s and "測試" not in s],
+                "stores": valid_stores,
             }
-        elif not mgr_map[clean_name]["stores"] and u_stores:
-            mgr_map[clean_name]["stores"] = [s for s in u_stores if s and "測試" not in s]
+        elif not mgr_map[clean_name]["stores"] and valid_stores:
+            mgr_map[clean_name]["stores"] = valid_stores
 
     area_managers_roster = sorted(
         mgr_map.values(),
@@ -241,7 +249,7 @@ def list_planned_schedules(
                 filtered_mgrs = [m for m in roster["areaManagers"] if m["name"] in allowed_names]
                 filtered_bds = []
 
-            conditions = []
+            conditions = ["person_name <> '陳育廷'"]
             params: list = []
             if start_date:
                 conditions.append("schedule_date >= %s")
@@ -272,12 +280,16 @@ def list_planned_schedules(
             cur.execute(query, tuple(params))
             rows = cur.fetchall()
 
+    roster_by_name = {
+        person["name"]: person
+        for person in roster["areaManagers"] + roster["beautyDirectors"]
+    }
     schedules = [
         {
             "id": r[0],
             "personName": r[1],
             "personRole": r[2],
-            "department": r[3] or "",
+            "department": roster_by_name.get(r[1], {}).get("department") or business_department_for_region(r[4] or "") or r[3] or "",
             "region": r[4] or "",
             "scheduleDate": r[5],
             "timeSlot": r[6] or "全天",
@@ -349,8 +361,10 @@ def create_planned_schedule(
             # 自動補齊處別與區域
             all_people = roster["areaManagers"] + roster["beautyDirectors"]
             matched_person = next((p for p in all_people if p["name"] == person_name), None)
-            dept = (req.department or "").strip() or (matched_person["department"] if matched_person else "")
-            region = (req.region or "").strip() or (matched_person["region"] if matched_person else "")
+            if not matched_person or matched_person["role"] != person_role:
+                raise HTTPException(status_code=400, detail="此人員不在現行組織名冊中")
+            dept = matched_person["department"]
+            region = matched_person["region"]
 
             created_items = []
             for st_name in target_stores:

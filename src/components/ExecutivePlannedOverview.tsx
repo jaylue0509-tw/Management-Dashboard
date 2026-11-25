@@ -3,7 +3,7 @@ import { Calendar, CheckCircle2, Clock, Sparkles, Users, ArrowRight, AlertCircle
 import { useAuth } from '../contexts/AuthContext';
 import { API_BASE_URL, getAuthHeaders } from '../api/api';
 import { getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr } from '../utils/time-utils';
-import { normalizeStoreName } from '../utils/store-region';
+import { normalizeStoreName, getBusinessDepartment } from '../utils/store-region';
 import type { Manager, VisitRecord } from '../types';
 import type { PlannedScheduleItem, RosterPerson } from './PlannedSchedulePanel';
 import { BEAUTY_DIRECTORS_CONFIG } from '../data/beautyAuditConfig';
@@ -67,13 +67,13 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
       for (const m of managers) {
         if (!m.storeName || m.storeName.includes('測試')) continue;
         const name = (m.areaManagerName || '').trim();
-        if (!name || name === '無') continue;
+        if (!name || name === '無' || name === '陳育廷') continue;
         if (!map.has(name)) {
           map.set(name, {
             name,
             role: 'manager',
             title: '區經理',
-            department: m.department || '',
+            department: getBusinessDepartment(m.region) || m.department || '',
             supervisor: m.directorName || '',
             region: m.region || '',
             nickname: '',
@@ -100,7 +100,10 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
       }));
     }
 
-    const combined = [...mgrs, ...bds];
+    const combined = [...mgrs.filter(p => p.name !== '陳育廷').map(p => ({
+      ...p,
+      department: getBusinessDepartment(p.region) || p.department,
+    })), ...bds];
     return combined.filter(p => {
       if (deptFilter === 'beauty') return p.role === 'beauty_director';
       if (deptFilter === '營業一處' || deptFilter === '營業二處') {

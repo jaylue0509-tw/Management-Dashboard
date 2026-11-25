@@ -28,6 +28,9 @@ def get_users(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Forbidden")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            # 確保已移除之舊帳號「陳育廷」不再出現於後台與資料庫
+            cur.execute("DELETE FROM users WHERE username = '陳育廷' OR name = '陳育廷'")
+            conn.commit()
             cur.execute(
                 "SELECT username, role, name, assigned_stores, must_change_password, nickname, department, supervisor FROM users WHERE role IN ('manager', 'beauty_director') ORDER BY role DESC, name ASC"
             )
