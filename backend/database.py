@@ -21,12 +21,12 @@ ITEM_NAMES = {
 
 POSTGRES_URL = os.getenv("POSTGRES_URL")
 
-# 初始化連線池 (Connection Pool)
-# 最小連線數 1，最大連線數 5，避免耗盡 Vercel Postgres 的同時連線上限
+# Serverless 執行個體不保留閒置連線，讓 Neon 在無請求時能休眠。
+# ThreadedConnectionPool 可安全供 FastAPI 的同步端點執行緒共用。
 db_pool = None
 if POSTGRES_URL:
     try:
-        db_pool = pool.SimpleConnectionPool(1, 5, POSTGRES_URL, sslmode='require')
+        db_pool = pool.ThreadedConnectionPool(0, 5, POSTGRES_URL, sslmode='require')
     except Exception as e:
         logger.error("連線池初始化失敗: %s", e)
 
@@ -142,7 +142,7 @@ def init_db():
                     cur.execute("ALTER TABLE users ALTER COLUMN role TYPE VARCHAR(32);")
                     logger.info("Migrated users.role column from VARCHAR(%s) to VARCHAR(32)", role_len_row[0])
                 cur.execute("UPDATE users SET must_change_password = TRUE WHERE must_change_password IS NULL AND role IN ('manager', 'beauty_director');")
-                cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin';")
+                cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin' AND must_change_password IS DISTINCT FROM FALSE;")
                 cur.execute("DELETE FROM visit_records WHERE id = '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c';")
                 cur.execute("DELETE FROM action_items WHERE id = '86ed0b29-dc30-4825-808d-9a58d6c5e38f';")
                 # 移除已無任職之區主管帳號「陳育廷」
@@ -383,9 +383,11 @@ def sync_region_reorg_2026(conn):
             UPDATE visit_records
             SET region = '嘉南區',
                 data = jsonb_set(data, '{region}', '"嘉南區"', true)
-            WHERE region = '台南區'
+            WHERE (region = '台南區'
                OR data->>'region' = '台南區'
-               OR data->>'storeName' = ANY(%s)
+               OR data->>'storeName' = ANY(%s))
+              AND (region IS DISTINCT FROM '嘉南區'
+               OR data->>'region' IS DISTINCT FROM '嘉南區')
             """,
             (jianan_stores,)
         )

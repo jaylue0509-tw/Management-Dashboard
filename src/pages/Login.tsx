@@ -28,7 +28,9 @@ export const Login = () => {
       });
 
       if (!res.ok) {
-        throw new Error('帳號或密碼錯誤，請重新檢查');
+        if (res.status === 401) throw new Error('帳號或密碼錯誤，請重新檢查');
+        if (res.status >= 500) throw new Error('登入服務暫時無法使用，請稍後再試');
+        throw new Error('登入失敗，請重新整理頁面後再試');
       }
 
       const data = await res.json();
