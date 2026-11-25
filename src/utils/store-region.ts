@@ -8,8 +8,26 @@ export interface StoreRegionInfo {
 
 export const UNKNOWN_REGION = '其他區域';
 
-/** 依組織主檔定義的區域排序（北 → 南 → 東） */
-export const REGION_ORDER: string[] = Object.keys(storeRegions);
+export const BUSINESS_DEPARTMENT_REGIONS = {
+  '營業一處': ['新北區', '北桃區', '竹苗區', '宜花區', '嘉南區'],
+  '營業二處': ['中投區', '彰雲區', '高雄區', '高屏區'],
+} as const;
+
+/** 區域顯示順序依現行營業處組織排列。 */
+export const REGION_ORDER: string[] = [
+  ...BUSINESS_DEPARTMENT_REGIONS['營業一處'],
+  ...BUSINESS_DEPARTMENT_REGIONS['營業二處'],
+];
+
+const BUSINESS_DEPT_1_REGIONS = new Set<string>([...BUSINESS_DEPARTMENT_REGIONS['營業一處'], '台南區']);
+const BUSINESS_DEPT_2_REGIONS = new Set<string>([...BUSINESS_DEPARTMENT_REGIONS['營業二處'], '彰雲嘉區', '彰嘉雲區']);
+
+export const getBusinessDepartment = (region?: string): string => {
+  if (!region) return '';
+  if (BUSINESS_DEPT_1_REGIONS.has(region)) return '營業一處';
+  if (BUSINESS_DEPT_2_REGIONS.has(region)) return '營業二處';
+  return '';
+};
 
 /**
  * 門市名稱正規化：去除前後空白與結尾「店」字
@@ -22,7 +40,9 @@ export const normalizeStoreName = (name: string): string => (name || '').trim().
  */
 export const normalizeRegionName = (region?: string): string => {
   if (!region) return '';
-  return region === '台南區' ? '嘉南區' : region;
+  if (region === '台南區') return '嘉南區';
+  if (region === '彰雲嘉區' || region === '彰嘉雲區') return '彰雲區';
+  return region;
 };
 
 /**
