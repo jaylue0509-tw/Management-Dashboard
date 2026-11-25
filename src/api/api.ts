@@ -57,3 +57,7 @@ export const importManagers = async (managers: Manager[]): Promise<boolean> => {
 export const getDashboardData = async (timeRange: string = 'day', region: string = 'all'): Promise<any> => {
   return await fetchJSON(`/dashboard-data?time_range=${timeRange}&region=${region}`);
 };
+
+export const getDashboardRevision = async (): Promise<{ revision: number } | null> => {
+  return await fetchJSON('/dashboard-revision');
+};

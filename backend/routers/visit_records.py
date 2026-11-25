@@ -176,14 +176,15 @@ def get_activities(time_range: str = "day", region: str = "all", user: Optional[
             if time_range == "all":
                 pass
             elif time_range == "week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
+                conditions.append("created_at >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '8 hours'")
             elif time_range == "last_week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')) - interval '1 week'")
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
+                conditions.append("created_at >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '1 week' - interval '8 hours'")
+                conditions.append("created_at < date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '8 hours'")
             elif time_range == "month":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
+                conditions.append("created_at >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '8 hours'")
             else:
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))::date")
+                conditions.append("created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date::timestamp - interval '8 hours'")
+                conditions.append("created_at < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date::timestamp + interval '1 day' - interval '8 hours'")
             
             if region != "all":
                 conditions.append("region = %s")

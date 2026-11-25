@@ -46,14 +46,14 @@ def get_db_connection():
     finally:
         # NOTE: 歸還前回滾任何未提交 / 已中斷的交易，避免一次 SQL 錯誤讓這條連線卡在
         # "current transaction is aborted" 狀態，進而影響下一位使用者的請求
-        if conn.closed:
-            db_pool.putconn(conn, close=True)
-        else:
+        # Serverless instances may stay warm long after the last request.
+        # Release every connection so idle instances do not keep Neon awake.
+        if not conn.closed:
             try:
                 conn.rollback()
-                db_pool.putconn(conn)
             except psycopg2.Error:
-                db_pool.putconn(conn, close=True)
+                pass
+        db_pool.putconn(conn, close=True)
 
 def init_db():
     """
@@ -131,6 +131,52 @@ def init_db():
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname VARCHAR(50);")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(50);")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS supervisor VARCHAR(50);")
+                # A tiny revision lets clients check for changes without reading
+                # every visit record and action item on each refresh.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS dashboard_revision (
+                        id SMALLINT PRIMARY KEY,
+                        value BIGINT NOT NULL DEFAULT 0
+                    );
+                    INSERT INTO dashboard_revision (id, value) VALUES (1, 0)
+                    ON CONFLICT (id) DO NOTHING;
+                """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_proc
+                            WHERE proname = 'bump_dashboard_revision'
+                              AND pg_function_is_visible(oid)
+                        ) THEN
+                            EXECUTE $create$
+                                CREATE FUNCTION bump_dashboard_revision()
+                                RETURNS trigger LANGUAGE plpgsql AS $body$
+                                BEGIN
+                                    UPDATE dashboard_revision SET value = value + 1 WHERE id = 1;
+                                    RETURN NULL;
+                                END
+                                $body$
+                            $create$;
+                        END IF;
+                    END $$;
+                """)
+                for table_name in ("store", "visit_records", "action_items", "users"):
+                    trigger_name = f"trg_{table_name}_dashboard_revision"
+                    cur.execute(f"""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_trigger
+                                WHERE tgname = '{trigger_name}'
+                                  AND tgrelid = 'public.{table_name}'::regclass
+                            ) THEN
+                                CREATE TRIGGER {trigger_name}
+                                AFTER INSERT OR UPDATE OR DELETE ON {table_name}
+                                FOR EACH ROW EXECUTE FUNCTION bump_dashboard_revision();
+                            END IF;
+                        END $$;
+                    """)
                 # 確保 users.role 欄位長度足夠容納 'beauty_director'（15 字元），避免舊環境建表長度不足導致寫入失敗
                 cur.execute("""
                     SELECT character_maximum_length

@@ -1,11 +1,11 @@
-import React, { useEffect, useState, useMemo, lazy, Suspense } from 'react';
+import React, { useEffect, useState, useMemo, useRef, lazy, Suspense } from 'react';
 import { HeaderBar } from '../components/HeaderBar';
 import { SummaryCards } from '../components/SummaryCards';
 import { ExecutiveSummary } from '../components/ExecutiveSummary';
 import { ActivityWall, type ActivityCategoryFilter } from '../components/ActivityWall';
 import { ManagerList, type ManagerStatusFilter } from '../components/ManagerList';
 import type { DashboardSummary, Manager, VisitRecord } from '../types';
-import { API_BASE_URL, getAuthHeaders, getDashboardData } from '../api/api';
+import { API_BASE_URL, getAuthHeaders, getDashboardData, getDashboardRevision } from '../api/api';
 import { RefreshCw, ArrowUp, AlertTriangle } from 'lucide-react';
 import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
@@ -117,6 +117,10 @@ const getTaipeiWeekBounds = (baseDateStr: string, offsetWeeks = 0) => {
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
+  const lastSuccessfulFetchAtRef = useRef(0);
+  const lastRevisionCheckAtRef = useRef(0);
+  const lastRevisionRef = useRef<number | null>(null);
+  const autoRefreshInFlightRef = useRef(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'beauty' | 'planned' | 'route_map' | 'expense' | 'org_map' | 'map'>(() => {
     const qView = new URLSearchParams(window.location.search).get('view')?.trim();
     if (qView === 'beauty') return 'beauty';
@@ -380,6 +384,9 @@ export const DashboardPage: React.FC = () => {
         setManagers(validManagers);
         setAllActivities(validActivities);
         setActionItems(validActionItems);
+        lastSuccessfulFetchAtRef.current = Date.now();
+        lastRevisionCheckAtRef.current = Date.now();
+        lastRevisionRef.current = typeof data.meta?.revision === 'number' ? data.meta.revision : null;
         setLastUpdatedAt(
           new Date().toLocaleTimeString('zh-TW', {
             hour12: false,
@@ -401,12 +408,32 @@ export const DashboardPage: React.FC = () => {
   useEffect(() => {
     fetchData(); // 初始載入
 
-    // 設定 5 分鐘自動背景輪詢 (減少多餘的查詢負擔)
-    const intervalId = setInterval(() => {
-      fetchData(true);
-    }, 300000);
+    // Check a tiny revision while visible; download the large dashboard only
+    // after a write, or once daily as a safety refresh.
+    const refreshIfStale = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastRevisionCheckAtRef.current < 30 * 60 * 1000) return;
+      if (autoRefreshInFlightRef.current) return;
+      autoRefreshInFlightRef.current = true;
+      void (async () => {
+        const status = await getDashboardRevision();
+        if (!status || typeof status.revision !== 'number') return;
+        lastRevisionCheckAtRef.current = Date.now();
+        if (status.revision !== lastRevisionRef.current ||
+            Date.now() - lastSuccessfulFetchAtRef.current >= 24 * 60 * 60 * 1000) {
+          await fetchData(true);
+        }
+      })().finally(() => {
+        autoRefreshInFlightRef.current = false;
+      });
+    };
+    const intervalId = window.setInterval(refreshIfStale, 30 * 60 * 1000);
+    document.addEventListener('visibilitychange', refreshIfStale);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refreshIfStale);
+    };
   }, []);
 
   // 監聽頁面捲動距離，顯示快速回到頂部懸浮按鈕

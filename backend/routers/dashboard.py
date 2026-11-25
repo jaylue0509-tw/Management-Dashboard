@@ -71,6 +71,15 @@ def import_managers(managers: List[Manager] = Body(...), user: dict = Depends(ge
         sync_beauty_directors(conn)
     return {"success": True, "count": len(managers)}
 
+@router.get("/dashboard-revision")
+def get_dashboard_revision():
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM dashboard_revision WHERE id = 1")
+            row = cur.fetchone()
+    return {"revision": row[0] if row else 0}
+
+
 @router.get("/dashboard-data")
 def get_dashboard_data(
     time_range: str = "day",
@@ -94,10 +103,56 @@ def get_dashboard_data(
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            # Read before the data so a concurrent write still causes the next
+            # revision check to refresh this response.
+            cur.execute("SELECT value FROM dashboard_revision WHERE id = 1")
+            revision_row = cur.fetchone()
+            revision = revision_row[0] if revision_row else 0
             # 1. Get Managers
             cur.execute("SELECT data FROM store WHERE id = 'managers'")
             row = cur.fetchone()
             managers = row[0] if row else []
+
+            if user and user.get("role") in ("manager", "beauty_director") and user.get("sub"):
+                cur.execute(
+                    "SELECT name, assigned_stores, department, supervisor FROM users WHERE username = %s",
+                    (user.get("sub"),),
+                )
+                u_row = cur.fetchone()
+                if u_row:
+                    user = {
+                        **user,
+                        "name": u_row[0] or user.get("name"),
+                        "assigned_stores": u_row[1] or [],
+                        "department": u_row[2] or user.get("department") or "",
+                        "supervisor": u_row[3] or user.get("supervisor") or "",
+                    }
+
+            scoped_manager_names = set()
+            assigned_stores = set()
+            beauty_store_names = set()
+            if user and user.get("role") == "manager":
+                manager_name = user.get("name") or ""
+                assigned_stores = set(user.get("assigned_stores") or [])
+                scoped_manager_names = {manager_name}
+                for manager in managers:
+                    if (manager.get("areaManagerName") == manager_name
+                            or manager.get("deputyManagerName") == manager_name
+                            or manager.get("storeName") in assigned_stores):
+                        scoped_manager_names.update(filter(None, (
+                            manager.get("areaManagerName"), manager.get("deputyManagerName")
+                        )))
+            elif user and user.get("role") == "beauty_director":
+                assigned_stores = set(user.get("assigned_stores") or [])
+                beauty_department = (user.get("department") or "").strip()
+                beauty_store_names = assigned_stores.copy()
+                for manager in managers:
+                    region_in_first = manager.get("region") in BEAUTY_DEPT_1_REGIONS
+                    if (manager.get("storeName") in assigned_stores
+                            or (beauty_department == "美容一處" and region_in_first)
+                            or (beauty_department == "美容二處" and not region_in_first)):
+                        if manager.get("storeName"):
+                            beauty_store_names.add(manager["storeName"])
 
             # 2. Get Activities
             query = "SELECT data, created_at FROM visit_records"
@@ -106,26 +161,34 @@ def get_dashboard_data(
 
             if start_date or end_date:
                 if start_date:
-                    conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date >= %s::date")
+                    conditions.append("created_at >= (%s::date::timestamp - interval '8 hours')")
                     params.append(start_date)
                 if end_date:
-                    conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date <= %s::date")
+                    conditions.append("created_at < (%s::date::timestamp + interval '1 day' - interval '8 hours')")
                     params.append(end_date)
             elif time_range == "all":
                 pass
             elif time_range == "week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
+                conditions.append("created_at >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '8 hours'")
             elif time_range == "last_week":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')) - interval '1 week'")
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') < date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
+                conditions.append("created_at >= date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '1 week' - interval '8 hours'")
+                conditions.append("created_at < date_trunc('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '8 hours'")
             elif time_range == "month":
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))")
+                conditions.append("created_at >= date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') - interval '8 hours'")
             else:
-                conditions.append("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei')::date = ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei'))::date")
+                conditions.append("created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date::timestamp - interval '8 hours'")
+                conditions.append("created_at < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei')::date::timestamp + interval '1 day' - interval '8 hours'")
 
             if region != "all":
                 conditions.append("region = %s")
                 params.append(region)
+
+            if user and user.get("role") == "manager":
+                conditions.append("(data->>'areaManagerName' = ANY(%s) OR data->>'storeName' = ANY(%s))")
+                params.extend([list(scoped_manager_names), list(assigned_stores)])
+            elif user and user.get("role") == "beauty_director":
+                conditions.append("btrim(data->>'areaManagerName') = %s")
+                params.append((user.get("name") or "").strip())
 
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
@@ -151,7 +214,16 @@ def get_dashboard_data(
             # 3. Get Action Items（放寬上限至 1000 筆避免活躍 PDCA 遭截斷）
             action_items = []
             try:
-                cur.execute("SELECT data FROM action_items ORDER BY created_at DESC LIMIT 1000")
+                action_query = "SELECT data FROM action_items"
+                action_params = []
+                if user and user.get("role") == "manager":
+                    action_query += " WHERE store_name = ANY(%s) OR data->>'assignee' = ANY(%s) OR data->>'createdBy' = ANY(%s)"
+                    action_params = [list(assigned_stores), list(scoped_manager_names), list(scoped_manager_names)]
+                elif user and user.get("role") == "beauty_director":
+                    action_query += " WHERE btrim(data->>'createdBy') = %s OR (store_name = ANY(%s) AND data->>'auditDepartment' = %s)"
+                    action_params = [(user.get("name") or "").strip(), list(beauty_store_names), "美容"]
+                action_query += " ORDER BY created_at DESC LIMIT 1000"
+                cur.execute(action_query, tuple(action_params))
                 action_items = [
                     r[0] for r in cur.fetchall()
                     if r[0]
@@ -166,20 +238,6 @@ def get_dashboard_data(
                 conn.rollback()
 
             # 區主管／美容總監權限過濾（同步 users 最新負責門市與所屬處別）
-            if user and user.get("role") in ("manager", "beauty_director") and user.get("sub"):
-                cur.execute(
-                    "SELECT name, assigned_stores, department, supervisor FROM users WHERE username = %s",
-                    (user.get("sub"),),
-                )
-                u_row = cur.fetchone()
-                if u_row:
-                    user = {
-                        **user,
-                        "name": u_row[0] or user.get("name"),
-                        "assigned_stores": u_row[1] or [],
-                        "department": u_row[2] or user.get("department") or "",
-                        "supervisor": u_row[3] or user.get("supervisor") or "",
-                    }
             if user and user.get("role") == "manager":
                 mgr_name = user.get("name")
                 assigned = set(user.get("assigned_stores") or [])
@@ -238,6 +296,7 @@ def get_dashboard_data(
                 "activities": activities,
                 "actionItems": action_items,
                 "meta": {
+                    "revision": revision,
                     "activityCount": len(activities),
                     "limit": safe_limit,
                     "truncated": truncated,
