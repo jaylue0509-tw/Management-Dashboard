@@ -11,7 +11,7 @@ import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
-import { normalizeStoreName, normalizeRegionName, compareRegion, getBusinessDepartment } from '../utils/store-region';
+import { normalizeStoreName, normalizeRegionName, compareRegion } from '../utils/store-region';
 import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
 import { isRegionInBeautyDirectorScope } from '../data/beautyAuditConfig';
 import {
@@ -303,18 +303,7 @@ export const DashboardPage: React.FC = () => {
     try {
       const data = await getDashboardData('all', 'all');
       if (data) {
-        let validManagers = (data.managers || [])
-          .filter((m: Manager) => !m.storeName?.includes('測試') && !m.storeName?.includes('文心秀泰'))
-          .map((m: Manager) => {
-            const region = normalizeRegionName(m.region);
-            return {
-              ...m,
-              region,
-              department: getBusinessDepartment(region) || m.department,
-              areaManagerName: m.areaManagerName === '陳育廷' ? '' : m.areaManagerName,
-              deputyManagerName: m.deputyManagerName === '陳育廷' ? '' : m.deputyManagerName,
-            };
-          });
+        let validManagers = (data.managers || []).filter((m: any) => !m.storeName?.includes('測試') && !m.storeName?.includes('文心秀泰'));
         let validActivities = (data.activities || []).filter((a: any) => {
           if (a.storeName?.includes('測試') || a.storeName?.includes('文心秀泰')) return false;
           if (a.recordId === '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c') return false;
@@ -461,7 +450,7 @@ export const DashboardPage: React.FC = () => {
       );
     }
     const grouped = groupBy(sourceManagers, m => m.areaManagerName);
-    let entries = Object.entries(grouped).filter(([name]) => Boolean(name));
+    let entries = Object.entries(grouped);
     if (user?.role === 'manager') {
       entries = entries.filter(
         ([name, stores]) => name === user.name || stores.some(s => s.deputyManagerName === user.name)

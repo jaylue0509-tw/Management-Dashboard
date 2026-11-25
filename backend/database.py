@@ -5,7 +5,6 @@ import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import Json
 from backend.security import pwd_context
-from backend.organization import business_department_for_region
 
 logger = logging.getLogger("dashboard-api")
 
@@ -145,8 +144,6 @@ def init_db():
                 cur.execute("UPDATE users SET must_change_password = FALSE WHERE username = 'admin';")
                 cur.execute("DELETE FROM visit_records WHERE id = '0ec0b2f0-45ee-44e6-8db4-4a6fddd15d3c';")
                 cur.execute("DELETE FROM action_items WHERE id = '86ed0b29-dc30-4825-808d-9a58d6c5e38f';")
-                # 移除已無任職之區主管帳號「陳育廷」
-                cur.execute("DELETE FROM users WHERE username = '陳育廷' OR name = '陳育廷';")
 
                 # 建立異動紀錄表
                 cur.execute("""
@@ -181,7 +178,6 @@ def init_db():
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_planned_schedules_date ON planned_schedules (schedule_date);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_planned_schedules_person ON planned_schedules (person_name);")
-                cur.execute("DELETE FROM planned_schedules WHERE person_name = '陳育廷';")
             conn.commit()
 
             # 初始化預設帳號、2026 組織同步與美容總監專屬帳號（各自獨立容錯，避免任一步驟失敗影響後續建帳）
@@ -214,7 +210,7 @@ def init_default_users(conn):
                 for m in managers:
                     name = m.get("areaManagerName", "").strip()
                     store = m.get("storeName", "").strip()
-                    if name and name != "陳育廷" and store:
+                    if name and store:
                         if name not in mgr_map:
                             mgr_map[name] = []
                         mgr_map[name].append(store)
@@ -250,10 +246,12 @@ def sync_region_reorg_2026(conn):
         changed = False
         seen_stores = set()
         updated_managers = []
+        sample_dept = ""
         sample_director = ""
 
         for m in managers:
-            if m.get("region") in ("嘉南區", "台南區") and m.get("directorName"):
+            if m.get("region") in ("嘉南區", "台南區") and m.get("department"):
+                sample_dept = m.get("department", "")
                 sample_director = m.get("directorName", "")
                 if m.get("region") == "嘉南區":
                     break
@@ -267,17 +265,22 @@ def sync_region_reorg_2026(conn):
                 m["storeName"] = s_name
                 changed = True
 
+            if m.get("region") in ("彰雲嘉區", "彰雲區", "台南區", "嘉南區") and not sample_dept:
+                sample_dept = m.get("department", "")
+                sample_director = m.get("directorName", "")
+
             if s_name in jianan_set:
                 if (
                     m.get("region") != "嘉南區"
                     or m.get("areaManagerName") != "葉信宏"
                     or m.get("deputyManagerName") != "李景傑"
-                    or m.get("department") != "營業一處"
+                    or (sample_dept and m.get("department") != sample_dept)
                 ):
                     m["region"] = "嘉南區"
                     m["areaManagerName"] = "葉信宏"
                     m["deputyManagerName"] = "李景傑"
-                    m["department"] = "營業一處"
+                    if sample_dept:
+                        m["department"] = sample_dept
                     if sample_director:
                         m["directorName"] = sample_director
                     changed = True
@@ -293,16 +296,6 @@ def sync_region_reorg_2026(conn):
                 m["region"] = "彰雲區"
                 changed = True
 
-            # 舊組織資料可能仍含離職主管或錯置處別；保留門市並修正人員欄位。
-            for name_field in ("areaManagerName", "deputyManagerName"):
-                if str(m.get(name_field) or "").strip() == "陳育廷":
-                    m[name_field] = ""
-                    changed = True
-            expected_dept = business_department_for_region(str(m.get("region") or "").strip())
-            if expected_dept and m.get("department") != expected_dept:
-                m["department"] = expected_dept
-                changed = True
-
             if s_name not in seen_stores:
                 seen_stores.add(s_name)
                 updated_managers.append(m)
@@ -312,7 +305,7 @@ def sync_region_reorg_2026(conn):
         for js in jianan_stores:
             if js not in seen_stores:
                 updated_managers.append({
-                    "department": "營業一處",
+                    "department": sample_dept,
                     "directorName": sample_director,
                     "region": "嘉南區",
                     "areaManagerName": "葉信宏",
@@ -357,26 +350,6 @@ def sync_region_reorg_2026(conn):
                         "UPDATE users SET assigned_stores = %s, name = %s WHERE username = %s",
                         (Json(stores_list), mgr_name, mgr_name)
                     )
-
-        # 帳號中的處別也跟隨門市組織，避免後台與排程顯示舊分類。
-        departments_by_manager = {}
-        for m in updated_managers:
-            dept = business_department_for_region(str(m.get("region") or "").strip())
-            if not dept:
-                continue
-            for field in ("areaManagerName", "deputyManagerName"):
-                name = str(m.get(field) or "").strip()
-                if name:
-                    departments_by_manager.setdefault(name, set()).add(dept)
-        for name, departments in departments_by_manager.items():
-            if len(departments) == 1:
-                department = next(iter(departments))
-                cur.execute(
-                    "UPDATE users SET department = %s WHERE role = 'manager' AND name = %s AND department IS DISTINCT FROM %s",
-                    (department, name, department),
-                )
-
-        cur.execute("DELETE FROM users WHERE username = '陳育廷' OR name = '陳育廷'")
 
         cur.execute(
             """

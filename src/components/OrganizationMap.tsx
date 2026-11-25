@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
 import { MapPin, Building, Users, Sparkles } from 'lucide-react';
 import { importManagers } from '../api/api';
-import { normalizeRegionName, compareRegion } from '../utils/store-region';
+import { normalizeRegionName } from '../utils/store-region';
 import {
   getBeautyDirectorByRegion,
   isRegionInBeautyDirectorScope,
@@ -178,12 +178,7 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
         </div>
       ) : (
         <div className="flex flex-col gap-6">
-        {Object.entries(groupedData)
-          .sort(([a], [b]) => {
-            const rank = (key: string) => key.startsWith('營業一處') ? 0 : key.startsWith('營業二處') ? 1 : 2;
-            return rank(a) - rank(b) || a.localeCompare(b, 'zh-Hant');
-          })
-          .map(([deptKey, deptManagers]) => {
+        {Object.entries(groupedData).map(([deptKey, deptManagers]) => {
           const [dept, director] = deptKey.split('|');
           const regions = groupBy(deptManagers, m => normalizeRegionName(m.region) || m.region);
 
@@ -213,7 +208,7 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                 className="flex flex-row gap-4 sm:gap-8 p-3.5 sm:p-4 overflow-x-auto no-scrollbar snap-x snap-mandatory"
                 style={{ flexWrap: 'nowrap' }}
               >
-                {Object.entries(regions).sort(([a], [b]) => compareRegion(a, b)).map(([region, regManagers]) => {
+                {Object.entries(regions).map(([region, regManagers]) => {
                   const areaManagers = groupBy(regManagers, m => m.areaManagerName);
                   const beautyDir = getBeautyDirectorByRegion(region);
                   
@@ -250,7 +245,7 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                             <div className="font-bold text-gray-900 flex flex-col items-center justify-center gap-1.5" style={{ borderBottom: '1px solid var(--color-secondary-100)', paddingBottom: '8px', marginBottom: '12px' }}>
                               <div className="flex items-center justify-center gap-2">
                                 <Users size={18} className="text-primary" />
-                                <span>區域主管：{areaManager || '待指派'}</span>
+                                <span>區域主管：{areaManager}</span>
                               </div>
                               {deputyMgr && (
                                 <div className="text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded-full">
