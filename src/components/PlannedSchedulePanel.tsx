@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar,
@@ -127,6 +127,11 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
 
   const [anchorDate, setAnchorDate] = useState<string>(todayStr);
   const [viewWeeks, setViewWeeks] = useState<1 | 2>(2);
+  // 長官一頁總表的雙週顯示模式：預設以點擊一鍵切換「第 1 週 / 第 2 週」免拖捲軸，亦可切換「14天並排」搭配頂部左右按鈕
+  const [tableWeekFocus, setTableWeekFocus] = useState<'week1' | 'week2' | 'both'>('week1');
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const topScrollbarRef = useRef<HTMLDivElement | null>(null);
+  const syncingScrollRef = useRef<'top' | 'table' | null>(null);
   const [roleTab, setRoleTab] = useState<'all' | 'manager' | 'beauty_director'>(() => {
     if (user?.role === 'beauty_director') return 'beauty_director';
     if (user?.role === 'manager') return 'manager';
@@ -177,6 +182,52 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
   const weekStart = weekDates[0];
   const weekEnd = weekDates[weekDates.length - 1];
   const periodLabel = viewWeeks === 2 ? '雙週' : '本週';
+
+  // 長官一頁式總表實際顯示之日期欄位與週次分組（雙週模式下支援點切第 1 週／第 2 週或 14 天並排）
+  const tableVisibleChunks = useMemo(() => {
+    if (viewWeeks === 1 || tableWeekFocus === 'both') return weekChunks;
+    if (tableWeekFocus === 'week2' && weekChunks[1]) return [weekChunks[1]];
+    return weekChunks[0] ? [weekChunks[0]] : weekChunks;
+  }, [viewWeeks, tableWeekFocus, weekChunks]);
+
+  const tableVisibleDates = useMemo(
+    () => tableVisibleChunks.flatMap(c => c.dates),
+    [tableVisibleChunks]
+  );
+
+  const isTableSideBySide = viewWeeks === 2 && tableWeekFocus === 'both';
+
+  const scrollExecutiveTableBy = useCallback((deltaX: number) => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: deltaX, behavior: 'smooth' });
+  }, []);
+
+  const scrollExecutiveTableToEdge = useCallback((edge: 'start' | 'end') => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    el.scrollTo({ left: edge === 'start' ? 0 : el.scrollWidth, behavior: 'smooth' });
+  }, []);
+
+  const handleTopScrollbarScroll = useCallback(() => {
+    if (syncingScrollRef.current === 'table') return;
+    if (!topScrollbarRef.current || !tableScrollRef.current) return;
+    syncingScrollRef.current = 'top';
+    tableScrollRef.current.scrollLeft = topScrollbarRef.current.scrollLeft;
+    requestAnimationFrame(() => {
+      syncingScrollRef.current = null;
+    });
+  }, []);
+
+  const handleTableContainerScroll = useCallback(() => {
+    if (syncingScrollRef.current === 'top') return;
+    if (!topScrollbarRef.current || !tableScrollRef.current) return;
+    syncingScrollRef.current = 'table';
+    topScrollbarRef.current.scrollLeft = tableScrollRef.current.scrollLeft;
+    requestAnimationFrame(() => {
+      syncingScrollRef.current = null;
+    });
+  }, []);
 
   // 本地保底名冊（若伺服器尚未回傳或離線時，從既有 managers 與 BEAUTY_DIRECTORS 合成完整名冊）
   const fallbackRoster = useMemo(() => {
@@ -1214,40 +1265,176 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
           <span className="text-xs font-bold">正在同步雲端預排行程表...</span>
         </div>
       ) : compactExecutiveTable && user?.role === 'admin' ? (
-        /* ==================== 長官一頁式緊湊戰情總表（同屏一眼看穿全體區經理＆美容總監單週／雙週規劃） ==================== */
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
-            <div className="text-xs sm:text-sm font-extrabold text-slate-900">
-              👑 全體主管一頁式{periodLabel}預排總表（點擊任一格子可立即新增或修改{viewWeeks === 2 ? '，可左右滑動查看第 2 週' : ''}）
+        /* ==================== 長官一頁式緊湊戰情總表（支援一鍵點擊切換第 1 週／第 2 週免拖捲軸，或 14 天並排＋頂部左右按鈕） ==================== */
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-x-clip">
+          {/* 頂部黏性控制列：滑到下方看其他主管時依然隨時可點擊切週或左右移動 */}
+          <div className="sticky top-[52px] sm:top-[60px] z-20 bg-slate-50/95 backdrop-blur-xs border-b border-slate-200 px-3.5 sm:px-4 py-2.5 space-y-2 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-xs sm:text-sm font-extrabold text-slate-900">
+                👑 全體主管一頁式{periodLabel}預排總表（點擊格子即可新增／修改）
+              </div>
+              <div className="flex items-center gap-3 text-[11px] font-bold text-slate-600">
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" /> 已實際完成
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" /> 預排待執行
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" /> {periodLabel}尚未排程
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-3 text-[11px] font-bold text-slate-600">
-              <span className="inline-flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" /> 已實際完成
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-blue-500" /> 預排待執行
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-amber-400" /> {periodLabel}尚未排程
-              </span>
-            </div>
+
+            {viewWeeks === 2 && weekChunks.length >= 2 && (
+              <div className="flex items-center justify-between gap-2 flex-wrap pt-1.5 border-t border-slate-200/80">
+                {/* 一鍵點切：第 1 週 / 第 2 週 / 14 天並排 */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[
+                    {
+                      id: 'week1' as const,
+                      label: `${weekChunks[0].label} (${weekChunks[0].dates[0].slice(5).replace('-', '/')}~${weekChunks[0].dates[6].slice(5).replace('-', '/')})`,
+                      count: schedules.filter(
+                        s => s.scheduleDate >= weekChunks[0].dates[0] && s.scheduleDate <= weekChunks[0].dates[6]
+                      ).length,
+                      activeCls: 'bg-indigo-600 text-white border-indigo-600 shadow-xs',
+                    },
+                    {
+                      id: 'week2' as const,
+                      label: `${weekChunks[1].label} (${weekChunks[1].dates[0].slice(5).replace('-', '/')}~${weekChunks[1].dates[6].slice(5).replace('-', '/')})`,
+                      count: schedules.filter(
+                        s => s.scheduleDate >= weekChunks[1].dates[0] && s.scheduleDate <= weekChunks[1].dates[6]
+                      ).length,
+                      activeCls: 'bg-amber-500 text-white border-amber-500 shadow-xs',
+                    },
+                    {
+                      id: 'both' as const,
+                      label: '14 天並排對照',
+                      count: schedules.length,
+                      activeCls: 'bg-slate-900 text-white border-slate-900 shadow-xs',
+                    },
+                  ].map(tab => {
+                    const active = tableWeekFocus === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setTableWeekFocus(tab.id)}
+                        className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-extrabold border inline-flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 ${
+                          active
+                            ? tab.activeCls
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                            active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {tab.count}筆
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 右側快捷按鈕：分週模式下可一鍵上／下週，並排模式下直接提供左右移動按鈕（免找底部捲軸） */}
+                <div className="flex items-center gap-1.5">
+                  {isTableSideBySide ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => scrollExecutiveTableToEdge('start')}
+                        className="min-h-[32px] px-2.5 py-1 rounded-lg bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        title="移至第 1 週開頭"
+                      >
+                        <ChevronLeft size={14} />
+                        <span>看第 1 週</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => scrollExecutiveTableBy(-360)}
+                        className="min-h-[32px] px-2 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold inline-flex items-center cursor-pointer"
+                        title="往左捲動"
+                        aria-label="往左捲動"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => scrollExecutiveTableBy(360)}
+                        className="min-h-[32px] px-2 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold inline-flex items-center cursor-pointer"
+                        title="往右捲動"
+                        aria-label="往右捲動"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => scrollExecutiveTableToEdge('end')}
+                        className="min-h-[32px] px-2.5 py-1 rounded-lg bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        title="移至第 2 週"
+                      >
+                        <span>看第 2 週</span>
+                        <ChevronRight size={14} />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setTableWeekFocus(prev => (prev === 'week1' ? 'week2' : 'week1'))}
+                      className="min-h-[32px] px-3 py-1 rounded-lg bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      {tableWeekFocus === 'week1' ? (
+                        <>
+                          <span>點看第 2 週</span>
+                          <ChevronRight size={14} />
+                        </>
+                      ) : (
+                        <>
+                          <ChevronLeft size={14} />
+                          <span>點回第 1 週</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 14 天並排時提供「頂部同步捲軸」，在上方就能直接拖拉左右滑動，不用滑到表格最底 */}
+            {isTableSideBySide && (
+              <div
+                ref={topScrollbarRef}
+                onScroll={handleTopScrollbarScroll}
+                className="overflow-x-auto pt-0.5"
+                aria-label="頂部水平捲動條"
+              >
+                <div style={{ width: '1680px', height: '6px' }} />
+              </div>
+            )}
           </div>
 
-          <div className="overflow-x-auto">
-            <table className={`w-full border-collapse text-xs ${viewWeeks === 2 ? 'min-w-[1680px]' : 'min-w-[920px]'}`}>
+          <div
+            ref={tableScrollRef}
+            onScroll={handleTableContainerScroll}
+            className="overflow-x-auto"
+          >
+            <table className={`w-full border-collapse text-xs ${isTableSideBySide ? 'min-w-[1680px]' : 'min-w-[920px]'}`}>
               <thead>
                 {viewWeeks > 1 && (
                   <tr>
                     <th className="sticky left-0 z-10 bg-slate-100 px-3 py-1.5 text-left text-[11px] font-extrabold text-slate-500 border-b border-r border-slate-200">
                       雙週分區
                     </th>
-                    {weekChunks.map(chunk => (
+                    {tableVisibleChunks.map((chunk, cIdx) => (
                       <th
                         key={chunk.weekIndex}
                         colSpan={chunk.dates.length}
                         className={`px-2 py-1.5 text-center text-[11px] font-black border-b border-r border-slate-200 ${chunk.weekIndex === 0
                           ? '!bg-indigo-50 !text-indigo-900'
-                          : '!bg-amber-50 !text-amber-900 border-l-2 border-l-slate-300'
+                          : `!bg-amber-50 !text-amber-900 ${cIdx > 0 ? 'border-l-2 border-l-slate-300' : ''}`
                           }`}
                       >
                         {chunk.label}（{chunk.dates[0].slice(5).replace('-', '/')} ～ {chunk.dates[chunk.dates.length - 1].slice(5).replace('-', '/')}）
@@ -1259,16 +1446,16 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                   <th className="sticky left-0 z-10 bg-slate-100 px-3 py-2.5 text-left font-extrabold text-slate-700 border-b border-r border-slate-200 w-48">
                     主管姓名 ／ 處別區域
                   </th>
-                  {weekDates.map((dStr, idx) => {
+                  {tableVisibleDates.map((dStr, idx) => {
                     const isToday = dStr === todayStr;
-                    const isSecondWeekStart = viewWeeks > 1 && idx === 7;
+                    const isSecondWeekStart = isTableSideBySide && idx === 7;
                     return (
                       <th
                         key={dStr}
                         className={`px-2 py-2.5 text-center font-extrabold border-b border-r border-slate-200 ${isToday ? '!bg-blue-50 !text-blue-800' : ''
                           } ${isSecondWeekStart ? 'border-l-2 border-l-slate-300' : ''}`}
                       >
-                        <div>{WEEKDAY_LABELS[idx % 7]}</div>
+                        <div>{getWeekdayLabel(dStr)}</div>
                         <div className="text-[11px] font-semibold opacity-80">
                           {dStr.slice(5).replace('-', '/')}
                         </div>
@@ -1310,10 +1497,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         </div>
                       </td>
 
-                      {weekDates.map((dStr, idx) => {
+                      {tableVisibleDates.map((dStr, idx) => {
                         const cellItems = schedulesByPersonAndDate.get(`${person.name}|${dStr}`) || [];
                         const isToday = dStr === todayStr;
-                        const isSecondWeekStart = viewWeeks > 1 && idx === 7;
+                        const isSecondWeekStart = isTableSideBySide && idx === 7;
                         return (
                           <td
                             key={dStr}
