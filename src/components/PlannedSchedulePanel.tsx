@@ -25,7 +25,7 @@ import {
   BEAUTY_DIRECTORS_CONFIG,
   isRegionInBeautyDirectorScope,
 } from '../data/beautyAuditConfig';
-import { getTaipeiDateStr, getTaipeiTodayStr } from '../utils/time-utils';
+import { getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr } from '../utils/time-utils';
 import { normalizeStoreName, getBusinessDepartment } from '../utils/store-region';
 import type { Manager, VisitRecord } from '../types';
 
@@ -83,18 +83,28 @@ const BEAUTY_SCHEDULE_TYPES = [
 ] as const;
 
 /**
- * 依據基準日期字串 (YYYY-MM-DD) 計算該週週一至週日的 7 天日期陣列
+ * 依據基準日期字串 (YYYY-MM-DD) 計算連續 N 週（每週週一至週日）的日期陣列
+ * @param anchorDateStr 基準日期
+ * @param weekOffset 起始週次偏移（以週為單位）
+ * @param weekCount 連續週數（預設 2 週 = 14 天）
  */
-const buildWeekDates = (anchorDateStr: string, weekOffset = 0): string[] => {
+const buildMultiWeekDates = (anchorDateStr: string, weekOffset = 0, weekCount = 2): string[] => {
   const [y, m, d] = anchorDateStr.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + weekOffset * 7));
   const dow = dt.getUTCDay(); // 0=Sun..6=Sat
   const diffToMon = dow === 0 ? -6 : 1 - dow;
   const mon = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate() + diffToMon));
-  return Array.from({ length: 7 }, (_, idx) => {
+  const totalDays = Math.max(1, weekCount) * 7;
+  return Array.from({ length: totalDays }, (_, idx) => {
     const dayDt = new Date(Date.UTC(mon.getUTCFullYear(), mon.getUTCMonth(), mon.getUTCDate() + idx));
     return dayDt.toISOString().slice(0, 10);
   });
+};
+
+const getWeekdayLabel = (dateStr: string): string => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return WEEKDAY_LABELS[dow === 0 ? 6 : dow - 1];
 };
 
 const getScheduleBadgeMeta = (scheduleType: string, role: string) => {
@@ -116,6 +126,7 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
   const todayStr = getTaipeiTodayStr();
 
   const [anchorDate, setAnchorDate] = useState<string>(todayStr);
+  const [viewWeeks, setViewWeeks] = useState<1 | 2>(2);
   const [roleTab, setRoleTab] = useState<'all' | 'manager' | 'beauty_director'>(() => {
     if (user?.role === 'beauty_director') return 'beauty_director';
     if (user?.role === 'manager') return 'manager';
@@ -147,9 +158,25 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
   const [formNote, setFormNote] = useState<string>('');
   const [storeFilterKeyword, setStoreFilterKeyword] = useState<string>('');
 
-  const weekDates = useMemo(() => buildWeekDates(anchorDate, 0), [anchorDate]);
+  const weekDates = useMemo(() => buildMultiWeekDates(anchorDate, 0, viewWeeks), [anchorDate, viewWeeks]);
+  const weekChunks = useMemo(() => {
+    const chunks: Array<{ weekIndex: number; label: string; dates: string[] }> = [];
+    for (let w = 0; w < viewWeeks; w++) {
+      const dates = weekDates.slice(w * 7, (w + 1) * 7);
+      if (dates.length === 0) continue;
+      const containsToday = dates[0] <= todayStr && todayStr <= dates[dates.length - 1];
+      const baseLabel = viewWeeks === 1 ? '當週' : w === 0 ? '第 1 週' : '第 2 週';
+      chunks.push({
+        weekIndex: w,
+        label: containsToday ? `${baseLabel}（本週）` : baseLabel,
+        dates,
+      });
+    }
+    return chunks;
+  }, [weekDates, viewWeeks, todayStr]);
   const weekStart = weekDates[0];
-  const weekEnd = weekDates[6];
+  const weekEnd = weekDates[weekDates.length - 1];
+  const periodLabel = viewWeeks === 2 ? '雙週' : '本週';
 
   // 本地保底名冊（若伺服器尚未回傳或離線時，從既有 managers 與 BEAUTY_DIRECTORS 合成完整名冊）
   const fallbackRoster = useMemo(() => {
@@ -392,6 +419,21 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
     return unique.filter(s => s.toLowerCase().includes(q));
   }, [selectedPersonInfo, formPersonRole, user?.department, storeFilterKeyword]);
 
+  // 記錄目前所選人員在當前檢視區間（雙週／單週）內已預排的門市 → 日期對照，提醒避免重複排店
+  const plannedStoreDateMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!formPersonName) return map;
+    for (const s of schedules) {
+      if (s.personName === formPersonName && s.storeName) {
+        const key = normalizeStoreName(s.storeName);
+        if (!map.has(key)) {
+          map.set(key, s.scheduleDate);
+        }
+      }
+    }
+    return map;
+  }, [schedules, formPersonName]);
+
   // 開啟「新增預排行程」彈窗
   const openCreateModal = (person: RosterPerson, dateStr?: string) => {
     setEditingItem(null);
@@ -521,15 +563,14 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
       )
     );
     for (const s of sorted) {
-      const dIdx = weekDates.indexOf(s.scheduleDate);
-      const wd = dIdx >= 0 ? WEEKDAY_LABELS[dIdx] : '';
+      const wd = getWeekdayLabel(s.scheduleDate);
       const roleLabel = s.personRole === 'beauty_director' ? '美容總監' : '區經理';
       const statusLabel =
         s.scheduleType === '排休/休假'
           ? '排休'
           : isScheduleCompleted(s)
-          ? '已完成'
-          : '預排中';
+            ? '已完成'
+            : '預排中';
       const cols = [
         s.scheduleDate,
         wd,
@@ -569,23 +610,20 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
     return (
       <div
         key={`${person.role}-${person.name}`}
-        className={`bg-white rounded-2xl border shadow-2xs overflow-hidden ${
-          isBeauty ? 'border-rose-200' : 'border-slate-200'
-        }`}
+        className={`bg-white rounded-2xl border shadow-2xs overflow-hidden ${isBeauty ? 'border-rose-200' : 'border-slate-200'
+          }`}
       >
         {/* 人員標頭列 */}
         <div
-          className={`px-3.5 sm:px-4 py-2.5 border-b flex flex-wrap items-center justify-between gap-2 ${
-            isBeauty
+          className={`px-3.5 sm:px-4 py-2.5 border-b flex flex-wrap items-center justify-between gap-2 ${isBeauty
               ? 'bg-gradient-to-r from-rose-50 via-fuchsia-50 to-purple-50 border-rose-100'
               : 'bg-slate-50/90 border-slate-200/80'
-          }`}
+            }`}
         >
           <div className="flex items-center gap-2 flex-wrap min-w-0">
             <span
-              className={`px-2 py-0.5 rounded-md text-[11px] font-black ${
-                isBeauty ? 'bg-rose-600 text-white' : 'bg-blue-600 text-white'
-              }`}
+              className={`px-2 py-0.5 rounded-md text-[11px] font-black ${isBeauty ? 'bg-rose-600 text-white' : 'bg-blue-600 text-white'
+                }`}
             >
               {isBeauty ? '🌸 美容總監' : `👔 ${person.title}`}
             </span>
@@ -613,17 +651,16 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
 
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-slate-600">
-              本週已排 <strong className={isBeauty ? 'text-rose-600' : 'text-blue-600'}>{personWeekItems.length}</strong> 筆
+              {periodLabel}已排 <strong className={isBeauty ? 'text-rose-600' : 'text-blue-600'}>{personWeekItems.length}</strong> 筆
             </span>
             {canManage && (
               <button
                 type="button"
                 onClick={() => openCreateModal(person)}
-                className={`min-h-[34px] inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-extrabold text-white shadow-2xs active:scale-95 cursor-pointer transition-all ${
-                  isBeauty
+                className={`min-h-[34px] inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-extrabold text-white shadow-2xs active:scale-95 cursor-pointer transition-all ${isBeauty
                     ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
                     : 'bg-blue-600 hover:bg-blue-700'
-                }`}
+                  }`}
               >
                 <Plus size={13} />
                 <span>新增預排</span>
@@ -632,156 +669,176 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
           </div>
         </div>
 
-        {/* 桌面端（>= lg）：週一 ～ 週日 7 欄行事曆矩陣 */}
-        <div className="hidden lg:grid lg:grid-cols-7 divide-x divide-slate-100">
-          {weekDates.map((dStr, idx) => {
-            const dayItems = schedulesByPersonAndDate.get(`${person.name}|${dStr}`) || [];
-            const isToday = dStr === todayStr;
-            return (
-              <div
-                key={dStr}
-                className={`p-2.5 min-h-[124px] flex flex-col justify-between gap-1.5 transition-colors ${
-                  isToday ? 'bg-blue-50/40' : 'bg-white hover:bg-slate-50/50'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-2">
-                    <span
-                      className={`text-[11px] font-extrabold px-1.5 py-0.5 rounded-md ${
-                        isToday
-                          ? 'bg-blue-600 text-white'
-                          : idx >= 5
-                          ? 'text-rose-600 bg-rose-50'
-                          : 'text-slate-600 bg-slate-100'
-                      }`}
-                    >
-                      {WEEKDAY_LABELS[idx]} {dStr.slice(5).replace('-', '/')}
-                    </span>
-                    {canManage && (
-                      <button
-                        type="button"
-                        onClick={() => openCreateModal(person, dStr)}
-                        className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer transition-colors"
-                        title={`新增 ${person.name} 於 ${dStr} 之預排行程`}
-                      >
-                        <Plus size={13} />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    {dayItems.map(item => {
-                      const badge = getScheduleBadgeMeta(item.scheduleType, item.personRole);
-                      const done = isScheduleCompleted(item);
-                      const canGoAudit =
-                        !done &&
-                        Boolean(item.storeName) &&
-                        dStr <= todayStr &&
-                        (user?.name === item.personName || user?.role === 'admin');
-
-                      return (
-                        <div
-                          key={item.id}
-                          onClick={() => canManage && openEditModal(item)}
-                          className={`group rounded-lg border p-1.5 text-xs transition-all ${
-                            done
-                              ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
-                              : badge.badgeCls
-                          } ${canManage ? 'cursor-pointer hover:shadow-xs' : ''}`}
-                        >
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="font-extrabold truncate">
-                              {badge.icon} {item.storeName || item.scheduleType}
-                            </span>
-                            {item.timeSlot !== '全天' && (
-                              <span className="text-[10px] font-bold px-1 rounded bg-white/80 shrink-0">
-                                {item.timeSlot}
-                              </span>
-                            )}
-                          </div>
-                          {item.note && (
-                            <div className="text-[10px] opacity-80 truncate mt-0.5" title={item.note}>
-                              {item.note}
-                            </div>
-                          )}
-                          <div className="flex items-center justify-between gap-1 mt-1">
-                            {done ? (
-                              <span className="text-[10px] font-black text-emerald-700 flex items-center gap-0.5">
-                                ✓ 已完成
-                              </span>
-                            ) : (
-                              <span className="text-[10px] opacity-65">預排中</span>
-                            )}
-                            {canGoAudit && (
-                              <button
-                                type="button"
-                                onClick={ev => {
-                                  ev.stopPropagation();
-                                  navigate(
-                                    item.personRole === 'beauty_director'
-                                      ? `/beauty-audit?store=${encodeURIComponent(item.storeName)}`
-                                      : `/audit?store=${encodeURIComponent(item.storeName)}`
-                                  );
-                                }}
-                                className="text-[10px] font-black text-blue-700 hover:underline inline-flex items-center gap-0.5"
-                                title="直接帶入此門市填寫巡店表"
-                              >
-                                去填表 <ExternalLink size={9} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+        {/* 桌面端（>= lg）：支援單週 7 欄或雙週（第 1 週 ＋ 第 2 週）清晰雙排週曆矩陣 */}
+        <div className="hidden lg:block divide-y divide-slate-200">
+          {weekChunks.map(chunk => (
+            <div key={chunk.weekIndex}>
+              {viewWeeks > 1 && (
+                <div className="px-3.5 py-1.5 bg-slate-50/90 border-b border-slate-100 flex items-center justify-between text-[11px] font-extrabold text-slate-600">
+                  <span>
+                    {chunk.label} · {chunk.dates[0].slice(5).replace('-', '/')} ～ {chunk.dates[6].slice(5).replace('-', '/')}
+                  </span>
+                  <span className="text-slate-400 font-bold">
+                    已排 {personWeekItems.filter(it => it.scheduleDate >= chunk.dates[0] && it.scheduleDate <= chunk.dates[6]).length} 筆
+                  </span>
                 </div>
+              )}
+              <div className="grid grid-cols-7 divide-x divide-slate-100">
+                {chunk.dates.map((dStr, idx) => {
+                  const dayItems = schedulesByPersonAndDate.get(`${person.name}|${dStr}`) || [];
+                  const isToday = dStr === todayStr;
+                  return (
+                    <div
+                      key={dStr}
+                      className={`p-2.5 min-h-[116px] flex flex-col justify-between gap-1.5 transition-colors ${isToday ? 'bg-blue-50/40' : 'bg-white hover:bg-slate-50/50'
+                        }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-2">
+                          <span
+                            className={`text-[11px] font-extrabold px-1.5 py-0.5 rounded-md ${isToday
+                                ? 'bg-blue-600 text-white'
+                                : idx >= 5
+                                  ? 'text-rose-600 bg-rose-50'
+                                  : 'text-slate-600 bg-slate-100'
+                              }`}
+                          >
+                            {WEEKDAY_LABELS[idx]} {dStr.slice(5).replace('-', '/')}
+                          </span>
+                          {canManage && (
+                            <button
+                              type="button"
+                              onClick={() => openCreateModal(person, dStr)}
+                              className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer transition-colors"
+                              title={`新增 ${person.name} 於 ${dStr} 之預排行程`}
+                            >
+                              <Plus size={13} />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="space-y-1.5">
+                          {dayItems.map(item => {
+                            const badge = getScheduleBadgeMeta(item.scheduleType, item.personRole);
+                            const done = isScheduleCompleted(item);
+                            const canGoAudit =
+                              !done &&
+                              Boolean(item.storeName) &&
+                              dStr <= todayStr &&
+                              (user?.name === item.personName || user?.role === 'admin');
+
+                            return (
+                              <div
+                                key={item.id}
+                                onClick={() => canManage && openEditModal(item)}
+                                className={`group rounded-lg border p-1.5 text-xs transition-all ${done
+                                    ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
+                                    : badge.badgeCls
+                                  } ${canManage ? 'cursor-pointer hover:shadow-xs' : ''}`}
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-extrabold truncate">
+                                    {badge.icon} {item.storeName || item.scheduleType}
+                                  </span>
+                                  {item.timeSlot !== '全天' && (
+                                    <span className="text-[10px] font-bold px-1 rounded bg-white/80 shrink-0">
+                                      {item.timeSlot}
+                                    </span>
+                                  )}
+                                </div>
+                                {item.note && (
+                                  <div className="text-[10px] opacity-80 truncate mt-0.5" title={item.note}>
+                                    {item.note}
+                                  </div>
+                                )}
+                                <div className="flex items-center justify-between gap-1 mt-1">
+                                  {done ? (
+                                    <span className="text-[10px] font-black text-emerald-700 flex items-center gap-0.5">
+                                      ✓ 已完成
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] opacity-65">預排中</span>
+                                  )}
+                                  {canGoAudit && (
+                                    <button
+                                      type="button"
+                                      onClick={ev => {
+                                        ev.stopPropagation();
+                                        navigate(
+                                          item.personRole === 'beauty_director'
+                                            ? `/beauty-audit?store=${encodeURIComponent(item.storeName)}`
+                                            : `/audit?store=${encodeURIComponent(item.storeName)}`
+                                        );
+                                      }}
+                                      className="text-[10px] font-black text-blue-700 hover:underline inline-flex items-center gap-0.5"
+                                      title="直接帶入此門市填寫巡店表"
+                                    >
+                                      去填表 <ExternalLink size={9} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
 
-        {/* 手機與平板端（< lg）：直覺單手操作清單 ＋ 快速點日新增 */}
+        {/* 手機與平板端（< lg）：直覺單手操作清單 ＋ 快速點日新增（支援雙週 14 天） */}
         <div className="lg:hidden p-3 space-y-2.5">
-          {/* 7 日快速點選新增橫滑條 */}
+          {/* 14 日快速點選新增橫滑條（週與週之間顯示清楚分隔標籤） */}
           {canManage && (
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-              {weekDates.map((dStr, idx) => {
-                const count = (schedulesByPersonAndDate.get(`${person.name}|${dStr}`) || []).length;
-                const isToday = dStr === todayStr;
-                return (
-                  <button
-                    key={dStr}
-                    type="button"
-                    onClick={() => openCreateModal(person, dStr)}
-                    className={`shrink-0 min-h-[40px] px-2.5 py-1 rounded-xl border text-left flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all ${
-                      isToday
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : count > 0
-                        ? 'bg-indigo-50/70 text-indigo-900 border-indigo-200'
-                        : 'bg-slate-50 text-slate-600 border-slate-200'
-                    }`}
-                  >
-                    <span className="text-[10px] font-bold">
-                      {WEEKDAY_LABELS[idx]} {dStr.slice(8)}日
+              {weekChunks.map(chunk => (
+                <React.Fragment key={chunk.weekIndex}>
+                  {viewWeeks > 1 && (
+                    <span className="shrink-0 px-2 py-1 rounded-lg bg-slate-800 text-white text-[10px] font-black">
+                      {chunk.weekIndex === 0 ? 'W1' : 'W2'}
                     </span>
-                    <span className="text-[10px] font-black">
-                      {count > 0 ? `已排 ${count}` : '+ 排程'}
-                    </span>
-                  </button>
-                );
-              })}
+                  )}
+                  {chunk.dates.map((dStr, idx) => {
+                    const count = (schedulesByPersonAndDate.get(`${person.name}|${dStr}`) || []).length;
+                    const isToday = dStr === todayStr;
+                    return (
+                      <button
+                        key={dStr}
+                        type="button"
+                        onClick={() => openCreateModal(person, dStr)}
+                        className={`shrink-0 min-h-[40px] px-2.5 py-1 rounded-xl border text-left flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all ${isToday
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : count > 0
+                              ? 'bg-indigo-50/70 text-indigo-900 border-indigo-200'
+                              : 'bg-slate-50 text-slate-600 border-slate-200'
+                          }`}
+                      >
+                        <span className="text-[10px] font-bold">
+                          {WEEKDAY_LABELS[idx]} {dStr.slice(5).replace('-', '/')}
+                        </span>
+                        <span className="text-[10px] font-black">
+                          {count > 0 ? `已排 ${count}` : '+ 排程'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
             </div>
           )}
 
           {personWeekItems.length === 0 ? (
             <div className="text-xs text-slate-400 py-3 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
-              本週尚無預排行程，點選上方日期或右上角「＋ 新增預排」即可排定。
+              {periodLabel}尚無預排行程，點選上方日期或右上角「＋ 新增預排」即可排定。
             </div>
           ) : (
             <div className="space-y-2">
               {personWeekItems.map(item => {
-                const dIdx = weekDates.indexOf(item.scheduleDate);
-                const wdLabel = dIdx >= 0 ? WEEKDAY_LABELS[dIdx] : '';
+                const wdLabel = getWeekdayLabel(item.scheduleDate);
                 const badge = getScheduleBadgeMeta(item.scheduleType, item.personRole);
                 const done = isScheduleCompleted(item);
                 const canGoAudit =
@@ -793,9 +850,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                 return (
                   <div
                     key={item.id}
-                    className={`rounded-xl border p-2.5 flex items-center justify-between gap-2 ${
-                      done ? 'bg-emerald-50/60 border-emerald-300' : 'bg-white border-slate-200'
-                    }`}
+                    className={`rounded-xl border p-2.5 flex items-center justify-between gap-2 ${done ? 'bg-emerald-50/60 border-emerald-300' : 'bg-white border-slate-200'
+                      }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -876,12 +932,12 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                   {user?.role === 'beauty_director'
                     ? '美容總監個人預排行程管理'
                     : user?.role === 'manager'
-                    ? '區經理預排行程管理'
-                    : '區經理 ＆ 美容總監 預排行程總覽'}
+                      ? '區經理預排行程管理'
+                      : '區經理 ＆ 美容總監 預排行程總覽'}
                 </h2>
               </div>
               <p className="text-xs text-slate-300 mt-1">
-                支援預排本週／下週／未來巡店門市與公務會議，並與實際巡店回報紀錄自動比對達成狀態
+                預設展開連續兩週（14 天）巡店門市與公務會議預排，並與實際巡店回報紀錄自動比對達成狀態
               </p>
             </div>
           </div>
@@ -893,50 +949,69 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
             className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white text-xs font-bold border border-white/15 cursor-pointer transition-colors"
           >
             <Download size={14} />
-            <span>匯出本週預排 CSV</span>
+            <span>匯出{periodLabel}預排 CSV</span>
           </button>
         </div>
 
         {/* 週次切換與角色篩選列 */}
         <div className="flex flex-wrap items-center justify-between gap-2.5 pt-3 border-t border-white/10">
           <div className="flex items-center gap-1.5 flex-wrap">
+            {/* 雙週（預設） / 單週 視圖切換 */}
+            <div className="inline-flex rounded-xl bg-white/10 p-0.5 border border-white/15">
+              <button
+                type="button"
+                onClick={() => setViewWeeks(2)}
+                className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${viewWeeks === 2 ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:text-white'
+                  }`}
+              >
+                雙週 (14天)
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewWeeks(1)}
+                className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${viewWeeks === 1 ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:text-white'
+                  }`}
+              >
+                單週 (7天)
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => setAnchorDate(buildWeekDates(anchorDate, -1)[0])}
+              onClick={() => setAnchorDate(buildMultiWeekDates(anchorDate, -viewWeeks, 1)[0])}
               className="min-h-[36px] px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
             >
               <ChevronLeft size={14} />
-              <span>上一週</span>
+              <span>{viewWeeks === 2 ? '前兩週' : '上一週'}</span>
             </button>
             <button
               type="button"
               onClick={() => setAnchorDate(todayStr)}
-              className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer ${
-                weekStart <= todayStr && todayStr <= weekEnd
+              className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer ${weekStart <= todayStr && todayStr <= weekEnd
                   ? 'bg-amber-300 text-slate-950'
                   : 'bg-white/10 hover:bg-white/20 text-white'
-              }`}
+                }`}
             >
-              本週
+              {viewWeeks === 2 ? '本週起（兩週）' : '本週'}
             </button>
             <button
               type="button"
-              onClick={() => setAnchorDate(buildWeekDates(todayStr, 1)[0])}
+              onClick={() => setAnchorDate(buildMultiWeekDates(todayStr, 1, 1)[0])}
               className="min-h-[36px] px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold cursor-pointer"
             >
-              下一週
+              {viewWeeks === 2 ? '下週起' : '下一週'}
             </button>
             <button
               type="button"
-              onClick={() => setAnchorDate(buildWeekDates(anchorDate, 1)[0])}
+              onClick={() => setAnchorDate(buildMultiWeekDates(anchorDate, viewWeeks, 1)[0])}
               className="min-h-[36px] px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
             >
-              <span>後一週</span>
+              <span>{viewWeeks === 2 ? '後兩週' : '後一週'}</span>
               <ChevronRight size={14} />
             </button>
 
             <div className="flex items-center gap-1.5 bg-white/10 border border-white/15 rounded-xl px-2.5 py-1">
-              <span className="text-[11px] text-slate-300 font-semibold">跳至週次：</span>
+              <span className="text-[11px] text-slate-300 font-semibold">起始週：</span>
               <input
                 type="date"
                 value={anchorDate}
@@ -946,7 +1021,7 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
             </div>
 
             <span className="text-xs font-extrabold text-amber-200 ml-1">
-              📅 {weekStart.replace(/-/g, '/')} ～ {weekEnd.replace(/-/g, '/')}
+              📅 {weekStart.replace(/-/g, '/')} ～ {weekEnd.replace(/-/g, '/')}（共 {weekDates.length} 天）
             </span>
           </div>
 
@@ -956,11 +1031,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
               <button
                 type="button"
                 onClick={() => setCompactExecutiveTable(prev => !prev)}
-                className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-extrabold border cursor-pointer transition-colors ${
-                  compactExecutiveTable
+                className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-extrabold border cursor-pointer transition-colors ${compactExecutiveTable
                     ? 'bg-emerald-400 text-slate-950 border-emerald-300'
                     : 'bg-white/10 text-white border-white/20 hover:bg-white/20'
-                }`}
+                  }`}
               >
                 {compactExecutiveTable ? '👑 長官一頁總表模式（開啟中）' : '切換為長官一頁總表'}
               </button>
@@ -977,9 +1051,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                     key={t.id}
                     type="button"
                     onClick={() => setRoleTab(t.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-                      roleTab === t.id ? 'bg-white text-slate-900' : 'text-slate-200 hover:text-white'
-                    }`}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${roleTab === t.id ? 'bg-white text-slate-900' : 'text-slate-200 hover:text-white'
+                      }`}
                   >
                     {t.label}
                   </button>
@@ -993,9 +1066,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                       key={dOpt}
                       type="button"
                       onClick={() => setDeptSubFilter(dOpt)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-                        deptSubFilter === dOpt ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:text-white'
-                      }`}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${deptSubFilter === dOpt ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:text-white'
+                        }`}
                     >
                       {dOpt === 'all' ? '全部處別' : dOpt}
                     </button>
@@ -1006,13 +1078,12 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
               <button
                 type="button"
                 onClick={() => setOnlyShowUnplanned(prev => !prev)}
-                className={`min-h-[34px] px-2.5 py-1 rounded-xl text-xs font-bold border cursor-pointer transition-colors ${
-                  onlyShowUnplanned
+                className={`min-h-[34px] px-2.5 py-1 rounded-xl text-xs font-bold border cursor-pointer transition-colors ${onlyShowUnplanned
                     ? 'bg-rose-500 text-white border-rose-400'
                     : 'bg-white/10 text-amber-200 border-white/15 hover:bg-white/20'
-                }`}
+                  }`}
               >
-                {onlyShowUnplanned ? '✓ 僅顯示本週未排程' : '⚠️ 篩選本週未排程'}
+                {onlyShowUnplanned ? `✓ 僅顯示${periodLabel}未排程` : `⚠️ 篩選${periodLabel}未排程`}
               </button>
 
               <div className="relative flex-1 min-w-[150px] sm:max-w-[200px] ml-auto">
@@ -1030,12 +1101,12 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
         </div>
       </div>
 
-      {/* 本週預排 KPI 卡片（手機 2×2 緊湊排布） */}
+      {/* 預排 KPI 卡片（手機 2×2 緊湊排布） */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
         <div className="bg-white rounded-2xl border border-slate-200 border-t-4 border-t-indigo-600 p-3 sm:p-4 shadow-2xs">
           <div className="text-[11px] sm:text-xs font-extrabold text-indigo-700 flex items-center gap-1">
             <Calendar size={14} />
-            <span>本週預排總筆數</span>
+            <span>{periodLabel}預排總筆數</span>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-slate-900 mt-1 tabular-nums">
             {weekStats.totalCount} <span className="text-xs font-bold text-slate-500">筆</span>
@@ -1097,11 +1168,11 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
           <span className="text-xs font-bold">正在同步雲端預排行程表...</span>
         </div>
       ) : compactExecutiveTable && user?.role === 'admin' ? (
-        /* ==================== 長官一頁式緊湊戰情總表（同屏一眼看穿全體區經理＆美容總監整週規劃） ==================== */
+        /* ==================== 長官一頁式緊湊戰情總表（同屏一眼看穿全體區經理＆美容總監單週／雙週規劃） ==================== */
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap">
             <div className="text-xs sm:text-sm font-extrabold text-slate-900">
-              👑 全體主管一頁式週預排總表（點擊任一格子可立即新增或修改）
+              👑 全體主管一頁式{periodLabel}預排總表（點擊任一格子可立即新增或修改{viewWeeks === 2 ? '，可左右滑動查看第 2 週' : ''}）
             </div>
             <div className="flex items-center gap-3 text-[11px] font-bold text-slate-600">
               <span className="inline-flex items-center gap-1">
@@ -1111,28 +1182,47 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                 <span className="w-2 h-2 rounded-full bg-blue-500" /> 預排待執行
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-amber-400" /> 本週尚未排程
+                <span className="w-2 h-2 rounded-full bg-amber-400" /> {periodLabel}尚未排程
               </span>
             </div>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs min-w-[920px]">
+            <table className={`w-full border-collapse text-xs ${viewWeeks === 2 ? 'min-w-[1680px]' : 'min-w-[920px]'}`}>
               <thead>
+                {viewWeeks > 1 && (
+                  <tr>
+                    <th className="sticky left-0 z-10 bg-slate-100 px-3 py-1.5 text-left text-[11px] font-extrabold text-slate-500 border-b border-r border-slate-200">
+                      雙週分區
+                    </th>
+                    {weekChunks.map(chunk => (
+                      <th
+                        key={chunk.weekIndex}
+                        colSpan={chunk.dates.length}
+                        className={`px-2 py-1.5 text-center text-[11px] font-black border-b border-r border-slate-200 ${chunk.weekIndex === 0
+                            ? '!bg-indigo-50 !text-indigo-900'
+                            : '!bg-amber-50 !text-amber-900 border-l-2 border-l-slate-300'
+                          }`}
+                      >
+                        {chunk.label}（{chunk.dates[0].slice(5).replace('-', '/')} ～ {chunk.dates[chunk.dates.length - 1].slice(5).replace('-', '/')}）
+                      </th>
+                    ))}
+                  </tr>
+                )}
                 <tr>
                   <th className="sticky left-0 z-10 bg-slate-100 px-3 py-2.5 text-left font-extrabold text-slate-700 border-b border-r border-slate-200 w-48">
                     主管姓名 ／ 處別區域
                   </th>
                   {weekDates.map((dStr, idx) => {
                     const isToday = dStr === todayStr;
+                    const isSecondWeekStart = viewWeeks > 1 && idx === 7;
                     return (
                       <th
                         key={dStr}
-                        className={`px-2 py-2.5 text-center font-extrabold border-b border-r border-slate-200 ${
-                          isToday ? '!bg-blue-50 !text-blue-800' : ''
-                        }`}
+                        className={`px-2 py-2.5 text-center font-extrabold border-b border-r border-slate-200 ${isToday ? '!bg-blue-50 !text-blue-800' : ''
+                          } ${isSecondWeekStart ? 'border-l-2 border-l-slate-300' : ''}`}
                       >
-                        <div>{WEEKDAY_LABELS[idx]}</div>
+                        <div>{WEEKDAY_LABELS[idx % 7]}</div>
                         <div className="text-[11px] font-semibold opacity-80">
                           {dStr.slice(5).replace('-', '/')}
                         </div>
@@ -1158,13 +1248,12 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                             {person.nickname ? ` (${person.nickname})` : ''}
                           </span>
                           <span
-                            className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
-                              totalForPerson === 0
+                            className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${totalForPerson === 0
                                 ? 'bg-amber-100 text-amber-800'
                                 : isBeauty
-                                ? 'bg-rose-100 text-rose-800'
-                                : 'bg-blue-100 text-blue-800'
-                            }`}
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : 'bg-blue-100 text-blue-800'
+                              }`}
                           >
                             {totalForPerson === 0 ? '未排' : `${totalForPerson}筆`}
                           </span>
@@ -1175,18 +1264,18 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         </div>
                       </td>
 
-                      {weekDates.map(dStr => {
+                      {weekDates.map((dStr, idx) => {
                         const cellItems = schedulesByPersonAndDate.get(`${person.name}|${dStr}`) || [];
                         const isToday = dStr === todayStr;
+                        const isSecondWeekStart = viewWeeks > 1 && idx === 7;
                         return (
                           <td
                             key={dStr}
                             onClick={() => {
                               if (cellItems.length === 0) openCreateModal(person, dStr);
                             }}
-                            className={`px-1.5 py-2 border-r border-slate-100 align-top min-w-[108px] cursor-pointer hover:bg-slate-50 ${
-                              isToday ? 'bg-blue-50/30' : ''
-                            }`}
+                            className={`px-1.5 py-2 border-r border-slate-100 align-top min-w-[108px] cursor-pointer hover:bg-slate-50 ${isToday ? 'bg-blue-50/30' : ''
+                              } ${isSecondWeekStart ? 'border-l-2 border-l-slate-300' : ''}`}
                           >
                             <div className="space-y-1">
                               {cellItems.map(item => {
@@ -1198,13 +1287,12 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                                       ev.stopPropagation();
                                       openEditModal(item);
                                     }}
-                                    className={`px-1.5 py-1 rounded border text-[11px] font-bold leading-tight hover:shadow-2xs ${
-                                      done
+                                    className={`px-1.5 py-1 rounded border text-[11px] font-bold leading-tight hover:shadow-2xs ${done
                                         ? 'bg-emerald-600 text-white border-emerald-600'
                                         : isBeauty
-                                        ? 'bg-rose-50 text-rose-900 border-rose-200'
-                                        : 'bg-blue-50 text-blue-900 border-blue-200'
-                                    }`}
+                                          ? 'bg-rose-50 text-rose-900 border-rose-200'
+                                          : 'bg-blue-50 text-blue-900 border-blue-200'
+                                      }`}
                                     title={item.note ? `${item.storeName || item.scheduleType}｜${item.note}` : undefined}
                                   >
                                     <div className="truncate">
@@ -1355,6 +1443,26 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                       onChange={e => e.target.value && setFormDate(e.target.value)}
                       className="w-full min-h-[42px] px-2.5 py-2 text-sm font-bold bg-white border border-slate-300 rounded-xl outline-none focus:border-blue-500"
                     />
+                    <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                      {[
+                        { label: '今日', date: todayStr },
+                        { label: '明日', date: shiftDateStr(todayStr, 1) },
+                        { label: '下週同日', date: shiftDateStr(formDate || todayStr, 7) },
+                      ].map(opt => (
+                        <button
+                          key={opt.label}
+                          type="button"
+                          onClick={() => setFormDate(opt.date)}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                            formDate === opt.date
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-extrabold text-slate-700 mb-1">
@@ -1367,11 +1475,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                           key={slot}
                           type="button"
                           onClick={() => setFormTimeSlot(slot)}
-                          className={`min-h-[42px] rounded-xl text-xs font-extrabold border cursor-pointer transition-colors ${
-                            formTimeSlot === slot
+                          className={`min-h-[42px] rounded-xl text-xs font-extrabold border cursor-pointer transition-colors ${formTimeSlot === slot
                               ? 'bg-slate-900 text-white border-slate-900'
                               : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                          }`}
+                            }`}
                         >
                           {slot}
                         </button>
@@ -1397,13 +1504,12 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         key={t.id}
                         type="button"
                         onClick={() => setFormScheduleType(t.id)}
-                        className={`min-h-[40px] px-3 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-all ${
-                          active
+                        className={`min-h-[40px] px-3 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-all ${active
                             ? formPersonRole === 'beauty_director'
                               ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
                               : 'bg-blue-600 text-white border-blue-600 shadow-xs'
                             : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                        }`}
+                          }`}
                       >
                         <span>{t.icon}</span>
                         <span>{t.id}</span>
@@ -1417,79 +1523,90 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
               {(formScheduleType === '門市巡店' ||
                 formScheduleType === '美容巡店' ||
                 formScheduleType === '技術考核/輔導') && (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
-                  {editingItem ? (
-                    <div>
-                      <label className="block text-xs font-extrabold text-slate-700 mb-1">
-                        預計巡視門市
-                      </label>
-                      <select
-                        value={formSingleStore}
-                        onChange={e => setFormSingleStore(e.target.value)}
-                        className="w-full min-h-[42px] px-3 py-2 text-sm font-bold bg-white border border-slate-300 rounded-xl"
-                      >
-                        <option value="">-- 不指定特定門市 --</option>
-                        {availableStoresForForm.map(st => (
-                          <option key={st} value={st}>
-                            {st}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-xs font-extrabold text-slate-800">
-                          勾選當日預計巡視門市（可複選多間順路門市，已選{' '}
-                          <strong className="text-blue-600">{formSelectedStores.length}</strong> 間）：
-                        </span>
-                        {formSelectedStores.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setFormSelectedStores([])}
-                            className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
-                          >
-                            清空已選
-                          </button>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        value={storeFilterKeyword}
-                        onChange={e => setStoreFilterKeyword(e.target.value)}
-                        placeholder="輸入門市關鍵字快速篩選..."
-                        className="w-full min-h-[38px] px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-500"
-                      />
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto pr-1">
-                        {availableStoresForForm.map(st => {
-                          const checked = formSelectedStores.includes(st);
-                          return (
-                            <button
-                              key={st}
-                              type="button"
-                              onClick={() =>
-                                setFormSelectedStores(prev =>
-                                  prev.includes(st) ? prev.filter(x => x !== st) : [...prev, st]
-                                )
-                              }
-                              className={`min-h-[38px] px-2.5 py-1.5 rounded-lg border text-xs font-bold text-left truncate cursor-pointer transition-all ${
-                                checked
-                                  ? formPersonRole === 'beauty_director'
-                                    ? 'bg-rose-600 text-white border-rose-600'
-                                    : 'bg-blue-600 text-white border-blue-600'
-                                  : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300'
-                              }`}
-                            >
-                              {checked ? '✓ ' : ''}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
+                    {editingItem ? (
+                      <div>
+                        <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                          預計巡視門市
+                        </label>
+                        <select
+                          value={formSingleStore}
+                          onChange={e => setFormSingleStore(e.target.value)}
+                          className="w-full min-h-[42px] px-3 py-2 text-sm font-bold bg-white border border-slate-300 rounded-xl"
+                        >
+                          <option value="">-- 不指定特定門市 --</option>
+                          {availableStoresForForm.map(st => (
+                            <option key={st} value={st}>
                               {st}
-                            </button>
-                          );
-                        })}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                    </>
-                  )}
-                </div>
-              )}
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs font-extrabold text-slate-800">
+                            勾選當日預計巡視門市（可複選多間順路門市，已選{' '}
+                            <strong className="text-blue-600">{formSelectedStores.length}</strong> 間）：
+                          </span>
+                          {formSelectedStores.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setFormSelectedStores([])}
+                              className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
+                            >
+                              清空已選
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          value={storeFilterKeyword}
+                          onChange={e => setStoreFilterKeyword(e.target.value)}
+                          placeholder="輸入門市關鍵字快速篩選..."
+                          className="w-full min-h-[38px] px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-500"
+                        />
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                          {availableStoresForForm.map(st => {
+                            const checked = formSelectedStores.includes(st);
+                            const existingPlanDate = plannedStoreDateMap.get(normalizeStoreName(st));
+                            return (
+                              <button
+                                key={st}
+                                type="button"
+                                onClick={() =>
+                                  setFormSelectedStores(prev =>
+                                    prev.includes(st) ? prev.filter(x => x !== st) : [...prev, st]
+                                  )
+                                }
+                                title={existingPlanDate ? `此門市已預排於 ${existingPlanDate}` : undefined}
+                                className={`min-h-[38px] px-2.5 py-1.5 rounded-lg border text-xs font-bold text-left flex items-center justify-between gap-1 cursor-pointer transition-all ${
+                                  checked
+                                    ? formPersonRole === 'beauty_director'
+                                      ? 'bg-rose-600 text-white border-rose-600'
+                                      : 'bg-blue-600 text-white border-blue-600'
+                                    : existingPlanDate
+                                    ? 'bg-amber-50/70 text-slate-700 border-amber-200 hover:border-blue-300'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300'
+                                }`}
+                              >
+                                <span className="truncate">
+                                  {checked ? '✓ ' : ''}
+                                  {st}
+                                </span>
+                                {existingPlanDate && !checked && (
+                                  <span className="shrink-0 text-[9px] font-extrabold px-1 py-0.5 rounded bg-amber-100 text-amber-800">
+                                    {existingPlanDate.slice(5).replace('-', '/')}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
 
               {/* 重點備註 */}
               <div>
@@ -1532,19 +1649,18 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                   <button
                     type="submit"
                     disabled={saving}
-                    className={`min-h-[42px] px-5 py-2 rounded-xl text-white text-xs sm:text-sm font-extrabold shadow-sm cursor-pointer disabled:opacity-60 ${
-                      formPersonRole === 'beauty_director'
+                    className={`min-h-[42px] px-5 py-2 rounded-xl text-white text-xs sm:text-sm font-extrabold shadow-sm cursor-pointer disabled:opacity-60 ${formPersonRole === 'beauty_director'
                         ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
                         : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
+                      }`}
                   >
                     {saving
                       ? '儲存中...'
                       : editingItem
-                      ? '儲存變更'
-                      : formSelectedStores.length > 1
-                      ? `一次新增 ${formSelectedStores.length} 筆預排`
-                      : '確認新增預排'}
+                        ? '儲存變更'
+                        : formSelectedStores.length > 1
+                          ? `一次新增 ${formSelectedStores.length} 筆預排`
+                          : '確認新增預排'}
                   </button>
                 </div>
               </div>

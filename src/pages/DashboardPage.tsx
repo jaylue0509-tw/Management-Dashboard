@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef, lazy, Suspense } from 'react';
 import { HeaderBar } from '../components/HeaderBar';
+import { MobileBottomNav } from '../components/MobileBottomNav';
 import { SummaryCards } from '../components/SummaryCards';
 import { ExecutiveSummary } from '../components/ExecutiveSummary';
 import { ActivityWall, type ActivityCategoryFilter } from '../components/ActivityWall';
@@ -11,7 +12,7 @@ import { TopIssuesList } from '../components/TopIssuesList';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
-import { normalizeStoreName, normalizeRegionName, compareRegion, getBusinessDepartment } from '../utils/store-region';
+import { normalizeStoreName, normalizeRegionName, compareRegion, getBusinessDepartment, getBusinessDirector } from '../utils/store-region';
 import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
 import { isRegionInBeautyDirectorScope } from '../data/beautyAuditConfig';
 import {
@@ -311,10 +312,12 @@ export const DashboardPage: React.FC = () => {
           .filter((m: Manager) => !m.storeName?.includes('測試') && !m.storeName?.includes('文心秀泰'))
           .map((m: Manager) => {
             const region = normalizeRegionName(m.region);
+            const department = getBusinessDepartment(region) || m.department;
             return {
               ...m,
               region,
-              department: getBusinessDepartment(region) || m.department,
+              department,
+              directorName: getBusinessDirector(department, region) || m.directorName,
               areaManagerName: m.areaManagerName === '陳育廷' ? '' : m.areaManagerName,
               deputyManagerName: m.deputyManagerName === '陳育廷' ? '' : m.deputyManagerName,
             };
@@ -1176,13 +1179,25 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
+  const handleGoHome = () => {
+    const homeTab = user?.role === 'beauty_director' ? 'beauty' : 'dashboard';
+    setActiveTab(homeTab);
+    setSelectedManager(null);
+    setActivityWallFilter(null);
+    setFocusedRecord(null);
+    navigate(homeTab === 'beauty' ? '/dashboard?view=beauty' : '/dashboard', { replace: true });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
-    <div style={{ minHeight: '100vh', paddingBottom: '40px', background: '#f4f6f9' }}>
+    <div className="min-h-screen bg-[#f4f6f9] pb-24 md:pb-10">
       <HeaderBar
         selectedDepartment={selectedDepartment}
         onDepartmentChange={setSelectedDepartment}
         timeRange={timeRange}
         onTimeRangeChange={handleTimeRangeChange}
+        onGoHome={handleGoHome}
+        hideMobileTimeSelect={activeTab === 'dashboard'}
       />
 
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6">
@@ -1846,12 +1861,12 @@ export const DashboardPage: React.FC = () => {
         )}
       </div>
 
-      {/* 長頁面快速回到頂部懸浮按鈕 */}
+      {/* 長頁面快速回到頂部懸浮按鈕（手機端上移避開底部導覽列） */}
       {showBackToTop && (
         <button
           type="button"
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="fixed bottom-5 right-4 z-40 flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-slate-900/90 hover:bg-slate-900 active:scale-95 text-white text-xs font-extrabold shadow-lg border border-slate-700/60 backdrop-blur-xs transition-all cursor-pointer"
+          className="fixed bottom-24 md:bottom-5 right-4 z-30 flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-slate-900/90 hover:bg-slate-900 active:scale-95 text-white text-xs font-extrabold shadow-lg border border-slate-700/60 backdrop-blur-xs transition-all cursor-pointer"
           style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
           title="回到頁面頂部"
           aria-label="回到頂部"
@@ -1860,6 +1875,17 @@ export const DashboardPage: React.FC = () => {
           <span>回到頂部</span>
         </button>
       )}
+
+      {/* 手機端專屬底部快捷導覽列 */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        userRole={user?.role}
+        isRefreshing={isRefreshing}
+        onSelectTab={setActiveTab}
+        onGoHome={handleGoHome}
+        onRefresh={() => fetchData(true)}
+        onCreateSchedule={() => openCreateActivityModal(undefined, '總部行程')}
+      />
     </div>
   );
 };

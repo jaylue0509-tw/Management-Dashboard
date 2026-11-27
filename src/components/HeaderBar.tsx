@@ -9,9 +9,18 @@ interface Props {
   onDepartmentChange: (dept: string) => void;
   timeRange: string;
   onTimeRangeChange: (range: string) => void;
+  onGoHome?: () => void;
+  hideMobileTimeSelect?: boolean;
 }
 
-export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentChange, timeRange, onTimeRangeChange }) => {
+export const HeaderBar: React.FC<Props> = ({
+  selectedDepartment,
+  onDepartmentChange,
+  timeRange,
+  onTimeRangeChange,
+  onGoHome,
+  hideMobileTimeSelect = false,
+}) => {
   const [time, setTime] = useState(new Date());
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -37,6 +46,15 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
     { value: '營業二處', label: '營業二處' },
   ];
 
+  const handleGoHome = () => {
+    if (onGoHome) {
+      onGoHome();
+      return;
+    }
+    navigate(user?.role === 'beauty_director' ? '/dashboard?view=beauty' : '/dashboard');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-2xs">
       {/* Top accent line */}
@@ -50,10 +68,16 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-2 sm:py-2.5 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         {/* 第一列：品牌標題 + 主要操作按鈕 (手機與電腦皆保持單行俐落不擠壓) */}
         <div className="flex items-center justify-between gap-2 w-full lg:w-auto">
-          {/* Left: Brand */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          {/* Left: Brand (點擊可回到首頁) */}
+          <button
+            type="button"
+            onClick={handleGoHome}
+            title="回到首頁"
+            aria-label="回到首頁"
+            className="flex items-center gap-2.5 min-w-0 text-left rounded-lg cursor-pointer group transition-opacity hover:opacity-85 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
             <div
-              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shrink-0"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shrink-0 transition-transform group-hover:scale-105"
               style={{
                 background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
                 boxShadow: '0 2px 8px rgba(59,130,246,0.3)',
@@ -62,21 +86,21 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               <LayoutDashboard size={17} color="white" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-sm sm:text-[0.95rem] font-bold text-gray-900 leading-tight truncate">
+              <h1 className="text-sm sm:text-[0.95rem] font-bold text-gray-900 group-hover:text-blue-700 transition-colors leading-tight truncate">
                 東寵門市營運改善與輔導戰情牆
               </h1>
               <p className="hidden sm:block text-[0.68rem] text-gray-400 tracking-wider mt-0.5 truncate">
                 Operations Management Dashboard
               </p>
             </div>
-          </div>
+          </button>
 
-          {/* Mobile Quick CTA & Auth Buttons (僅在 < lg 顯示於第一列右側) */}
+          {/* Mobile / Tablet Quick CTA & Auth Buttons (手機端巡店主操作移至底部導覽列，頂部維持清爽不擠壓標題) */}
           <div className="flex lg:hidden items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={() => navigate('/beauty-audit')}
-              className="min-h-[36px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs active:scale-95 transition-transform cursor-pointer whitespace-nowrap"
+              className="hidden md:flex min-h-[36px] items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs active:scale-95 transition-transform cursor-pointer whitespace-nowrap"
               style={{ background: 'linear-gradient(135deg, #e11d48, #a21caf)' }}
               title="美容總監巡店表"
             >
@@ -87,7 +111,7 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
               <button
                 type="button"
                 onClick={() => navigate('/audit')}
-                className="min-h-[36px] flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs active:scale-95 transition-transform cursor-pointer whitespace-nowrap"
+                className="hidden md:flex min-h-[36px] items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs active:scale-95 transition-transform cursor-pointer whitespace-nowrap"
                 style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
               >
                 <ClipboardSignature size={13} />
@@ -136,8 +160,8 @@ export const HeaderBar: React.FC<Props> = ({ selectedDepartment, onDepartmentCha
         {/* 第二列 (手機) / 右側控制列 (電腦)：篩選器、主管身分徽章與桌面版按鈕 */}
         <div className="flex items-center justify-between lg:justify-end flex-wrap gap-2 w-full lg:w-auto">
           <div className="flex items-center gap-2 flex-1 sm:flex-initial min-w-0">
-            {/* Time Range Select */}
-            <div className="relative shrink-0">
+            {/* Time Range Select（手機端在即時動態牆分頁已設有快速日期膠囊列，隱藏此處避免重複佔位） */}
+            <div className={`relative shrink-0 ${hideMobileTimeSelect ? 'hidden md:block' : ''}`}>
               <select
                 value={timeRange}
                 onChange={(e) => onTimeRangeChange(e.target.value)}

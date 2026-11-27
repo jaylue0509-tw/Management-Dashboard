@@ -15,8 +15,24 @@ interface Props {
 }
 
 /**
+ * 依據基準日期 (YYYY-MM-DD) 計算該週週一與週日（支援 weekOffset）
+ */
+const getWeekRange = (baseDateStr: string, weekOffset = 0) => {
+  const [y, m, d] = baseDateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + weekOffset * 7));
+  const dow = dt.getUTCDay();
+  const diffToMon = dow === 0 ? -6 : 1 - dow;
+  const mon = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate() + diffToMon));
+  const sun = new Date(Date.UTC(mon.getUTCFullYear(), mon.getUTCMonth(), mon.getUTCDate() + 6));
+  return {
+    start: mon.toISOString().slice(0, 10),
+    end: sun.toISOString().slice(0, 10),
+  };
+};
+
+/**
  * 戰情牆首頁獨立區塊 — 長官速覽：每一位區經理 ＆ 美容總監預排行程動向
- * 讓高階長官一打開首頁無須翻頁，1 秒掌握「今日／明日」每一位主管規劃去哪間門市、誰尚未排程、以及是否已實際到店完成
+ * 讓高階長官一打開首頁無須翻頁，1 秒掌握「今日／明日／本週／下週（第2週一整週）」每一位主管規劃去哪間門市、誰尚未排程
  */
 export const ExecutivePlannedOverview: React.FC<Props> = ({
   managers,
@@ -26,8 +42,10 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
   const { user } = useAuth();
   const todayStr = getTaipeiTodayStr();
   const tomorrowStr = useMemo(() => shiftDateStr(todayStr, 1), [todayStr]);
+  const thisWeek = useMemo(() => getWeekRange(todayStr, 0), [todayStr]);
+  const nextWeek = useMemo(() => getWeekRange(todayStr, 1), [todayStr]);
 
-  const [quickDay, setQuickDay] = useState<'today' | 'tomorrow'>('today');
+  const [quickDay, setQuickDay] = useState<'today' | 'tomorrow' | 'this_week' | 'next_week'>('today');
   const [deptFilter, setDeptFilter] = useState<'all' | '營業一處' | '營業二處' | 'beauty'>('all');
   const [onlyUnplanned, setOnlyUnplanned] = useState<boolean>(false);
   const [schedules, setSchedules] = useState<PlannedScheduleItem[]>([]);
@@ -38,9 +56,10 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
 
   const fetchQuickSchedules = useCallback(async () => {
     try {
+      // 單次請求取得「本週週一 ～ 下週週日（完整兩週 14 天）」預排，切換四種視圖皆零額外 API 請求
       const params = new URLSearchParams({
-        start_date: todayStr,
-        end_date: tomorrowStr,
+        start_date: thisWeek.start,
+        end_date: nextWeek.end,
       });
       const res = await fetch(`${API_BASE_URL}/planned-schedules?${params.toString()}`, {
         headers: getAuthHeaders(),
@@ -53,7 +72,7 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
     } catch {
       // 網路暫時異常時退回本地組織名冊
     }
-  }, [todayStr, tomorrowStr]);
+  }, [thisWeek.start, nextWeek.end]);
 
   useEffect(() => {
     fetchQuickSchedules();
@@ -129,10 +148,23 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
     return set;
   }, [allActivities]);
 
+  const matchesQuickScope = useCallback(
+    (s: PlannedScheduleItem) => {
+      if (quickDay === 'this_week') {
+        return s.scheduleDate >= thisWeek.start && s.scheduleDate <= thisWeek.end;
+      }
+      if (quickDay === 'next_week') {
+        return s.scheduleDate >= nextWeek.start && s.scheduleDate <= nextWeek.end;
+      }
+      return s.scheduleDate === activeDateStr;
+    },
+    [quickDay, thisWeek.start, thisWeek.end, nextWeek.start, nextWeek.end, activeDateStr]
+  );
+
   const rowsForDay = useMemo(() => {
     const list = effectivePeople.map(person => {
       const items = schedules.filter(
-        s => s.personName === person.name && s.scheduleDate === activeDateStr
+        s => s.personName === person.name && matchesQuickScope(s)
       );
       return { person, items };
     });
@@ -140,7 +172,7 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
       return list.filter(r => r.items.length === 0);
     }
     return list;
-  }, [effectivePeople, schedules, activeDateStr, onlyUnplanned]);
+  }, [effectivePeople, schedules, matchesQuickScope, onlyUnplanned]);
 
   const summaryCounts = useMemo(() => {
     let plannedPeople = 0;
@@ -148,7 +180,7 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
     let totalStops = 0;
     for (const p of effectivePeople) {
       const cnt = schedules.filter(
-        s => s.personName === p.name && s.scheduleDate === activeDateStr
+        s => s.personName === p.name && matchesQuickScope(s)
       ).length;
       if (cnt > 0) {
         plannedPeople++;
@@ -158,7 +190,7 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
       }
     }
     return { plannedPeople, unplannedPeople, totalStops, totalPeople: effectivePeople.length };
-  }, [effectivePeople, schedules, activeDateStr]);
+  }, [effectivePeople, schedules, matchesQuickScope]);
 
   return (
     <section className="mb-5 bg-white rounded-2xl border border-indigo-200/90 shadow-xs overflow-hidden">
@@ -179,8 +211,8 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
-          {/* 今日 / 明日 一鍵切換 */}
-          <div className="inline-flex rounded-xl bg-white/10 p-0.5 border border-white/15">
+          {/* 今日 / 明日 / 本週 / 下週（第 2 週一整週）一鍵切換（零額外 API 請求） */}
+          <div className="inline-flex rounded-xl bg-white/10 p-0.5 border border-white/15 flex-wrap">
             <button
               type="button"
               onClick={() => setQuickDay('today')}
@@ -197,7 +229,25 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
                 quickDay === 'tomorrow' ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:text-white'
               }`}
             >
-              明日預告 ({tomorrowStr.slice(5).replace('-', '/')})
+              明日 ({tomorrowStr.slice(5).replace('-', '/')})
+            </button>
+            <button
+              type="button"
+              onClick={() => setQuickDay('this_week')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
+                quickDay === 'this_week' ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:text-white'
+              }`}
+            >
+              本週 ({thisWeek.start.slice(5).replace('-', '/')}~{thisWeek.end.slice(5).replace('-', '/')})
+            </button>
+            <button
+              type="button"
+              onClick={() => setQuickDay('next_week')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
+                quickDay === 'next_week' ? 'bg-amber-300 text-slate-950' : 'text-slate-200 hover:text-white'
+              }`}
+            >
+              第2週 ({nextWeek.start.slice(5).replace('-', '/')}~{nextWeek.end.slice(5).replace('-', '/')})
             </button>
           </div>
 
@@ -206,7 +256,7 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
             onClick={onOpenFullPlanner}
             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-extrabold shadow-xs cursor-pointer transition-colors whitespace-nowrap"
           >
-            <span>開啟完整週曆／排程</span>
+            <span>開啟雙週預排週曆</span>
             <ArrowRight size={13} />
           </button>
         </div>
@@ -329,6 +379,11 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
                             : 'bg-white text-slate-800 border-slate-200'
                         }`}
                       >
+                        {(quickDay === 'this_week' || quickDay === 'next_week') && (
+                          <span className={isDone ? 'text-emerald-100 text-[10px]' : 'text-indigo-500 text-[10px]'}>
+                            {it.scheduleDate.slice(5).replace('-', '/')}
+                          </span>
+                        )}
                         {it.timeSlot !== '全天' && (
                           <span className={isDone ? 'text-emerald-100 text-[10px]' : 'text-slate-400 text-[10px]'}>
                             [{it.timeSlot}]
@@ -346,7 +401,17 @@ export const ExecutivePlannedOverview: React.FC<Props> = ({
                 </div>
               ) : (
                 <div className="text-[11px] text-slate-400 flex items-center justify-between">
-                  <span>尚未填寫{quickDay === 'today' ? '今日' : '明日'}預排行程</span>
+                  <span>
+                    尚未填寫
+                    {quickDay === 'today'
+                      ? '今日'
+                      : quickDay === 'tomorrow'
+                      ? '明日'
+                      : quickDay === 'this_week'
+                      ? '本週'
+                      : '第2週（下週）'}
+                    預排行程
+                  </span>
                   <span className="text-blue-600 font-bold">+ 點擊排程</span>
                 </div>
               )}

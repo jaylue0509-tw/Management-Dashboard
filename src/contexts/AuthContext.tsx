@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { API_BASE_URL } from '../api/api';
 import { clearCustomHubPointsCache } from '../utils/address-geocoder';
@@ -11,6 +11,8 @@ const ACCOUNT_SCOPED_STORAGE_KEYS = [
   'audit_app_multidrafts_v1',
   'beauty_director_audit_draft_v1',
 ];
+
+const VALID_ROLES = new Set(['admin', 'manager', 'beauty_director']);
 
 const clearAccountScopedCaches = (): void => {
   clearCustomHubPointsCache();
@@ -34,6 +36,53 @@ export interface User {
   must_change_password?: boolean;
 }
 
+const isValidStoredUser = (value: unknown): value is User => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.sub === 'string' &&
+    candidate.sub.trim().length > 0 &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.role === 'string' &&
+    VALID_ROLES.has(candidate.role)
+  );
+};
+
+/**
+ * 同步讀取 localStorage 內的登入憑證，避免首屏 render 時 token/user 短暫為 null
+ * 而被 ProtectedRoute 誤踢回 /login 或造成畫面閃白。
+ */
+const readInitialAuthState = (): { token: string | null; user: User | null } => {
+  try {
+    const storedToken = localStorage.getItem('token');
+    const storedUserRaw = localStorage.getItem('user');
+    if (!storedToken || !storedUserRaw) {
+      return { token: null, user: null };
+    }
+    const parsed = JSON.parse(storedUserRaw);
+    if (!isValidStoredUser(parsed)) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      return { token: null, user: null };
+    }
+    return {
+      token: storedToken,
+      user: {
+        ...parsed,
+        assigned_stores: Array.isArray(parsed.assigned_stores) ? parsed.assigned_stores : [],
+      },
+    };
+  } catch {
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    } catch {
+      // 忽略私密瀏覽限制
+    }
+    return { token: null, user: null };
+  }
+};
+
 interface AuthContextType {
   user: User | null;
   token: string | null;
@@ -45,63 +94,78 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const initialAuthRef = useRef<{ token: string | null; user: User | null } | null>(null);
+  if (initialAuthRef.current === null) {
+    initialAuthRef.current = readInitialAuthState();
+  }
+
+  const [user, setUser] = useState<User | null>(initialAuthRef.current.user);
+  const [token, setToken] = useState<string | null>(initialAuthRef.current.token);
 
   useEffect(() => {
-    // 嘗試從 localStorage 恢復登入狀態，並向後端同步最新負責門市與權限設定
-    const storedToken = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-    
-    if (storedToken && storedUser) {
-      setToken(storedToken);
+    // 僅在從既有 localStorage 恢復登入時向後端同步最新權限設定，剛手動登入則不重複打 /auth/me
+    const storedToken = initialAuthRef.current?.token;
+    if (!storedToken) return;
+
+    const controller = new AbortController();
+    const syncLatestUser = async () => {
       try {
-        setUser(JSON.parse(storedUser));
-      } catch (e) {
-        console.error('Failed to parse stored user', e);
-      }
-
-      const syncLatestUser = async () => {
-        try {
-          const res = await fetch(`${API_BASE_URL}/auth/me`, {
-            headers: { Authorization: `Bearer ${storedToken}` }
-          });
-          if (res.status === 401) {
-            // Token 已失效或過期時，清除登入狀態與本機快取
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            clearAccountScopedCaches();
-            setToken(null);
-            setUser(null);
-            return;
-          }
-          if (res.ok) {
-            const latestUser = await res.json();
-            if (latestUser && latestUser.sub) {
-              setUser(latestUser);
-              localStorage.setItem('user', JSON.stringify(latestUser));
-            }
-          }
-        } catch {
-          // 網路離線時保留本機快取使用者狀態
+        const res = await fetch(`${API_BASE_URL}/auth/me`, {
+          headers: { Authorization: `Bearer ${storedToken}` },
+          signal: controller.signal,
+        });
+        if (res.status === 401) {
+          // Token 已失效或過期時，清除登入狀態與本機快取
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          clearAccountScopedCaches();
+          setToken(null);
+          setUser(null);
+          return;
         }
-      };
+        if (res.ok) {
+          const latestUser = await res.json();
+          if (isValidStoredUser(latestUser)) {
+            const normalizedUser: User = {
+              ...latestUser,
+              assigned_stores: Array.isArray(latestUser.assigned_stores) ? latestUser.assigned_stores : [],
+            };
+            setUser(normalizedUser);
+            localStorage.setItem('user', JSON.stringify(normalizedUser));
+          }
+        }
+      } catch {
+        // 網路離線或元件卸載中止時保留本機快取使用者狀態
+      }
+    };
 
-      syncLatestUser();
-    }
+    syncLatestUser();
+    return () => controller.abort();
   }, []);
 
   const login = (newToken: string, newUser: User) => {
+    const normalizedUser: User = {
+      ...newUser,
+      assigned_stores: Array.isArray(newUser.assigned_stores) ? newUser.assigned_stores : [],
+    };
     clearAccountScopedCaches();
-    localStorage.setItem('token', newToken);
-    localStorage.setItem('user', JSON.stringify(newUser));
+    try {
+      localStorage.setItem('token', newToken);
+      localStorage.setItem('user', JSON.stringify(normalizedUser));
+    } catch {
+      // 忽略私密瀏覽儲存異常，仍維持記憶體內登入態
+    }
     setToken(newToken);
-    setUser(newUser);
+    setUser(normalizedUser);
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    } catch {
+      // 忽略私密瀏覽儲存異常
+    }
     clearAccountScopedCaches();
     setToken(null);
     setUser(null);
@@ -111,7 +175,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(prev => {
       if (!prev) return null;
       const next = { ...prev, ...updated };
-      localStorage.setItem('user', JSON.stringify(next));
+      try {
+        localStorage.setItem('user', JSON.stringify(next));
+      } catch {
+        // 忽略私密瀏覽儲存異常
+      }
       return next;
     });
   };

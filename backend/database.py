@@ -5,7 +5,7 @@ import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import Json
 from backend.security import pwd_context
-from backend.organization import business_department_for_region
+from backend.organization import business_department_for_region, business_director_for_department
 
 logger = logging.getLogger("dashboard-api")
 
@@ -55,15 +55,30 @@ def get_db_connection():
                 pass
         db_pool.putconn(conn, close=True)
 
+DB_SCHEMA_VERSION = "2026-11-27-v1"
+
+
 def init_db():
     """
-    初始化資料庫表結構與索引
+    初始化資料庫表結構與索引。
+    若資料庫已記錄最新 schema 版本，僅執行單條輕量查詢後立即返回，
+    避免 Serverless 冷啟動重複跑數十條 DDL/遷移而拉長登入等待時間與 Neon 耗用。
     """
     if not POSTGRES_URL:
         return
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
+                try:
+                    cur.execute("SELECT data->>'version' FROM store WHERE id = 'db_schema_version'")
+                    ver_row = cur.fetchone()
+                    if ver_row and ver_row[0] == DB_SCHEMA_VERSION:
+                        logger.info("DB schema 已為最新版本 (%s)，跳過冷啟動初始化", DB_SCHEMA_VERSION)
+                        return
+                except psycopg2.Error:
+                    # 首次初始化時 store 表可能尚未建立，回滾後執行完整建表流程
+                    conn.rollback()
+
                 # 儲存全域資料的表 (例如門市主管清單、區主管起始點地址、零用金黏存單草稿)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS store (
@@ -231,12 +246,26 @@ def init_db():
             conn.commit()
 
             # 初始化預設帳號、2026 組織同步與美容總監專屬帳號（各自獨立容錯，避免任一步驟失敗影響後續建帳）
+            all_steps_ok = True
             for init_fn in (init_default_users, sync_region_reorg_2026, sync_beauty_directors):
                 try:
                     init_fn(conn)
                 except Exception as step_err:
+                    all_steps_ok = False
                     conn.rollback()
                     logger.error("DB Init Step %s Error: %s", init_fn.__name__, step_err)
+
+            if all_steps_ok:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO store (id, data)
+                        VALUES ('db_schema_version', %s)
+                        ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+                        """,
+                        (Json({"version": DB_SCHEMA_VERSION}),),
+                    )
+                conn.commit()
 
     except Exception as e:
         logger.error("DB Init Error: %s", e)
@@ -347,6 +376,10 @@ def sync_region_reorg_2026(conn):
             expected_dept = business_department_for_region(str(m.get("region") or "").strip())
             if expected_dept and m.get("department") != expected_dept:
                 m["department"] = expected_dept
+                changed = True
+            expected_director = business_director_for_department(expected_dept or str(m.get("department") or "").strip())
+            if expected_director and m.get("directorName") != expected_director:
+                m["directorName"] = expected_director
                 changed = True
 
             if s_name not in seen_stores:

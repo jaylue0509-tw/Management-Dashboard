@@ -13,6 +13,11 @@ export const BUSINESS_DEPARTMENT_REGIONS = {
   '營業二處': ['中投區', '彰雲區', '高雄區', '高屏區'],
 } as const;
 
+export const BUSINESS_DEPARTMENT_DIRECTORS: Record<string, string> = {
+  '營業一處': '簡楷潔',
+  '營業二處': '蔡嘉峯',
+};
+
 /** 區域顯示順序依現行營業處組織排列。 */
 export const REGION_ORDER: string[] = [
   ...BUSINESS_DEPARTMENT_REGIONS['營業一處'],
@@ -27,6 +32,14 @@ export const getBusinessDepartment = (region?: string): string => {
   if (BUSINESS_DEPT_1_REGIONS.has(region)) return '營業一處';
   if (BUSINESS_DEPT_2_REGIONS.has(region)) return '營業二處';
   return '';
+};
+
+/**
+ * 依營業處別（或所屬區域）取得現行對應處長姓名
+ */
+export const getBusinessDirector = (department?: string, region?: string): string => {
+  const resolvedDept = (department || '').trim() || getBusinessDepartment(region);
+  return BUSINESS_DEPARTMENT_DIRECTORS[resolvedDept] || '';
 };
 
 /**

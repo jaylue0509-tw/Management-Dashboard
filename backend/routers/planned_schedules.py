@@ -13,7 +13,7 @@ from backend.database import (
     get_db_connection,
     sync_beauty_directors,
 )
-from backend.organization import business_department_for_region
+from backend.organization import business_department_for_region, business_director_for_department
 from backend.security import get_current_user
 
 logger = logging.getLogger("dashboard-api")
@@ -22,6 +22,10 @@ router = APIRouter(prefix="/api", tags=["預排行程管理"])
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ALLOWED_TIME_SLOTS = {"全天", "上午", "下午"}
 ALLOWED_ROLES = {"manager", "beauty_director"}
+
+# 模組層一次性快取旗標：避免每次 GET/POST/PUT/DELETE /planned-schedules 都重跑 DDL 與同步，節省 Neon 耗用並加速回應
+_PLANNED_TABLE_READY = False
+_BEAUTY_DIRECTORS_SYNCED = False
 
 
 class PlannedScheduleCreateReq(BaseModel):
@@ -45,8 +49,11 @@ class PlannedScheduleUpdateReq(BaseModel):
     note: Optional[str] = Field(default=None, max_length=500)
 
 
-def _ensure_planned_table(cur) -> None:
-    """確保熱實例尚未重跑冷啟動時也能安全建立 planned_schedules 表"""
+def _ensure_planned_table(cur) -> bool:
+    """確保熱實例尚未重跑冷啟動時也能安全建立 planned_schedules 表（同實例僅檢查一次）"""
+    global _PLANNED_TABLE_READY
+    if _PLANNED_TABLE_READY:
+        return False
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS planned_schedules (
@@ -66,6 +73,8 @@ def _ensure_planned_table(cur) -> None:
         );
         """
     )
+    _PLANNED_TABLE_READY = True
+    return True
 
 
 def _build_full_roster(cur) -> dict:
@@ -97,6 +106,9 @@ def _build_full_roster(cur) -> dict:
         expected_dept = business_department_for_region(reg)
         if expected_dept:
             dept = expected_dept
+        expected_director = business_director_for_department(dept)
+        if expected_director:
+            director = expected_director
 
         for name, is_deputy in ((area_mgr, False), (deputy_mgr, True)):
             if not name or name in ("無", "陳育廷"):
@@ -225,15 +237,18 @@ def list_planned_schedules(
     if end_date and not DATE_RE.match(end_date):
         raise HTTPException(status_code=400, detail="end_date 格式須為 YYYY-MM-DD")
 
+    global _BEAUTY_DIRECTORS_SYNCED
     with get_db_connection() as conn:
-        try:
-            sync_beauty_directors(conn)
-        except Exception:
-            conn.rollback()
+        if not _BEAUTY_DIRECTORS_SYNCED:
+            try:
+                sync_beauty_directors(conn)
+                _BEAUTY_DIRECTORS_SYNCED = True
+            except Exception:
+                conn.rollback()
 
         with conn.cursor() as cur:
-            _ensure_planned_table(cur)
-            conn.commit()
+            if _ensure_planned_table(cur):
+                conn.commit()
 
             roster = _build_full_roster(cur)
             allowed_names = _get_allowed_person_names(user, roster)

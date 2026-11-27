@@ -1,9 +1,9 @@
 import React, { useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import type { Manager } from '../types';
-import { MapPin, Building, Users, Sparkles } from 'lucide-react';
+import { MapPin, Building, Users, Sparkles, UserCheck } from 'lucide-react';
 import { importManagers } from '../api/api';
-import { normalizeRegionName, compareRegion } from '../utils/store-region';
+import { normalizeRegionName, compareRegion, getBusinessDepartment, getBusinessDirector } from '../utils/store-region';
 import {
   getBeautyDirectorByRegion,
   isRegionInBeautyDirectorScope,
@@ -45,7 +45,10 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
   }, [managers, user]);
 
   const groupedData = useMemo(() => {
-    return groupBy(filteredManagers, m => `${m.department}|${m.directorName}`);
+    return groupBy(filteredManagers, m => {
+      const region = normalizeRegionName(m.region) || m.region;
+      return getBusinessDepartment(region) || m.department || '未分類處別';
+    });
   }, [filteredManagers]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -101,6 +104,13 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
           // 如果處別或處長空白，則繼承上一筆資料（解決 Excel 合併儲存格產生的空白問題）
           if (m.department) lastDept = m.department; else m.department = lastDept;
           if (m.directorName) lastDirector = m.directorName; else m.directorName = lastDirector;
+
+          // 依現行營業處組織對照表統一補齊處別與處長姓名
+          const normalizedRegion = normalizeRegionName(m.region);
+          const resolvedDept = getBusinessDepartment(normalizedRegion) || m.department || '';
+          const resolvedDirector = getBusinessDirector(resolvedDept, normalizedRegion) || m.directorName || '';
+          m.department = resolvedDept;
+          m.directorName = resolvedDirector;
           
           if (m.storeName) {
             newManagers.push(m as Manager);
@@ -183,12 +193,15 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
             const rank = (key: string) => key.startsWith('營業一處') ? 0 : key.startsWith('營業二處') ? 1 : 2;
             return rank(a) - rank(b) || a.localeCompare(b, 'zh-Hant');
           })
-          .map(([deptKey, deptManagers]) => {
-          const [dept, director] = deptKey.split('|');
+          .map(([dept, deptManagers]) => {
+          const director =
+            getBusinessDirector(dept) ||
+            deptManagers.find(m => m.directorName?.trim())?.directorName?.trim() ||
+            '';
           const regions = groupBy(deptManagers, m => normalizeRegionName(m.region) || m.region);
 
           return (
-            <div key={deptKey} style={{ 
+            <div key={dept} style={{ 
               border: '1px solid rgba(255, 255, 255, 0.4)', 
               borderRadius: 'var(--radius-lg)', 
               overflow: 'hidden',
@@ -198,9 +211,17 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
               boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.05)'
             }}>
               {/* Department Header */}
-              <div className="flex flex-wrap justify-between items-center gap-2" style={{ backgroundColor: 'rgba(255, 255, 255, 0.4)', padding: '12px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.4)' }}>
-                <div className="font-bold text-lg text-gray-900">{dept || '未分類處別'}</div>
-                <div className="text-sm text-gray-800 font-medium">處長：{director || '未設定'}</div>
+              <div className="flex flex-wrap justify-between items-center gap-2.5" style={{ backgroundColor: 'rgba(255, 255, 255, 0.5)', padding: '12px 16px', borderBottom: '1px solid rgba(255, 255, 255, 0.5)' }}>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <div className="font-extrabold text-lg text-gray-900">{dept || '未分類處別'}</div>
+                  <span className="text-xs font-bold text-sky-800 bg-sky-100/90 border border-sky-200 px-2.5 py-0.5 rounded-full">
+                    {Object.keys(regions).length} 區 · {deptManagers.length} 店
+                  </span>
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/90 border border-indigo-200 shadow-2xs text-sm font-extrabold text-indigo-900">
+                  <UserCheck size={15} className="text-indigo-600 shrink-0" />
+                  <span>{director ? `${director} 處長` : '處長：未設定'}</span>
+                </div>
               </div>
               
               {/* Regions（手機端支援 snap 左右滑動卡片，不超出螢幕寬度） */}
