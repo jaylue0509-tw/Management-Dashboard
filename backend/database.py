@@ -55,7 +55,7 @@ def get_db_connection():
                 pass
         db_pool.putconn(conn, close=True)
 
-DB_SCHEMA_VERSION = "2026-11-27-v1"
+DB_SCHEMA_VERSION = "2026-11-27-v2"
 
 
 def init_db():
@@ -476,6 +476,27 @@ def sync_region_reorg_2026(conn):
 # 美容一處固定負責區域（新北、北桃、竹苗、宜花、嘉南）；其餘區域一律歸屬美容二處
 BEAUTY_DEPT_1_REGIONS = {"新北區", "北桃區", "竹苗區", "宜花區", "嘉南區", "台南區"}
 
+# 美容二處（戴欐蘐 / 小貝）額外共同巡視之嘉義 4 家門市
+BEAUTY_DEPT_2_EXTRA_STORES = {
+    "嘉義北港店",
+    "嘉義友愛店",
+    "嘉義朴子店",
+    "嘉義吳鳳南店",
+}
+_BEAUTY_DEPT_2_EXTRA_KEYS = {s.rstrip("店") for s in BEAUTY_DEPT_2_EXTRA_STORES}
+
+
+def is_store_in_beauty_department(store_name: str, region: str, department: str) -> bool:
+    """判斷門市是否屬於指定美容總監處別（含美容二處跨區共同巡視之嘉義 4 店）。"""
+    clean_region = str(region or "").strip()
+    clean_store = str(store_name or "").strip()
+    in_dept_1 = clean_region in BEAUTY_DEPT_1_REGIONS
+    if department == "美容一處":
+        return in_dept_1
+    if department == "美容二處":
+        return (not in_dept_1) or (clean_store.rstrip("店") in _BEAUTY_DEPT_2_EXTRA_KEYS)
+    return False
+
 # 兩位美容總監固定組織配置（初始密碼 admin1234，首次登入須修改密碼）
 BEAUTY_DIRECTORS_SEED = [
     {
@@ -543,11 +564,17 @@ def sync_beauty_directors(conn):
                 if not s_name or "測試" in s_name or "文心秀泰" in s_name:
                     continue
                 m_region = str(m.get("region") or "").strip()
-                in_dept_1 = m_region in BEAUTY_DEPT_1_REGIONS
-                if (is_dept_1 and in_dept_1) or (not is_dept_1 and not in_dept_1):
+                if is_store_in_beauty_department(s_name, m_region, dept):
                     if s_name not in seen:
                         seen.add(s_name)
                         dept_stores.append(s_name)
+
+            # 確保美容二處（戴欐蘐）固定包含嘉義 4 家共同巡視門市
+            if not is_dept_1:
+                for extra_store in sorted(BEAUTY_DEPT_2_EXTRA_STORES):
+                    if extra_store not in seen:
+                        seen.add(extra_store)
+                        dept_stores.append(extra_store)
 
             cur.execute(
                 "SELECT role, assigned_stores, nickname, department, supervisor FROM users WHERE username = %s",

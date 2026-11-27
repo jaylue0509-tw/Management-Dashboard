@@ -23,7 +23,7 @@ import { API_BASE_URL, getAuthHeaders } from '../api/api';
 import { storeRegions } from '../data/storeRegions';
 import {
   BEAUTY_DIRECTORS_CONFIG,
-  isRegionInBeautyDirectorScope,
+  isStoreInBeautyDirectorScope,
 } from '../data/beautyAuditConfig';
 import { getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr } from '../utils/time-utils';
 import { normalizeStoreName, getBusinessDepartment } from '../utils/store-region';
@@ -222,10 +222,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
       title: '美容總監',
       department: bd.department,
       supervisor: bd.supervisor,
-      region: bd.department === '美容一處' ? '新北/北桃/竹苗/宜花/嘉南' : '中投/彰雲/高雄/高屏',
+      region: bd.department === '美容一處' ? '新北/北桃/竹苗/宜花/嘉南' : '中投/彰雲/高雄/高屏 + 嘉義4店',
       nickname: bd.nickname,
       stores: allStoresFlat
-        .filter(x => isRegionInBeautyDirectorScope(x.region, bd.department))
+        .filter(x => isStoreInBeautyDirectorScope(x.store, x.region, bd.department))
         .map(x => x.store),
     }));
 
@@ -404,8 +404,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
     } else if (formPersonRole === 'beauty_director') {
       const dept = selectedPersonInfo?.department || user?.department || '美容一處';
       for (const [reg, list] of Object.entries(storeRegions)) {
-        if (isRegionInBeautyDirectorScope(reg, dept)) {
-          baseStores.push(...list);
+        for (const st of list) {
+          if (isStoreInBeautyDirectorScope(st, reg, dept)) {
+            baseStores.push(st);
+          }
         }
       }
     } else {
@@ -680,8 +682,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                   type="button"
                   onClick={() => openCreateModal(person)}
                   className={`min-h-[34px] inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-extrabold text-white shadow-2xs active:scale-95 cursor-pointer transition-all ${isBeauty
-                      ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
-                      : 'bg-blue-600 hover:bg-blue-700'
+                    ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
+                    : 'bg-blue-600 hover:bg-blue-700'
                     }`}
                 >
                   <Plus size={13} />
@@ -1662,11 +1664,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         key={tag}
                         type="button"
                         onClick={() => setFormNote(tag)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-bold border cursor-pointer transition-colors ${
-                          formNote === tag
-                            ? 'bg-emerald-600 text-white border-emerald-600'
-                            : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700'
-                        }`}
+                        className={`px-2.5 py-1 rounded-full text-xs font-bold border cursor-pointer transition-colors ${formNote === tag
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700'
+                          }`}
                       >
                         🌴 {tag}
                       </button>

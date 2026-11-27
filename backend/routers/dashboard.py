@@ -6,7 +6,13 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 from psycopg2.extras import Json
 
-from backend.database import get_db_connection, BEAUTY_DEPT_1_REGIONS, sync_beauty_directors, sync_region_reorg_2026
+from backend.database import (
+    get_db_connection,
+    BEAUTY_DEPT_1_REGIONS,
+    is_store_in_beauty_department,
+    sync_beauty_directors,
+    sync_region_reorg_2026,
+)
 from backend.security import get_current_user, get_optional_user
 from backend.schemas import Manager
 from backend.utils import _normalize_activity_time
@@ -39,15 +45,11 @@ def get_managers(user: Optional[dict] = Depends(get_optional_user)):
                 if user and user.get("role") == "beauty_director":
                     bd_dept = (user.get("department") or "").strip()
                     assigned = set(user.get("assigned_stores") or [])
-                    if bd_dept == "美容一處":
+                    if bd_dept in ("美容一處", "美容二處"):
                         return [
                             m for m in data
-                            if m.get("region") in BEAUTY_DEPT_1_REGIONS or m.get("storeName") in assigned
-                        ]
-                    if bd_dept == "美容二處":
-                        return [
-                            m for m in data
-                            if (m.get("region") not in BEAUTY_DEPT_1_REGIONS) or m.get("storeName") in assigned
+                            if is_store_in_beauty_department(m.get("storeName") or "", m.get("region") or "", bd_dept)
+                            or m.get("storeName") in assigned
                         ]
                     return [m for m in data if m.get("storeName") in assigned]
                 return data
@@ -147,10 +149,14 @@ def get_dashboard_data(
                 beauty_department = (user.get("department") or "").strip()
                 beauty_store_names = assigned_stores.copy()
                 for manager in managers:
-                    region_in_first = manager.get("region") in BEAUTY_DEPT_1_REGIONS
-                    if (manager.get("storeName") in assigned_stores
-                            or (beauty_department == "美容一處" and region_in_first)
-                            or (beauty_department == "美容二處" and not region_in_first)):
+                    if (
+                        manager.get("storeName") in assigned_stores
+                        or is_store_in_beauty_department(
+                            manager.get("storeName") or "",
+                            manager.get("region") or "",
+                            beauty_department,
+                        )
+                    ):
                         if manager.get("storeName"):
                             beauty_store_names.add(manager["storeName"])
 
@@ -268,15 +274,11 @@ def get_dashboard_data(
                 bd_name = (user.get("name") or "").strip()
                 bd_dept = (user.get("department") or "").strip()
                 assigned = set(user.get("assigned_stores") or [])
-                if bd_dept == "美容一處":
+                if bd_dept in ("美容一處", "美容二處"):
                     managers = [
                         m for m in managers
-                        if m.get("region") in BEAUTY_DEPT_1_REGIONS or m.get("storeName") in assigned
-                    ]
-                elif bd_dept == "美容二處":
-                    managers = [
-                        m for m in managers
-                        if (m.get("region") not in BEAUTY_DEPT_1_REGIONS) or m.get("storeName") in assigned
+                        if is_store_in_beauty_department(m.get("storeName") or "", m.get("region") or "", bd_dept)
+                        or m.get("storeName") in assigned
                     ]
                 else:
                     managers = [m for m in managers if m.get("storeName") in assigned]

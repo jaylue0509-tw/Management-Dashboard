@@ -268,6 +268,24 @@ export const BEAUTY_COACHING_TARGET_OPTIONS = ['美容師', '資深美容師', '
 /** 美容一處固定轄區（其餘區域全歸屬美容二處） */
 export const BEAUTY_DEPT_1_REGIONS = new Set(['新北區', '北桃區', '竹苗區', '宜花區', '嘉南區', '台南區']);
 
+/** 美容二處（戴欐蘐／小貝）跨區共同巡視之嘉義 4 家門市 */
+export const BEAUTY_DEPT_2_EXTRA_STORES = [
+  '嘉義北港店',
+  '嘉義友愛店',
+  '嘉義朴子店',
+  '嘉義吳鳳南店',
+] as const;
+
+const BEAUTY_DEPT_2_EXTRA_STORE_KEYS = new Set(
+  BEAUTY_DEPT_2_EXTRA_STORES.map(s => s.replace(/店$/, ''))
+);
+
+/** 判斷指定門市是否為美容二處（戴欐蘐）額外巡視之嘉義 4 店 */
+export const isBeautyDept2ExtraStore = (storeName?: string): boolean => {
+  const clean = (storeName || '').trim().replace(/店$/, '');
+  return Boolean(clean && BEAUTY_DEPT_2_EXTRA_STORE_KEYS.has(clean));
+};
+
 /** 各美容處總監固定組織配置（與後端 backend/database.py 保持 1:1 一致） */
 export interface BeautyDirectorProfile {
   name: string;
@@ -275,6 +293,7 @@ export interface BeautyDirectorProfile {
   department: '美容一處' | '美容二處';
   supervisor: string;
   regions: string[];
+  extraStores?: readonly string[];
 }
 
 export const BEAUTY_DIRECTORS_CONFIG: BeautyDirectorProfile[] = [
@@ -291,6 +310,7 @@ export const BEAUTY_DIRECTORS_CONFIG: BeautyDirectorProfile[] = [
     department: '美容二處',
     supervisor: '蔡嘉峯',
     regions: ['中投區', '彰雲區', '高雄區', '高屏區'],
+    extraStores: BEAUTY_DEPT_2_EXTRA_STORES,
   },
 ];
 
@@ -306,7 +326,7 @@ export const getBeautyDirectorByRegion = (region?: string): BeautyDirectorProfil
 };
 
 /**
- * 判斷指定門市／區域是否屬於該位美容總監的管轄範圍
+ * 判斷指定區域是否屬於該位美容總監的主要管轄區域
  */
 export const isRegionInBeautyDirectorScope = (
   region: string | undefined,
@@ -316,6 +336,20 @@ export const isRegionInBeautyDirectorScope = (
   const inDept1 = BEAUTY_DEPT_1_REGIONS.has(cleanRegion);
   if (department === '美容一處') return inDept1;
   if (department === '美容二處') return !inDept1;
+  return false;
+};
+
+/**
+ * 判斷指定門市（含區域與跨區共同巡視門市）是否屬於該位美容總監的管轄範圍
+ * NOTE: 美容二處（戴欐蘐／小貝）除中投/彰雲/高雄/高屏外，亦同步巡視嘉義北港/友愛/朴子/吳鳳南 4 店
+ */
+export const isStoreInBeautyDirectorScope = (
+  storeName: string | undefined,
+  region: string | undefined,
+  department: string | undefined
+): boolean => {
+  if (isRegionInBeautyDirectorScope(region, department)) return true;
+  if (department === '美容二處' && isBeautyDept2ExtraStore(storeName)) return true;
   return false;
 };
 

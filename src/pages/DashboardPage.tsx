@@ -14,7 +14,7 @@ import { useNavigate } from 'react-router-dom';
 import { normalizeUtcIso, getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr, formatTaipeiReportTime, getMinutesAgo } from '../utils/time-utils';
 import { normalizeStoreName, normalizeRegionName, compareRegion, getBusinessDepartment, getBusinessDirector } from '../utils/store-region';
 import { buildExpenseDashboardReport, DEFAULT_SUBSIDY_PER_KM } from '../utils/mileage-calculator';
-import { isRegionInBeautyDirectorScope } from '../data/beautyAuditConfig';
+import { isStoreInBeautyDirectorScope } from '../data/beautyAuditConfig';
 import {
   CUSTOM_HUBS_UPDATED_EVENT,
   customHubToGeoPoint,
@@ -364,12 +364,12 @@ export const DashboardPage: React.FC = () => {
               coManagerNames.has(i.createdBy)
           );
         } else if (user?.role === 'beauty_director') {
-          // 美容總監前端雙重保險隔離：依美容一處（新北/北桃/竹苗/宜花/嘉南）與美容二處（其餘區域）切分，並僅留本人巡店紀錄
+          // 美容總監前端雙重保險隔離：依美容一處與美容二處（含戴欐蘐共同巡視之嘉義 4 店）切分，並僅留本人巡店紀錄
           const bdName = user.name;
           const assignedStores = new Set(user.assigned_stores || []);
           validManagers = validManagers.filter(
             (m: any) =>
-              isRegionInBeautyDirectorScope(m.region, user.department) ||
+              isStoreInBeautyDirectorScope(m.storeName, m.region, user.department) ||
               assignedStores.has(m.storeName)
           );
           const deptStoreSet = new Set<string>([
@@ -423,7 +423,7 @@ export const DashboardPage: React.FC = () => {
         if (!status || typeof status.revision !== 'number') return;
         lastRevisionCheckAtRef.current = Date.now();
         if (status.revision !== lastRevisionRef.current ||
-            Date.now() - lastSuccessfulFetchAtRef.current >= 24 * 60 * 60 * 1000) {
+          Date.now() - lastSuccessfulFetchAtRef.current >= 24 * 60 * 60 * 1000) {
           await fetchData(true);
         }
       })().finally(() => {
@@ -1451,20 +1451,19 @@ export const DashboardPage: React.FC = () => {
                       key={sType}
                       type="button"
                       onClick={() => openCreateActivityModal(undefined, sType)}
-                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 shadow-2xs whitespace-nowrap ${
-                        sType === '排休/休假'
-                          ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-600 hover:text-white hover:border-emerald-600'
-                          : 'border-indigo-200 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'
-                      }`}
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 shadow-2xs whitespace-nowrap ${sType === '排休/休假'
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-600 hover:text-white hover:border-emerald-600'
+                        : 'border-indigo-200 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'
+                        }`}
                     >
                       <span>
                         {sType === '總部行程'
                           ? '🏢'
                           : sType === '會議行程'
-                          ? '📅'
-                          : sType === '特殊行程'
-                          ? '⭐'
-                          : '🌴'}
+                            ? '📅'
+                            : sType === '特殊行程'
+                              ? '⭐'
+                              : '🌴'}
                       </span>
                       <span>+ {sType}</span>
                     </button>

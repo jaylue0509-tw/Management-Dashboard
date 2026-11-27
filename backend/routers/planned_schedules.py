@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 from psycopg2.extras import Json
 
 from backend.database import (
-    BEAUTY_DEPT_1_REGIONS,
+    BEAUTY_DEPT_2_EXTRA_STORES,
     BEAUTY_DIRECTORS_SEED,
     get_db_connection,
+    is_store_in_beauty_department,
     sync_beauty_directors,
 )
 from backend.organization import business_department_for_region, business_director_for_department
@@ -165,27 +166,32 @@ def _build_full_roster(cur) -> dict:
         key=lambda x: (x.get("department") or "zz", x.get("region") or "zz", x.get("name") or ""),
     )
 
-    # 2. 整理每一位美容總監（美容一處：廖羿蓁 / 美容二處：戴欐蘐）
+    # 2. 整理每一位美容總監（美容一處：廖羿蓁 / 美容二處：戴欐蘐，含嘉義 4 店共同巡視）
     beauty_roster: list[dict] = []
     for bd in BEAUTY_DIRECTORS_SEED:
         is_dept_1 = bd["is_dept_1"]
+        bd_dept = bd["department"]
         bd_stores: list[str] = []
         seen = set()
         for reg, s_name in all_valid_stores_by_region:
-            in_d1 = reg in BEAUTY_DEPT_1_REGIONS
-            if (is_dept_1 and in_d1) or (not is_dept_1 and not in_d1):
+            if is_store_in_beauty_department(s_name, reg, bd_dept):
                 if s_name not in seen:
                     seen.add(s_name)
                     bd_stores.append(s_name)
+        if not is_dept_1:
+            for extra_store in sorted(BEAUTY_DEPT_2_EXTRA_STORES):
+                if extra_store not in seen:
+                    seen.add(extra_store)
+                    bd_stores.append(extra_store)
 
         beauty_roster.append(
             {
                 "name": bd["name"],
                 "role": "beauty_director",
                 "title": "美容總監",
-                "department": bd["department"],
+                "department": bd_dept,
                 "supervisor": bd["supervisor"],
-                "region": "新北/北桃/竹苗/宜花/嘉南" if is_dept_1 else "中投/彰雲/高雄/高屏",
+                "region": "新北/北桃/竹苗/宜花/嘉南" if is_dept_1 else "中投/彰雲/高雄/高屏 + 嘉義4店",
                 "nickname": bd["nickname"],
                 "stores": bd_stores,
             }

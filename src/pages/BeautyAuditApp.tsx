@@ -33,7 +33,7 @@ import {
   BEAUTY_COACHING_TARGET_OPTIONS,
   BEAUTY_CORE_SAFETY_ITEMS,
   BEAUTY_TOPIC_GROUPS,
-  isRegionInBeautyDirectorScope,
+  isStoreInBeautyDirectorScope,
   type BeautyAuditMode,
   type BeautyCheckStatus,
   type BeautyOverallRating,
@@ -357,11 +357,11 @@ export const BeautyAuditApp: React.FC = () => {
         }
       }
     } else if (managersCatalog.length === 0) {
-      // 離線備援：依美容一處（新北/北桃/竹苗/宜花/嘉南）與美容二處（其餘）或 assigned_stores 精準過濾
+      // 離線備援：依美容一處與美容二處（含戴欐蘐跨區巡視之嘉義 4 店）或 assigned_stores 精準過濾
       for (const [reg, stores] of Object.entries(storeRegions)) {
         for (const sName of stores) {
           if (
-            isRegionInBeautyDirectorScope(reg, user?.department) ||
+            isStoreInBeautyDirectorScope(sName, reg, user?.department) ||
             assignedSet.has(normalizeStoreName(sName))
           ) {
             map.set(normalizeStoreName(sName), { storeName: sName, region: reg, beautyLeader: '' });
@@ -373,9 +373,9 @@ export const BeautyAuditApp: React.FC = () => {
     for (const m of managersCatalog) {
       if (!m.storeName || m.storeName.includes('測試')) continue;
       if (isBeautyDirector) {
-        const matchRegion = isRegionInBeautyDirectorScope(m.region, user?.department);
+        const matchScope = isStoreInBeautyDirectorScope(m.storeName, m.region, user?.department);
         const matchAssigned = assignedSet.has(normalizeStoreName(m.storeName));
-        if (!matchRegion && !matchAssigned) continue;
+        if (!matchScope && !matchAssigned) continue;
       }
       const key = normalizeStoreName(m.storeName);
       map.set(key, {

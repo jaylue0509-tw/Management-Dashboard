@@ -6,7 +6,8 @@ import { importManagers } from '../api/api';
 import { normalizeRegionName, compareRegion, getBusinessDepartment, getBusinessDirector } from '../utils/store-region';
 import {
   getBeautyDirectorByRegion,
-  isRegionInBeautyDirectorScope,
+  isBeautyDept2ExtraStore,
+  isStoreInBeautyDirectorScope,
 } from '../data/beautyAuditConfig';
 import Papa from 'papaparse';
 
@@ -37,7 +38,7 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
     if (user?.role === 'beauty_director') {
       return managers.filter(
         m =>
-          isRegionInBeautyDirectorScope(m.region, user.department) ||
+          isStoreInBeautyDirectorScope(m.storeName, m.region, user.department) ||
           (user.assigned_stores && user.assigned_stores.includes(m.storeName))
       );
     }
@@ -287,6 +288,11 @@ export const OrganizationMap: React.FC<Props> = ({ managers }) => {
                               {stores.map(store => (
                                 <li key={store.storeName} className="flex flex-col items-center justify-center gap-1 text-sm text-gray-700 text-center" style={{ padding: '4px' }}>
                                   <span className="font-medium">{store.storeName}</span>
+                                  {isBeautyDept2ExtraStore(store.storeName) && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-200 whitespace-nowrap">
+                                      🌸 美容二處：戴欐蘐(小貝)亦巡
+                                    </span>
+                                  )}
                                   {store.beautyLeader && store.beautyLeader !== '無' && (
                                     <span style={{ 
                                       fontSize: '0.7rem', 
