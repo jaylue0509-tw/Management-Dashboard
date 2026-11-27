@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import type { Manager, VisitRecord } from '../../types';
 import { getTaipeiDateStr, getTaipeiTodayStr, shiftDateStr } from '../../utils/time-utils';
 
-export type ActivityScheduleType = '總部行程' | '會議行程' | '特殊行程';
+export type ActivityScheduleType = '總部行程' | '會議行程' | '特殊行程' | '排休/休假';
 
 interface Props {
   isOpen: boolean;
@@ -78,8 +78,12 @@ export const ActivityScheduleModal: React.FC<Props> = ({
     setSelectedRecordId(record.recordId);
     setEditingActionType(record.actionType || '總部行程');
     setEditingStoreName(record.storeName || record.actionType || '');
-    if (['總部行程', '會議行程', '特殊行程'].includes(record.actionType)) {
-      setScheduleType(record.actionType as ActivityScheduleType);
+    if (['總部行程', '會議行程', '特殊行程', '排休/休假'].includes(record.actionType)) {
+      if (record.storeName === '排休/休假' || (record.highlightDescription || '').includes('排休')) {
+        setScheduleType('排休/休假');
+      } else {
+        setScheduleType(record.actionType as ActivityScheduleType);
+      }
     }
     setScheduleDate(getTaipeiDateStr(record.createdAt) || getTaipeiTodayStr());
     setScheduleNote(record.highlightDescription || '');
@@ -105,13 +109,13 @@ export const ActivityScheduleModal: React.FC<Props> = ({
     } else {
       const defaultType = initialPresetType || '總部行程';
       setSelectedRecordId(null);
-      setEditingActionType(defaultType);
+      setEditingActionType(defaultType === '排休/休假' ? '特殊行程' : defaultType);
       setEditingStoreName(defaultType);
       setScheduleType(defaultType);
       setScheduleDate(getTaipeiTodayStr());
-      setScheduleNote('');
+      setScheduleNote(defaultType === '排休/休假' ? '例假排休' : '');
       setScheduleImprovement('');
-      setScheduleDuration(240);
+      setScheduleDuration(defaultType === '排休/休假' ? 480 : 240);
     }
   }, [isOpen, mode, initialRecord, initialPresetType]);
 
@@ -119,11 +123,16 @@ export const ActivityScheduleModal: React.FC<Props> = ({
 
   const handleSubmit = async () => {
     if (isSubmitting) return;
-    const isSpecialType = ['總部行程', '會議行程', '特殊行程'].includes(
+    const isLeaveType = scheduleType === '排休/休假';
+    const effectiveActionType = isLeaveType ? '特殊行程' : scheduleType;
+    const isSpecialType = ['總部行程', '會議行程', '特殊行程', '排休/休假'].includes(
       mode === 'edit' ? editingActionType : scheduleType
     );
     const targetMgr = isAdmin ? activeManagerName : (currentUserName || '區主管');
-    const noteText = scheduleNote.trim() || (isSpecialType ? `執行當日${scheduleType}` : '');
+    const rawNote = scheduleNote.trim();
+    const noteText = isLeaveType
+      ? (rawNote.startsWith('🌴') ? rawNote : `🌴 排休／休假：${rawNote || '例假排休'}`)
+      : (rawNote || (isSpecialType ? `執行當日${scheduleType}` : ''));
 
     setIsSubmitting(true);
     try {
@@ -146,8 +155,8 @@ export const ActivityScheduleModal: React.FC<Props> = ({
           method: 'PUT',
           headers,
           body: JSON.stringify({
-            actionType: isSpecialType ? scheduleType : editingActionType,
-            storeName: isSpecialType ? scheduleType : editingStoreName,
+            actionType: isSpecialType ? effectiveActionType : editingActionType,
+            storeName: isSpecialType ? (isLeaveType ? '排休/休假' : scheduleType) : editingStoreName,
             highlightDescription: noteText,
             immediateImprovement: scheduleImprovement.trim(),
             expectedStayMinutes: scheduleDuration || 240,
@@ -171,14 +180,14 @@ export const ActivityScheduleModal: React.FC<Props> = ({
         method: 'POST',
         headers,
         body: JSON.stringify({
-          storeName: scheduleType,
+          storeName: isLeaveType ? '排休/休假' : scheduleType,
           region: mgrRecord?.region || '',
           department: mgrRecord?.department || '',
           areaManagerName: targetMgr,
           jobTitle: '區主管',
-          actionType: scheduleType,
+          actionType: effectiveActionType,
           expectedStayMinutes: scheduleDuration || 240,
-          tags: [scheduleType, '當日行程'],
+          tags: isLeaveType ? ['排休/休假', '當日行程'] : [scheduleType, '當日行程'],
           immediateImprovement: scheduleImprovement.trim(),
           highlightDescription: noteText,
           abnormalFlag: false,
@@ -189,6 +198,25 @@ export const ActivityScheduleModal: React.FC<Props> = ({
               : new Date(`${scheduleDate}T09:00:00+08:00`).toISOString(),
         }),
       });
+
+      // 若為排休／休假或公務行程，同步寫入預排行程表，確保預排週曆也一致呈現
+      if (res.ok && isLeaveType) {
+        void fetch(`${apiBase}/planned-schedules`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            personName: targetMgr,
+            personRole: 'manager',
+            department: mgrRecord?.department || '',
+            region: mgrRecord?.region || '',
+            scheduleDate,
+            timeSlot: scheduleDuration <= 240 ? '上午' : '全天',
+            scheduleType: '排休/休假',
+            storeNames: [],
+            note: rawNote || '例假排休',
+          }),
+        }).catch(() => {});
+      }
 
       if (res.ok) {
         onClose();
@@ -437,30 +465,41 @@ export const ActivityScheduleModal: React.FC<Props> = ({
               />
             </div>
 
-            {/* 行程類型選擇 */}
+            {/* 行程類型選擇（支援總部行程、會議行程、特殊行程、排休/休假） */}
             {mode === 'create' ||
-            ['總部行程', '會議行程', '特殊行程'].includes(editingActionType) ? (
+            ['總部行程', '會議行程', '特殊行程', '排休/休假'].includes(editingActionType) ? (
               <div className="mb-4">
                 <label className="block text-xs font-bold text-gray-700 mb-1.5">當日活動／行程類型</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['總部行程', '會議行程', '特殊行程'] as const).map(t => (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(['總部行程', '會議行程', '特殊行程', '排休/休假'] as const).map(t => (
                     <button
                       key={t}
                       type="button"
                       onClick={() => {
                         setScheduleType(t);
+                        if (t === '排休/休假' && !scheduleNote.trim()) {
+                          setScheduleNote('例假排休');
+                        }
                         if (mode === 'edit') {
-                          setEditingActionType(t);
+                          setEditingActionType(t === '排休/休假' ? '特殊行程' : t);
                           setEditingStoreName(t);
                         }
                       }}
                       className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
                         scheduleType === t
-                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          ? t === '排休/休假'
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                            : 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
                           : 'bg-white text-gray-700 border-gray-200 hover:bg-indigo-50'
                       }`}
                     >
-                      {t === '總部行程' ? '🏢 ' : t === '會議行程' ? '📅 ' : '⭐ '}
+                      {t === '總部行程'
+                        ? '🏢 '
+                        : t === '會議行程'
+                        ? '📅 '
+                        : t === '特殊行程'
+                        ? '⭐ '
+                        : '🌴 '}
                       {t}
                     </button>
                   ))}
@@ -483,7 +522,10 @@ export const ActivityScheduleModal: React.FC<Props> = ({
                 當日活動內容／亮點與任務說明（可點選下方快速標籤或自由輸入）
               </label>
               <div className="flex flex-wrap gap-1.5 mb-2">
-                {['總部營運會議', '教育訓練課程', '跨區專案支援', '盤點／展店籌備', '部門主管會議'].map(preset => (
+                {(scheduleType === '排休/休假'
+                  ? ['例假排休', '特休假', '補休', '事假／病假', '半天排休']
+                  : ['總部營運會議', '教育訓練課程', '跨區專案支援', '盤點／展店籌備', '部門主管會議']
+                ).map(preset => (
                   <button
                     key={preset}
                     type="button"

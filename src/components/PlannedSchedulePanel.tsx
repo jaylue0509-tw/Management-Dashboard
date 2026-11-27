@@ -434,20 +434,33 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
     return map;
   }, [schedules, formPersonName]);
 
-  // 開啟「新增預排行程」彈窗
-  const openCreateModal = (person: RosterPerson, dateStr?: string) => {
+  // 開啟「新增預排行程」彈窗（支援直接指定預設行程類型，例如一鍵點選「排休/休假」）
+  const openCreateModal = (person: RosterPerson, dateStr?: string, presetType?: string) => {
     setEditingItem(null);
     setFormPersonName(person.name);
     setFormPersonRole(person.role);
     setFormDate(dateStr || (anchorDate >= weekStart && anchorDate <= weekEnd ? anchorDate : weekStart));
     setFormTimeSlot('全天');
-    setFormScheduleType(person.role === 'beauty_director' ? '美容巡店' : '門市巡店');
+    setFormScheduleType(
+      presetType || (person.role === 'beauty_director' ? '美容巡店' : '門市巡店')
+    );
     setFormSelectedStores([]);
     setFormSingleStore('');
-    setFormNote('');
+    setFormNote(presetType === '排休/休假' ? '例假排休' : '');
     setStoreFilterKeyword('');
     setModalOpen(true);
   };
+
+  // 取得當前操作者的預設排程人員物件（供頂部橫幅「新增預排／預排休假」按鈕一鍵開啟）
+  const defaultTargetPerson = useMemo<RosterPerson | null>(() => {
+    if (user?.role === 'beauty_director') {
+      return beautyDirectorsRoster.find(p => p.name === user.name) || beautyDirectorsRoster[0] || null;
+    }
+    if (user?.role === 'manager') {
+      return areaManagersRoster.find(p => p.name === user.name) || areaManagersRoster[0] || null;
+    }
+    return areaManagersRoster[0] || beautyDirectorsRoster[0] || null;
+  }, [user, areaManagersRoster, beautyDirectorsRoster]);
 
   // 開啟「編輯預排行程」彈窗
   const openEditModal = (item: PlannedScheduleItem) => {
@@ -616,8 +629,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
         {/* 人員標頭列 */}
         <div
           className={`px-3.5 sm:px-4 py-2.5 border-b flex flex-wrap items-center justify-between gap-2 ${isBeauty
-              ? 'bg-gradient-to-r from-rose-50 via-fuchsia-50 to-purple-50 border-rose-100'
-              : 'bg-slate-50/90 border-slate-200/80'
+            ? 'bg-gradient-to-r from-rose-50 via-fuchsia-50 to-purple-50 border-rose-100'
+            : 'bg-slate-50/90 border-slate-200/80'
             }`}
         >
           <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -649,22 +662,32 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-600">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-bold text-slate-600 mr-1">
               {periodLabel}已排 <strong className={isBeauty ? 'text-rose-600' : 'text-blue-600'}>{personWeekItems.length}</strong> 筆
             </span>
             {canManage && (
-              <button
-                type="button"
-                onClick={() => openCreateModal(person)}
-                className={`min-h-[34px] inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-extrabold text-white shadow-2xs active:scale-95 cursor-pointer transition-all ${isBeauty
-                    ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-              >
-                <Plus size={13} />
-                <span>新增預排</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => openCreateModal(person, undefined, '排休/休假')}
+                  className="min-h-[34px] inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-extrabold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs active:scale-95 cursor-pointer transition-all"
+                  title="快速新增排休／休假"
+                >
+                  <span>🌴 排休/休假</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCreateModal(person)}
+                  className={`min-h-[34px] inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-extrabold text-white shadow-2xs active:scale-95 cursor-pointer transition-all ${isBeauty
+                      ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                >
+                  <Plus size={13} />
+                  <span>新增預排</span>
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -697,10 +720,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         <div className="flex items-center justify-between gap-1 mb-2">
                           <span
                             className={`text-[11px] font-extrabold px-1.5 py-0.5 rounded-md ${isToday
-                                ? 'bg-blue-600 text-white'
-                                : idx >= 5
-                                  ? 'text-rose-600 bg-rose-50'
-                                  : 'text-slate-600 bg-slate-100'
+                              ? 'bg-blue-600 text-white'
+                              : idx >= 5
+                                ? 'text-rose-600 bg-rose-50'
+                                : 'text-slate-600 bg-slate-100'
                               }`}
                           >
                             {WEEKDAY_LABELS[idx]} {dStr.slice(5).replace('-', '/')}
@@ -732,8 +755,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                                 key={item.id}
                                 onClick={() => canManage && openEditModal(item)}
                                 className={`group rounded-lg border p-1.5 text-xs transition-all ${done
-                                    ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
-                                    : badge.badgeCls
+                                  ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
+                                  : badge.badgeCls
                                   } ${canManage ? 'cursor-pointer hover:shadow-xs' : ''}`}
                               >
                                 <div className="flex items-center justify-between gap-1">
@@ -811,10 +834,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         type="button"
                         onClick={() => openCreateModal(person, dStr)}
                         className={`shrink-0 min-h-[40px] px-2.5 py-1 rounded-xl border text-left flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all ${isToday
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : count > 0
-                              ? 'bg-indigo-50/70 text-indigo-900 border-indigo-200'
-                              : 'bg-slate-50 text-slate-600 border-slate-200'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : count > 0
+                            ? 'bg-indigo-50/70 text-indigo-900 border-indigo-200'
+                            : 'bg-slate-50 text-slate-600 border-slate-200'
                           }`}
                       >
                         <span className="text-[10px] font-bold">
@@ -942,15 +965,36 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleExportCsv}
-            disabled={schedules.length === 0}
-            className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white text-xs font-bold border border-white/15 cursor-pointer transition-colors"
-          >
-            <Download size={14} />
-            <span>匯出{periodLabel}預排 CSV</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {defaultTargetPerson && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openCreateModal(defaultTargetPerson)}
+                  className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-300 hover:bg-amber-200 text-slate-950 text-xs font-black shadow-sm active:scale-95 cursor-pointer transition-all"
+                >
+                  <Plus size={15} strokeWidth={2.6} />
+                  <span>新增預排行程</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCreateModal(defaultTargetPerson, undefined, '排休/休假')}
+                  className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-400 hover:bg-emerald-300 text-slate-950 text-xs font-black shadow-sm active:scale-95 cursor-pointer transition-all"
+                >
+                  <span>🌴 預排休假／排休</span>
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={schedules.length === 0}
+              className="min-h-[38px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white text-xs font-bold border border-white/15 cursor-pointer transition-colors"
+            >
+              <Download size={14} />
+              <span>匯出{periodLabel}預排 CSV</span>
+            </button>
+          </div>
         </div>
 
         {/* 週次切換與角色篩選列 */}
@@ -988,8 +1032,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
               type="button"
               onClick={() => setAnchorDate(todayStr)}
               className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer ${weekStart <= todayStr && todayStr <= weekEnd
-                  ? 'bg-amber-300 text-slate-950'
-                  : 'bg-white/10 hover:bg-white/20 text-white'
+                ? 'bg-amber-300 text-slate-950'
+                : 'bg-white/10 hover:bg-white/20 text-white'
                 }`}
             >
               {viewWeeks === 2 ? '本週起（兩週）' : '本週'}
@@ -1032,8 +1076,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                 type="button"
                 onClick={() => setCompactExecutiveTable(prev => !prev)}
                 className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-extrabold border cursor-pointer transition-colors ${compactExecutiveTable
-                    ? 'bg-emerald-400 text-slate-950 border-emerald-300'
-                    : 'bg-white/10 text-white border-white/20 hover:bg-white/20'
+                  ? 'bg-emerald-400 text-slate-950 border-emerald-300'
+                  : 'bg-white/10 text-white border-white/20 hover:bg-white/20'
                   }`}
               >
                 {compactExecutiveTable ? '👑 長官一頁總表模式（開啟中）' : '切換為長官一頁總表'}
@@ -1079,8 +1123,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                 type="button"
                 onClick={() => setOnlyShowUnplanned(prev => !prev)}
                 className={`min-h-[34px] px-2.5 py-1 rounded-xl text-xs font-bold border cursor-pointer transition-colors ${onlyShowUnplanned
-                    ? 'bg-rose-500 text-white border-rose-400'
-                    : 'bg-white/10 text-amber-200 border-white/15 hover:bg-white/20'
+                  ? 'bg-rose-500 text-white border-rose-400'
+                  : 'bg-white/10 text-amber-200 border-white/15 hover:bg-white/20'
                   }`}
               >
                 {onlyShowUnplanned ? `✓ 僅顯示${periodLabel}未排程` : `⚠️ 篩選${periodLabel}未排程`}
@@ -1200,8 +1244,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         key={chunk.weekIndex}
                         colSpan={chunk.dates.length}
                         className={`px-2 py-1.5 text-center text-[11px] font-black border-b border-r border-slate-200 ${chunk.weekIndex === 0
-                            ? '!bg-indigo-50 !text-indigo-900'
-                            : '!bg-amber-50 !text-amber-900 border-l-2 border-l-slate-300'
+                          ? '!bg-indigo-50 !text-indigo-900'
+                          : '!bg-amber-50 !text-amber-900 border-l-2 border-l-slate-300'
                           }`}
                       >
                         {chunk.label}（{chunk.dates[0].slice(5).replace('-', '/')} ～ {chunk.dates[chunk.dates.length - 1].slice(5).replace('-', '/')}）
@@ -1249,10 +1293,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                           </span>
                           <span
                             className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${totalForPerson === 0
-                                ? 'bg-amber-100 text-amber-800'
-                                : isBeauty
-                                  ? 'bg-rose-100 text-rose-800'
-                                  : 'bg-blue-100 text-blue-800'
+                              ? 'bg-amber-100 text-amber-800'
+                              : isBeauty
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-blue-100 text-blue-800'
                               }`}
                           >
                             {totalForPerson === 0 ? '未排' : `${totalForPerson}筆`}
@@ -1288,10 +1332,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                                       openEditModal(item);
                                     }}
                                     className={`px-1.5 py-1 rounded border text-[11px] font-bold leading-tight hover:shadow-2xs ${done
-                                        ? 'bg-emerald-600 text-white border-emerald-600'
-                                        : isBeauty
-                                          ? 'bg-rose-50 text-rose-900 border-rose-200'
-                                          : 'bg-blue-50 text-blue-900 border-blue-200'
+                                      ? 'bg-emerald-600 text-white border-emerald-600'
+                                      : isBeauty
+                                        ? 'bg-rose-50 text-rose-900 border-rose-200'
+                                        : 'bg-blue-50 text-blue-900 border-blue-200'
                                       }`}
                                     title={item.note ? `${item.storeName || item.scheduleType}｜${item.note}` : undefined}
                                   >
@@ -1453,11 +1497,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                           key={opt.label}
                           type="button"
                           onClick={() => setFormDate(opt.date)}
-                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
-                            formDate === opt.date
-                              ? 'bg-blue-600 text-white border-blue-600'
-                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700'
-                          }`}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${formDate === opt.date
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700'
+                            }`}
                         >
                           {opt.label}
                         </button>
@@ -1476,8 +1519,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                           type="button"
                           onClick={() => setFormTimeSlot(slot)}
                           className={`min-h-[42px] rounded-xl text-xs font-extrabold border cursor-pointer transition-colors ${formTimeSlot === slot
-                              ? 'bg-slate-900 text-white border-slate-900'
-                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                             }`}
                         >
                           {slot}
@@ -1505,10 +1548,10 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                         type="button"
                         onClick={() => setFormScheduleType(t.id)}
                         className={`min-h-[40px] px-3 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-all ${active
-                            ? formPersonRole === 'beauty_director'
-                              ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
-                              : 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                          ? formPersonRole === 'beauty_director'
+                            ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                            : 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                           }`}
                       >
                         <span>{t.icon}</span>
@@ -1580,15 +1623,14 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                                   )
                                 }
                                 title={existingPlanDate ? `此門市已預排於 ${existingPlanDate}` : undefined}
-                                className={`min-h-[38px] px-2.5 py-1.5 rounded-lg border text-xs font-bold text-left flex items-center justify-between gap-1 cursor-pointer transition-all ${
-                                  checked
-                                    ? formPersonRole === 'beauty_director'
-                                      ? 'bg-rose-600 text-white border-rose-600'
-                                      : 'bg-blue-600 text-white border-blue-600'
-                                    : existingPlanDate
+                                className={`min-h-[38px] px-2.5 py-1.5 rounded-lg border text-xs font-bold text-left flex items-center justify-between gap-1 cursor-pointer transition-all ${checked
+                                  ? formPersonRole === 'beauty_director'
+                                    ? 'bg-rose-600 text-white border-rose-600'
+                                    : 'bg-blue-600 text-white border-blue-600'
+                                  : existingPlanDate
                                     ? 'bg-amber-50/70 text-slate-700 border-amber-200 hover:border-blue-300'
                                     : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300'
-                                }`}
+                                  }`}
                               >
                                 <span className="truncate">
                                   {checked ? '✓ ' : ''}
@@ -1608,16 +1650,38 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                   </div>
                 )}
 
-              {/* 重點備註 */}
+              {/* 重點備註（選排休/休假時提供假別快選膠囊） */}
               <div>
                 <label className="block text-xs font-extrabold text-slate-700 mb-1">
-                  預計輔導重點／任務備註（選填）
+                  {formScheduleType === '排休/休假' ? '休假類別／備註說明（可點選快速標籤）' : '預計輔導重點／任務備註（選填）'}
                 </label>
+                {formScheduleType === '排休/休假' && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {['例假排休', '特休假', '補休', '事假／病假', '半天排休'].map(tag => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => setFormNote(tag)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-bold border cursor-pointer transition-colors ${
+                          formNote === tag
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-emerald-50 hover:text-emerald-700'
+                        }`}
+                      >
+                        🌴 {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <input
                   type="text"
                   value={formNote}
                   onChange={e => setFormNote(e.target.value)}
-                  placeholder="例：追蹤上週缺失改善、美容師剪工考核、參加營運月會..."
+                  placeholder={
+                    formScheduleType === '排休/休假'
+                      ? '例：例假排休、特休假、下午補休...'
+                      : '例：追蹤上週缺失改善、美容師剪工考核、參加營運月會...'
+                  }
                   className="w-full min-h-[42px] px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:border-blue-500"
                 />
               </div>
@@ -1650,8 +1714,8 @@ export const PlannedSchedulePanel: React.FC<Props> = ({ managers, allActivities 
                     type="submit"
                     disabled={saving}
                     className={`min-h-[42px] px-5 py-2 rounded-xl text-white text-xs sm:text-sm font-extrabold shadow-sm cursor-pointer disabled:opacity-60 ${formPersonRole === 'beauty_director'
-                        ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
-                        : 'bg-blue-600 hover:bg-blue-700'
+                      ? 'bg-gradient-to-r from-rose-600 to-fuchsia-600 hover:from-rose-500 hover:to-fuchsia-500'
+                      : 'bg-blue-600 hover:bg-blue-700'
                       }`}
                   >
                     {saving
